@@ -1374,9 +1374,11 @@ class AppGUI(QMainWindow):
         for text, idx in nav_items:
             btn = QPushButton(text)
             btn.setCheckable(True)
-            btn.clicked.connect(lambda checked, i=idx: self.switch_content(i))
             self.nav_button_group.addButton(btn, idx)
             layout.addWidget(btn)
+        
+        # Connect button group's idClicked signal to switch_content
+        self.nav_button_group.idClicked.connect(self.switch_content)
         
         # Set first button as checked
         self.nav_button_group.button(0).setChecked(True)
