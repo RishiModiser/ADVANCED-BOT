@@ -1,0 +1,39 @@
+{
+  "name": "Example UX Test Script",
+  "description": "Sample RPA script for testing website navigation and interactions",
+  "steps": [
+    {
+      "type": "newPage",
+      "description": "Create a new browser page"
+    },
+    {
+      "type": "navigate",
+      "url": "https://example.com",
+      "description": "Navigate to the target website"
+    },
+    {
+      "type": "wait",
+      "duration": 2000,
+      "description": "Wait for page to load"
+    },
+    {
+      "type": "scroll",
+      "depth": 50,
+      "description": "Scroll to 50% of page"
+    },
+    {
+      "type": "wait",
+      "duration": 3000,
+      "description": "Pause to simulate reading"
+    },
+    {
+      "type": "scroll",
+      "depth": 80,
+      "description": "Scroll to 80% of page"
+    },
+    {
+      "type": "closePage",
+      "description": "Close the page"
+    }
+  ]
+}
