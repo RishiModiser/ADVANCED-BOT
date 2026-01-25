@@ -1097,6 +1097,7 @@ class BrowserManager:
             }
             
             # Add proxy if enabled and configured
+            proxy_config = None
             if use_proxy:
                 proxy_config = self.proxy_manager.get_proxy_config()
                 if proxy_config:
@@ -1106,7 +1107,39 @@ class BrowserManager:
                 else:
                     self.log_manager.log('No proxy configured, using direct connection')
             
-            self.context = await self.browser.new_context(**context_options)
+            # Try to create context with proxy
+            try:
+                self.context = await self.browser.new_context(**context_options)
+            except Exception as proxy_error:
+                # Check if error is proxy-related
+                error_str = str(proxy_error).lower()
+                proxy_error_indicators = [
+                    'proxy', 'econnrefused', 'etimedout', 'enotfound',
+                    'connection refused', 'timeout', 'unreachable'
+                ]
+                is_proxy_error = any(indicator in error_str for indicator in proxy_error_indicators)
+                
+                if is_proxy_error and proxy_config:
+                    # Log proxy-specific error
+                    self.log_manager.log(f'⚠ Proxy connection failed: {proxy_error}', 'WARNING')
+                    self.log_manager.log(f'⚠ Proxy server: {proxy_config.get("server", "unknown")}', 'WARNING')
+                    self.log_manager.log('⚠ Retrying without proxy...', 'WARNING')
+                    
+                    # Mark proxy as failed
+                    self.proxy_manager.mark_proxy_failed(proxy_config)
+                    
+                    # Retry without proxy
+                    context_options_no_proxy = {
+                        'user_agent': fingerprint['user_agent'],
+                        'viewport': fingerprint['viewport'],
+                        'locale': fingerprint['locale'],
+                        'timezone_id': fingerprint['timezone'],
+                    }
+                    self.context = await self.browser.new_context(**context_options_no_proxy)
+                    self.log_manager.log('✓ Browser context created with direct connection (proxy bypassed)')
+                else:
+                    # Re-raise if not a proxy error
+                    raise
             
             # Inject navigator properties
             await self.context.add_init_script(f"""
@@ -1124,6 +1157,10 @@ class BrowserManager:
             
         except Exception as e:
             self.log_manager.log(f'Context creation error: {e}', 'ERROR')
+            self.log_manager.log('This may be due to:', 'ERROR')
+            self.log_manager.log('  - Invalid proxy configuration', 'ERROR')
+            self.log_manager.log('  - Network connectivity issues', 'ERROR')
+            self.log_manager.log('  - Browser crash or resource exhaustion', 'ERROR')
             return None
     
     async def close(self):
@@ -1433,10 +1470,6 @@ class AutomationWorker(QObject):
                     context = await self.browser_manager.create_context(platform)
                     if not context:
                         self.emit_log('Failed to create browser context', 'ERROR')
-                        self.emit_log('This may be due to:', 'ERROR')
-                        self.emit_log('  - Invalid proxy configuration', 'ERROR')
-                        self.emit_log('  - Network connectivity issues', 'ERROR')
-                        self.emit_log('  - Browser crash or resource exhaustion', 'ERROR')
                         consecutive_failures += 1
                         
                         # Restart browser if too many failures
