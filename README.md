@@ -261,6 +261,10 @@ Only interacts with elements containing:
 
 The application is contained in a single file: `advanced_bot.py`
 
+### Example Files:
+- `example_script.json` - Sample RPA automation script
+- `example_proxies.txt` - Example proxy list with all supported formats
+
 ### Internal Classes:
 - `AppGUI` - Main GUI application
 - `BrowserManager` - Playwright browser management
