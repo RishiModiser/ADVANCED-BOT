@@ -43,3 +43,7 @@ Thumbs.db
 # Playwright
 .playwright/
 playwright-state/
+
+# Test files
+test_components.py
+validate_implementation.py
