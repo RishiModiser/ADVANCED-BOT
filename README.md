@@ -178,7 +178,43 @@ The application provides a modern, fully responsive GUI with improved navigation
 
 ## 🔧 Features
 
-### 🆕 New Features (Latest Update)
+### 🆕 New Features (Latest Update - v5.1)
+
+#### Proxy Geolocation & Display
+- **Automatic proxy location fetching** before browser launch
+- **Real-time proxy location display** in browser window (top-right corner)
+- Shows country and IP address: "Proxy: USA | IP: 31.56.70.200"
+- Supports IP:PORT:USERNAME:PASSWORD format
+- Location info logged for each browser session
+- Seamless integration with proxy rotation
+
+#### Ad Detection & Interaction (Demo/Test Only)
+- **Intelligent ad detection** using multiple selectors
+- **Human-like ad interaction**:
+  - Smooth scrolling to ads
+  - Proper wait time for ad content to load
+  - Natural mouse movements over ad area
+  - Realistic viewing duration (2-5 seconds)
+- **Configurable via GUI** - Enable/disable in Traffic Behaviour tab
+- **Safety first**: Only works with demo/test ads, real ad networks blocked
+- Interacts with 1-3 ads per page randomly
+
+#### Text Highlighting (Human Behavior)
+- **Random text highlighting** while browsing
+- Simulates natural reading behavior
+- Features:
+  - Selects 2-8 words at a time
+  - Smooth mouse drag animation
+  - Brief pause to "view" highlighted text
+  - 20% chance during browsing sessions
+- **Enable/disable option** in Traffic Behaviour tab
+- Makes automation more human-like and natural
+
+#### Enhanced Multi-Browser Management
+- Proxy fetched **before** each browser opens
+- Each thread gets unique proxy with location
+- Real-time location display in each browser
+- Proper thread management for 5, 10, or more browsers simultaneously
 
 #### Multiple URL Support
 - Add multiple target URLs to a list
