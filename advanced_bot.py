@@ -913,7 +913,7 @@ class BrowserManager:
             
             # Expanded error detection for browser installation issues
             browser_not_found_patterns = [
-                'Executable doesn\'t exist',
+                "Executable doesn't exist",
                 'Browser was not found',
                 'Failed to launch',
                 'Could not find browser',

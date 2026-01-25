@@ -10,9 +10,9 @@ def test_error_patterns():
     print("Testing error pattern detection...")
     print("=" * 60)
     
-    # Test error patterns
+    # Test error patterns (must match those in advanced_bot.py)
     browser_not_found_patterns = [
-        'Executable doesn\'t exist',
+        "Executable doesn't exist",
         'Browser was not found',
         'Failed to launch',
         'Could not find browser',
