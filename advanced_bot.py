@@ -122,6 +122,7 @@ LINK_SKIP_PATTERNS = ['logout', 'login', 'signin', 'signup', 'facebook', 'twitte
 # Human behavior constants
 BACK_SCROLL_CHANCE = 0.15  # 15% chance to scroll back up
 READING_PAUSE_CHANCE = 0.3  # 30% chance to pause for reading
+TIME_BROWSING_BACK_SCROLL_CHANCE = 0.3  # 30% chance to scroll back during time-based browsing
 
 
 # ============================================================================
@@ -411,6 +412,14 @@ class HumanBehavior:
             max_time: Maximum time to spend in seconds (120-480)
         """
         try:
+            # Validate and clamp time range
+            min_time = max(120, min(480, min_time))
+            max_time = max(120, min(480, max_time))
+            
+            # Ensure min <= max
+            if min_time > max_time:
+                min_time, max_time = max_time, min_time
+            
             # Calculate actual time to spend (between min and max)
             time_to_spend = random.uniform(min_time, max_time)
             start_time = time.time()
@@ -428,7 +437,7 @@ class HumanBehavior:
                 await asyncio.sleep(random.uniform(2.0, 5.0))
                 
                 # Occasionally scroll back up
-                if random.random() < 0.3:
+                if random.random() < TIME_BROWSING_BACK_SCROLL_CHANCE:
                     back_scroll_depth = random.randint(10, 40)
                     await HumanBehavior.scroll_page(page, back_scroll_depth)
                     await asyncio.sleep(random.uniform(1.0, 3.0))
@@ -1586,8 +1595,15 @@ class AutomationWorker(QObject):
                 # Execute all tasks concurrently
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 
-                # Count successes
-                success_count = sum(1 for r in results if r is True)
+                # Count successes and log exceptions
+                success_count = 0
+                for i, result in enumerate(results):
+                    if result is True:
+                        success_count += 1
+                    elif isinstance(result, Exception):
+                        visit_num = batch_start + i + 1
+                        self.emit_log(f'Profile {visit_num} exception: {result}', 'ERROR')
+                
                 total_profiles_completed += success_count
                 
                 self.emit_log(f'Batch completed: {success_count}/{batch_size} profiles successful')
@@ -1948,6 +1964,7 @@ class AppGUI(QMainWindow):
         self.min_time_input.setValue(120)  # 2 minutes default
         self.min_time_input.setSuffix(' sec')
         self.min_time_input.setToolTip('Minimum time to spend on each profile with human scrolling (2-8 minutes)')
+        self.min_time_input.valueChanged.connect(self.validate_time_range)
         min_time_layout.addWidget(self.min_time_input)
         min_time_layout.addStretch()
         traffic_layout.addLayout(min_time_layout)
@@ -1959,6 +1976,7 @@ class AppGUI(QMainWindow):
         self.max_time_input.setValue(240)  # 4 minutes default
         self.max_time_input.setSuffix(' sec')
         self.max_time_input.setToolTip('Maximum time to spend on each profile with human scrolling (2-8 minutes)')
+        self.max_time_input.valueChanged.connect(self.validate_time_range)
         max_time_layout.addWidget(self.max_time_input)
         max_time_layout.addStretch()
         traffic_layout.addLayout(max_time_layout)
@@ -2168,6 +2186,15 @@ class AppGUI(QMainWindow):
         # PySide6 stateChanged emits int (0=unchecked, 2=checked), compare with enum or value
         enabled = state in (Qt.Checked, Qt.Checked.value)
         self.max_pages_input.setEnabled(enabled)
+    
+    def validate_time_range(self):
+        """Ensure minimum time is not greater than maximum time."""
+        min_time = self.min_time_input.value()
+        max_time = self.max_time_input.value()
+        
+        if min_time > max_time:
+            # Auto-adjust max to match min if min becomes greater
+            self.max_time_input.setValue(min_time)
     
     def create_proxy_tab(self) -> QWidget:
         """Create proxy settings tab."""
