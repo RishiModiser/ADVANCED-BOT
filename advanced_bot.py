@@ -903,9 +903,9 @@ class AutomationWorker(QObject):
             self.emit_log(f'Error during referral visit: {e}', 'ERROR')
             raise
     
-    async def handle_search_visit(self, page: Page, target_url: str, keyword: str):
-        """Handle search visit - search on Google and click result."""
-        self.emit_log(f'[INFO] Search visit with keyword: "{keyword}"')
+    async def handle_search_visit(self, page: Page, target_domain: str, keyword: str):
+        """Handle search visit - search on Google, find target domain, and click it."""
+        self.emit_log(f'[INFO] Search visit with keyword: "{keyword}" for domain: "{target_domain}"')
         
         try:
             # Navigate to Google
@@ -926,9 +926,8 @@ class AutomationWorker(QObject):
                     continue
             
             if not search_box:
-                self.emit_log('Could not find Google search box, using direct navigation', 'WARNING')
-                await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
-                return
+                self.emit_log('Could not find Google search box, skipping search', 'WARNING')
+                return False
             
             # Type keyword character by character with delays
             self.emit_log('Typing search keyword...')
@@ -950,29 +949,65 @@ class AutomationWorker(QObject):
             await HumanBehavior.scroll_page(page, random.randint(30, 60))
             await asyncio.sleep(random.uniform(1, 2))
             
-            # Try to find and click target domain in results
-            # For now, navigate directly (in production, would search for matching link)
-            self.emit_log(f'Navigating to target from search results...')
-            await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
+            # Try to find and click target domain in top 10 results
+            self.emit_log(f'Searching for target domain "{target_domain}" in top 10 results...')
+            
+            # Get all result links
+            result_links = await page.query_selector_all('a[href]')
+            
+            found_link = None
+            for link in result_links[:30]:  # Check first 30 links (covers top 10 results)
+                try:
+                    href = await link.get_attribute('href')
+                    if href and target_domain in href:
+                        found_link = link
+                        self.emit_log(f'✓ Found target domain in results: {href[:80]}...')
+                        break
+                except:
+                    continue
+            
+            if found_link:
+                # Click the found link
+                self.emit_log('Clicking on target domain link...')
+                await found_link.click()
+                await asyncio.sleep(random.uniform(2, 4))
+                return True
+            else:
+                self.emit_log(f'⚠ Target domain "{target_domain}" not found in top results', 'WARNING')
+                return False
             
         except Exception as e:
             self.emit_log(f'Error during search visit: {e}', 'ERROR')
-            raise
+            return False
     
-    async def handle_interaction(self, page: Page, min_stay_minutes: int, max_stay_minutes: int, 
-                                  max_pages: int, enable_extra_pages: bool):
-        """Handle page interaction - click links, navigate pages, extended stay."""
-        stay_time = random.randint(min_stay_minutes * 60, max_stay_minutes * 60)
-        self.emit_log(f'[INFO] Interaction enabled - staying for {stay_time // 60} minutes')
+    async def handle_interaction(self, page: Page, max_pages: int, enable_extra_pages: bool):
+        """Handle advanced page interaction - click posts, explore pages, follow links with human behavior."""
+        self.emit_log('[INFO] Advanced human behavior interaction enabled')
         
-        start_time = asyncio.get_event_loop().time()
         pages_visited = 1
+        interactions_count = 0
+        max_interactions = random.randint(5, 15)
         
         try:
-            while (asyncio.get_event_loop().time() - start_time) < stay_time and self.running:
-                # Scroll and pause
-                await HumanBehavior.scroll_page(page, random.randint(40, 90))
+            for interaction in range(max_interactions):
+                if not self.running:
+                    break
+                
+                # Scroll and pause (human-like reading)
+                scroll_depth = random.randint(40, 90)
+                await HumanBehavior.scroll_page(page, scroll_depth)
                 await asyncio.sleep(random.uniform(5, 15))
+                
+                # Random mouse movements
+                try:
+                    viewport_size = page.viewport_size
+                    if viewport_size:
+                        x = random.randint(100, viewport_size['width'] - 100)
+                        y = random.randint(100, viewport_size['height'] - 100)
+                        await page.mouse.move(x, y)
+                        await asyncio.sleep(random.uniform(0.5, 2))
+                except:
+                    pass
                 
                 # Try to click a link if extra pages enabled
                 if enable_extra_pages and pages_visited < max_pages:
@@ -991,6 +1026,7 @@ class AutomationWorker(QObject):
                                 await content_link.click()
                                 await asyncio.sleep(random.uniform(3, 6))
                                 pages_visited += 1
+                                interactions_count += 1
                                 
                                 # Handle consents on new page
                                 consent_manager = ConsentManager(self.log_manager)
@@ -999,20 +1035,43 @@ class AutomationWorker(QObject):
                     except Exception as e:
                         self.emit_log(f'Could not click link: {e}', 'WARNING')
                 
-                # Random idle pause
-                await asyncio.sleep(random.uniform(10, 30))
+                # Random idle pause (simulating reading)
+                await asyncio.sleep(random.uniform(8, 25))
+                
+            self.emit_log(f'✓ Completed {interactions_count} interactions across {pages_visited} pages')
                 
         except Exception as e:
             self.emit_log(f'Error during interaction: {e}', 'WARNING')
     
     async def run_automation(self):
-        """Main automation loop with session isolation and stability improvements."""
+        """Main automation loop with multi-threading, multiple URLs, and platform mixing support."""
         try:
             self.running = True
             self.emit_log('Starting automation...')
             
+            # Get configuration
+            url_list = self.config.get('url_list', [])
+            num_visits = self.config.get('num_visits', 1)
+            threads = self.config.get('threads', 1)
+            total_threads_limit = self.config.get('total_threads', 0)
+            platforms = self.config.get('platforms', ['desktop'])
+            content_ratio = self.config.get('content_ratio', 85) / 100
+            sponsored_ratio = self.config.get('sponsored_ratio', 15) / 100
+            visit_type = self.config.get('visit_type', 'direct')
+            search_keyword = self.config.get('search_keyword', '')
+            target_domain = self.config.get('target_domain', '')
+            referral_sources = self.config.get('referral_sources', [])
+            enable_interaction = self.config.get('enable_interaction', False)
+            enable_extra_pages = self.config.get('enable_extra_pages', False)
+            max_pages = self.config.get('max_pages', 5)
+            enable_consent = self.config.get('enable_consent', True)
+            enable_popups = self.config.get('enable_popups', True)
+            
+            self.emit_log(f'Configuration: {len(url_list)} URLs, {num_visits} visits, {threads} threads')
+            if total_threads_limit > 0:
+                self.emit_log(f'Total thread limit: {total_threads_limit}')
+            
             # Initialize browser
-            platform = self.config.get('platform', 'desktop')
             self.browser_manager.headless = self.config.get('headless', False)
             
             success = await self.browser_manager.initialize()
@@ -1021,26 +1080,15 @@ class AutomationWorker(QObject):
                 return
             
             # Create managers
-            consent_manager = ConsentManager(self.log_manager)
+            consent_manager = ConsentManager(self.log_manager) if enable_consent else None
             sponsored_engine = SponsoredClickEngine(self.log_manager)
-            
-            # Get configuration
-            target_url = self.config.get('url', '')
-            num_visits = self.config.get('num_visits', 1)
-            content_ratio = self.config.get('content_ratio', 85) / 100
-            sponsored_ratio = self.config.get('sponsored_ratio', 15) / 100
-            visit_type = self.config.get('visit_type', 'direct')
-            search_keyword = self.config.get('search_keyword', '')
-            referral_sources = self.config.get('referral_sources', [])
-            enable_interaction = self.config.get('enable_interaction', False)
-            min_stay_time = self.config.get('min_stay_time', 3)
-            max_stay_time = self.config.get('max_stay_time', 10)
-            enable_extra_pages = self.config.get('enable_extra_pages', False)
-            max_pages = self.config.get('max_pages', 5)
             
             # Failure tracking for browser restart
             consecutive_failures = 0
             max_failures_before_restart = 3
+            
+            # Thread counter
+            total_threads_executed = 0
             
             # Run visits with session isolation
             for visit in range(num_visits):
@@ -1048,7 +1096,18 @@ class AutomationWorker(QObject):
                     self.emit_log('Stop requested, exiting gracefully...')
                     break
                 
-                self.emit_log(f'━━━ Visit {visit + 1}/{num_visits} ━━━')
+                # Check total thread limit
+                if total_threads_limit > 0 and total_threads_executed >= total_threads_limit:
+                    self.emit_log(f'✓ Total thread limit reached ({total_threads_limit}), stopping...')
+                    break
+                
+                # Select random URL from list
+                target_url = random.choice(url_list)
+                
+                # Select random platform from selected platforms
+                platform = random.choice(platforms)
+                
+                self.emit_log(f'━━━ Visit {visit + 1}/{num_visits} | Platform: {platform} | URL: {target_url[:50]}... ━━━')
                 
                 context = None
                 page = None
@@ -1075,19 +1134,27 @@ class AutomationWorker(QObject):
                     
                     # Create new page
                     page = await context.new_page()
+                    total_threads_executed += 1
                     
                     # Navigate based on visit type
                     if visit_type == 'referral':
                         await self.handle_referral_visit(page, target_url, referral_sources)
                     elif visit_type == 'search':
-                        await self.handle_search_visit(page, target_url, search_keyword)
+                        # Search visit - find target domain in Google results
+                        found = await self.handle_search_visit(page, target_domain, search_keyword)
+                        if not found:
+                            # If domain not found, skip this visit
+                            self.emit_log('Target domain not found in search, skipping interaction')
+                            await page.close()
+                            continue
                     else:
                         # Direct visit
                         self.emit_log(f'[INFO] Direct visit to {target_url}')
                         await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
                     
-                    # Handle consents
-                    await consent_manager.handle_consents(page)
+                    # Handle consents if enabled
+                    if consent_manager and enable_consent:
+                        await consent_manager.handle_consents(page)
                     
                     # Random scroll
                     await HumanBehavior.scroll_page(page)
@@ -1097,8 +1164,7 @@ class AutomationWorker(QObject):
                     
                     # Handle interaction if enabled
                     if enable_interaction:
-                        await self.handle_interaction(page, min_stay_time, max_stay_time, 
-                                                     max_pages, enable_extra_pages)
+                        await self.handle_interaction(page, max_pages, enable_extra_pages)
                     else:
                         # Decide on interaction type based on ratio
                         if random.random() < sponsored_ratio:
@@ -1116,7 +1182,7 @@ class AutomationWorker(QObject):
                     if page:
                         await page.close()
                     
-                    self.emit_log(f'✓ Visit {visit + 1} completed successfully')
+                    self.emit_log(f'✓ Visit {visit + 1} completed successfully (Thread {total_threads_executed})')
                     
                     # Reset failure counter on success
                     consecutive_failures = 0
@@ -1152,7 +1218,7 @@ class AutomationWorker(QObject):
             
             # Cleanup
             await self.browser_manager.close()
-            self.emit_log('Automation completed')
+            self.emit_log(f'Automation completed - Total threads executed: {total_threads_executed}')
             
         except Exception as e:
             self.emit_log(f'Automation error: {e}', 'ERROR')
@@ -1840,10 +1906,23 @@ class AppGUI(QMainWindow):
     def start_automation(self):
         """Start the automation process."""
         try:
-            # Validate inputs
-            url = self.url_input.text().strip()
-            if not url:
-                QMessageBox.warning(self, 'Input Error', 'Please enter a target URL')
+            # Validate inputs - collect URLs from list widget
+            url_list = []
+            for i in range(self.url_list_widget.count()):
+                url = self.url_list_widget.item(i).text().strip()
+                if url:
+                    url_list.append(url)
+            
+            # If no URLs in list, check input field
+            if not url_list:
+                url = self.url_input.text().strip()
+                if url:
+                    if not url.startswith(('http://', 'https://')):
+                        url = 'https://' + url
+                    url_list.append(url)
+            
+            if not url_list:
+                QMessageBox.warning(self, 'Input Error', 'Please enter at least one target URL')
                 return
             
             # Get visit type
@@ -1853,11 +1932,15 @@ class AppGUI(QMainWindow):
             elif self.visit_search_radio.isChecked():
                 visit_type = 'search'
             
-            # Validate search keyword if search type is selected
+            # Validate search keyword and target domain if search type is selected
             if visit_type == 'search':
                 keyword = self.search_keyword_input.text().strip()
+                target_domain = self.target_domain_input.text().strip()
                 if not keyword:
                     QMessageBox.warning(self, 'Input Error', 'Please enter a search keyword for Search Visit type')
+                    return
+                if not target_domain:
+                    QMessageBox.warning(self, 'Input Error', 'Please enter a target domain for Search Visit type')
                     return
             
             # Collect referral sources if referral type is selected
@@ -1878,13 +1961,26 @@ class AppGUI(QMainWindow):
                     QMessageBox.warning(self, 'Input Error', 'Please select at least one referral source')
                     return
             
+            # Get selected platforms
+            selected_platforms = []
+            if self.platform_desktop_check.isChecked():
+                selected_platforms.append('desktop')
+            if self.platform_android_check.isChecked():
+                selected_platforms.append('android')
+            
+            if not selected_platforms:
+                QMessageBox.warning(self, 'Input Error', 'Please select at least one platform (Desktop or Android)')
+                return
+            
             # Collect configuration
             config = {
-                'url': url,
+                'url_list': url_list,
                 'num_visits': self.num_visits_input.value(),
+                'threads': self.threads_input.value(),
+                'total_threads': self.total_threads_input.value(),
                 'content_ratio': self.content_ratio_input.value(),
                 'sponsored_ratio': self.sponsored_ratio_input.value(),
-                'platform': self.platform_combo.currentText(),
+                'platforms': selected_platforms,
                 'headless': False,  # Always False - browser must be visible
                 'proxy_enabled': self.proxy_enabled_check.isChecked(),
                 'proxy_type': self.proxy_type_combo.currentText(),
@@ -1892,12 +1988,16 @@ class AppGUI(QMainWindow):
                 'rotate_proxy': self.rotate_proxy_check.isChecked(),
                 'visit_type': visit_type,
                 'search_keyword': self.search_keyword_input.text().strip() if visit_type == 'search' else '',
+                'target_domain': self.target_domain_input.text().strip() if visit_type == 'search' else '',
                 'referral_sources': referral_sources,
                 'enable_interaction': self.enable_interaction.isChecked(),
-                'min_stay_time': self.min_stay_time_input.value(),
-                'max_stay_time': self.max_stay_time_input.value(),
                 'enable_extra_pages': self.enable_extra_pages.isChecked(),
                 'max_pages': self.max_pages_input.value(),
+                'scroll_depth': self.scroll_depth_input.value(),
+                'enable_mouse_movement': self.enable_mouse_movement.isChecked(),
+                'enable_idle_pauses': self.enable_idle_pauses.isChecked(),
+                'enable_consent': self.enable_consent.isChecked(),
+                'enable_popups': self.enable_popups.isChecked(),
             }
             
             # Update UI
