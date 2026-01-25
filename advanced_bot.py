@@ -1865,7 +1865,7 @@ class AppGUI(QMainWindow):
     
     def toggle_page_visit_settings(self, state):
         """Enable/disable page visit inputs based on checkbox state."""
-        enabled = state == Qt.Checked
+        enabled = (state == Qt.Checked.value or state == Qt.Checked)
         self.max_pages_input.setEnabled(enabled)
     
     def create_proxy_tab(self) -> QWidget:
@@ -1968,7 +1968,7 @@ class AppGUI(QMainWindow):
     
     def toggle_proxy_inputs(self, state):
         """Enable/disable proxy inputs based on checkbox state."""
-        enabled = state == Qt.Checked
+        enabled = (state == Qt.Checked.value or state == Qt.Checked)
         self.proxy_type_combo.setEnabled(enabled)
         self.proxy_list_input.setEnabled(enabled)
         self.proxy_import_btn.setEnabled(enabled)
