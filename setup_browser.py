@@ -7,6 +7,7 @@ Installs Playwright Chromium browser required for the bot to function.
 import subprocess
 import sys
 import platform
+import shutil
 
 def install_system_deps():
     """Install system dependencies on Linux if needed."""
@@ -14,9 +15,15 @@ def install_system_deps():
         return True
     
     try:
+        # Verify playwright executable exists
+        playwright_path = shutil.which('playwright')
+        if not playwright_path:
+            print("Note: Playwright executable not found in PATH")
+            return True
+        
         print("Installing system dependencies for Linux...")
         result = subprocess.run(
-            ['playwright', 'install-deps', 'chromium'],
+            [playwright_path, 'install-deps', 'chromium'],
             capture_output=True,
             text=True
         )
@@ -41,11 +48,25 @@ def main():
     print()
     
     try:
+        # Verify playwright executable exists
+        playwright_path = shutil.which('playwright')
+        if not playwright_path:
+            print()
+            print("=" * 60)
+            print("✗ Playwright not found in PATH!")
+            print("=" * 60)
+            print()
+            print("Please install the requirements first:")
+            print("  pip install -r requirements.txt")
+            print()
+            return 1
+        
+        print(f"Using playwright from: {playwright_path}")
         print("Running: playwright install chromium")
         print()
         
         result = subprocess.run(
-            ['playwright', 'install', 'chromium'],
+            [playwright_path, 'install', 'chromium'],
             check=True
         )
         
@@ -72,17 +93,6 @@ def main():
         print(f"Error: {e}")
         print()
         print("Please ensure you have installed the requirements first:")
-        print("  pip install -r requirements.txt")
-        print()
-        return 1
-        
-    except FileNotFoundError:
-        print()
-        print("=" * 60)
-        print("✗ Playwright not found!")
-        print("=" * 60)
-        print()
-        print("Please install the requirements first:")
         print("  pip install -r requirements.txt")
         print()
         return 1

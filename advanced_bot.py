@@ -15,6 +15,7 @@ import logging
 import asyncio
 import uuid
 import subprocess
+import shutil
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -917,28 +918,34 @@ class BrowserManager:
                 
                 # Attempt to install the browser automatically
                 try:
-                    result = subprocess.run(
-                        ['playwright', 'install', 'chromium'],
-                        capture_output=True,
-                        text=True,
-                        timeout=300  # 5 minute timeout
-                    )
-                    
-                    if result.returncode == 0:
-                        self.log_manager.log('✓ Browser installed successfully!', 'INFO')
-                        self.log_manager.log('Retrying browser initialization...', 'INFO')
-                        
-                        # Retry initialization
-                        try:
-                            self.browser = await self.playwright.chromium.launch(**launch_options)
-                            self.log_manager.log('✓ Browser launched successfully after auto-install')
-                            self.log_manager.log('━━━ Browser Initialization Complete ━━━')
-                            return True
-                        except Exception as retry_error:
-                            self.log_manager.log(f'Failed to launch browser after install: {retry_error}', 'ERROR')
+                    # Verify playwright executable exists
+                    playwright_path = shutil.which('playwright')
+                    if not playwright_path:
+                        self.log_manager.log('✗ Playwright executable not found in PATH', 'ERROR')
+                        self.log_manager.log('Please ensure playwright is installed: pip install playwright', 'ERROR')
                     else:
-                        self.log_manager.log('✗ Automatic installation failed', 'ERROR')
-                        self.log_manager.log('Please run manually: playwright install chromium', 'ERROR')
+                        result = subprocess.run(
+                            [playwright_path, 'install', 'chromium'],
+                            capture_output=True,
+                            text=True,
+                            timeout=300  # 5 minute timeout
+                        )
+                        
+                        if result.returncode == 0:
+                            self.log_manager.log('✓ Browser installed successfully!', 'INFO')
+                            self.log_manager.log('Retrying browser initialization...', 'INFO')
+                            
+                            # Retry initialization
+                            try:
+                                self.browser = await self.playwright.chromium.launch(**launch_options)
+                                self.log_manager.log('✓ Browser launched successfully after auto-install')
+                                self.log_manager.log('━━━ Browser Initialization Complete ━━━')
+                                return True
+                            except Exception as retry_error:
+                                self.log_manager.log(f'Failed to launch browser after install: {retry_error}', 'ERROR')
+                        else:
+                            self.log_manager.log('✗ Automatic installation failed', 'ERROR')
+                            self.log_manager.log('Please run manually: playwright install chromium', 'ERROR')
                         
                 except subprocess.TimeoutExpired:
                     self.log_manager.log('✗ Installation timed out', 'ERROR')
