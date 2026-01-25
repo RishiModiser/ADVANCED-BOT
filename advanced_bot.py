@@ -69,6 +69,22 @@ USER_AGENTS = {
     ]
 }
 
+# Referrer URLs for different sources
+REFERRER_URLS = {
+    'facebook': 'https://facebook.com',
+    'google': 'https://google.com',
+    'twitter': 'https://twitter.com',
+    'telegram': 'https://t.me',
+    'instagram': 'https://instagram.com'
+}
+
+# Link filtering - URLs to skip when clicking content links
+LINK_SKIP_PATTERNS = ['logout', 'login', 'signin', 'signup', 'facebook', 'twitter', 'instagram']
+
+# Human behavior constants
+BACK_SCROLL_CHANCE = 0.15  # 15% chance to scroll back up
+READING_PAUSE_CHANCE = 0.3  # 30% chance to pause for reading
+
 
 # ============================================================================
 # LOGGING MANAGER
@@ -227,7 +243,7 @@ class HumanBehavior:
                 await asyncio.sleep(random.uniform(0.2, 0.6))
                 
                 # Occasionally scroll back up a bit (human-like behavior)
-                if random.random() < 0.15 and current_position > viewport_height:
+                if random.random() < BACK_SCROLL_CHANCE and current_position > viewport_height:
                     back_scroll = int(viewport_height * random.uniform(0.1, 0.3))
                     current_position = max(0, current_position - back_scroll)
                     await page.evaluate(f'''
@@ -239,7 +255,7 @@ class HumanBehavior:
                     await asyncio.sleep(random.uniform(0.3, 0.7))
                 
                 # Random pause to simulate reading
-                if random.random() < 0.3:
+                if random.random() < READING_PAUSE_CHANCE:
                     await asyncio.sleep(random.uniform(1.0, 3.0))
             
             # Final idle pause
@@ -864,16 +880,8 @@ class AutomationWorker(QObject):
         # Randomly select one referral source
         referrer = random.choice(referral_sources)
         
-        # Map referral sources to URLs
-        referrer_urls = {
-            'facebook': 'https://facebook.com',
-            'google': 'https://google.com',
-            'twitter': 'https://twitter.com',
-            'telegram': 'https://t.me',
-            'instagram': 'https://instagram.com'
-        }
-        
-        referrer_url = referrer_urls.get(referrer, 'https://google.com')
+        # Get referrer URL from constants
+        referrer_url = REFERRER_URLS.get(referrer, 'https://google.com')
         
         self.emit_log(f'[INFO] Referral source selected: {referrer.capitalize()}')
         self.emit_log(f'Opening referrer: {referrer_url}')
@@ -977,8 +985,7 @@ class AutomationWorker(QObject):
                             content_link = random.choice(links[:min(20, len(links))])
                             
                             href = await content_link.get_attribute('href')
-                            if href and not any(skip in href.lower() for skip in 
-                                ['logout', 'login', 'signin', 'signup', 'facebook', 'twitter', 'instagram']):
+                            if href and not any(skip in href.lower() for skip in LINK_SKIP_PATTERNS):
                                 
                                 self.emit_log(f'[INFO] Clicking link to new page (page {pages_visited + 1}/{max_pages})')
                                 await content_link.click()
@@ -1491,8 +1498,6 @@ class AppGUI(QMainWindow):
         """Enable/disable page visit inputs based on checkbox state."""
         enabled = state == Qt.Checked
         self.max_pages_input.setEnabled(enabled)
-        
-        return widget
     
     def create_proxy_tab(self) -> QWidget:
         """Create proxy settings tab."""
