@@ -57,7 +57,16 @@ python setup_browser.py
 
 **Error: "Failed to initialize browser"**
 
-This error occurs when Playwright browsers are not installed. To fix:
+This error occurs when Playwright browsers are not installed. The bot now includes **automatic browser installation** that attempts to resolve this issue automatically.
+
+**Automatic Installation (New!):**
+When you run the bot and it detects a missing browser, it will:
+1. Automatically download and install Chromium browser
+2. Retry the initialization process
+3. Start working without manual intervention
+
+**Manual Installation (if needed):**
+If automatic installation fails, you can install manually:
 
 1. Run: `playwright install chromium`
 2. Or: `python -m playwright install chromium`
@@ -68,6 +77,9 @@ If the issue persists, ensure you have installed the requirements:
 pip install -r requirements.txt
 playwright install chromium
 ```
+
+**CI/CD Environments:**
+For CI/CD pipelines, use the provided GitHub Actions workflow (`.github/workflows/test.yml`) which automatically installs browsers during the build process.
 
 ## 🖥️ Usage
 

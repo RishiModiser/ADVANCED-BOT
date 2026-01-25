@@ -15,6 +15,7 @@ import logging
 import asyncio
 import uuid
 import subprocess
+import shutil
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -913,6 +914,45 @@ class BrowserManager:
             if 'Executable doesn\'t exist' in error_msg or 'Browser was not found' in error_msg:
                 self.log_manager.log('', 'ERROR')
                 self.log_manager.log('Chromium browser is not installed!', 'ERROR')
+                self.log_manager.log('Attempting automatic installation...', 'WARNING')
+                
+                # Attempt to install the browser automatically
+                try:
+                    # Verify playwright executable exists
+                    playwright_path = shutil.which('playwright')
+                    if not playwright_path:
+                        self.log_manager.log('✗ Playwright executable not found in PATH', 'ERROR')
+                        self.log_manager.log('Please ensure playwright is installed: pip install playwright', 'ERROR')
+                    else:
+                        result = subprocess.run(
+                            [playwright_path, 'install', 'chromium'],
+                            capture_output=True,
+                            text=True,
+                            timeout=300  # 5 minute timeout
+                        )
+                        
+                        if result.returncode == 0:
+                            self.log_manager.log('✓ Browser installed successfully!', 'INFO')
+                            self.log_manager.log('Retrying browser initialization...', 'INFO')
+                            
+                            # Retry initialization
+                            try:
+                                self.browser = await self.playwright.chromium.launch(**launch_options)
+                                self.log_manager.log('✓ Browser launched successfully after auto-install')
+                                self.log_manager.log('━━━ Browser Initialization Complete ━━━')
+                                return True
+                            except Exception as retry_error:
+                                self.log_manager.log(f'Failed to launch browser after install: {retry_error}', 'ERROR')
+                        else:
+                            self.log_manager.log('✗ Automatic installation failed', 'ERROR')
+                            self.log_manager.log('Please run manually: playwright install chromium', 'ERROR')
+                        
+                except subprocess.TimeoutExpired:
+                    self.log_manager.log('✗ Installation timed out', 'ERROR')
+                except Exception as install_error:
+                    self.log_manager.log(f'✗ Installation error: {install_error}', 'ERROR')
+                
+                self.log_manager.log('', 'ERROR')
                 self.log_manager.log('Please run: playwright install chromium', 'ERROR')
                 self.log_manager.log('Or from terminal: python -m playwright install chromium', 'ERROR')
                 self.log_manager.log('', 'ERROR')
