@@ -116,7 +116,7 @@ class DragDropTextEdit(QTextEdit):
         if event.mimeData().hasUrls():
             for url in event.mimeData().urls():
                 file_path = url.toLocalFile()
-                if file_path.endswith('.txt'):
+                if file_path.lower().endswith('.txt'):
                     try:
                         with open(file_path, 'r', encoding='utf-8') as f:
                             content = f.read()
@@ -732,6 +732,7 @@ class ProxyManager:
         - ip:port:username:password or host:port:username:password
         - protocol://ip:port or protocol://host:port (http, https, socks5)
         - protocol://user:pass@ip:port or protocol://user:pass@host:port
+        - IPv6: [ipv6]:port or protocol://[ipv6]:port
         """
         proxies = []
         lines = proxy_text.strip().split('\n')
@@ -762,25 +763,54 @@ class ProxyManager:
                 
                 # Build server URL from host:port
                 if ':' in server_part:
-                    host, port = server_part.rsplit(':', 1)
-                    proxy_config['server'] = f"{proxy_type}://{host}:{port}"
+                    # Handle IPv6 addresses [ipv6]:port
+                    if server_part.startswith('['):
+                        # IPv6 format
+                        bracket_end = server_part.find(']')
+                        if bracket_end != -1:
+                            host = server_part[:bracket_end+1]
+                            port_part = server_part[bracket_end+1:]
+                            if port_part.startswith(':'):
+                                port = port_part[1:]
+                                proxy_config['server'] = f"{proxy_type}://{host}:{port}"
+                    else:
+                        host, port = server_part.rsplit(':', 1)
+                        proxy_config['server'] = f"{proxy_type}://{host}:{port}"
             else:
-                # Check for host:port:username:password format
-                parts = line.split(':')
-                if len(parts) == 4:
-                    host, port, username, password = parts
-                    proxy_config['server'] = f"{proxy_type}://{host}:{port}"
-                    proxy_config['username'] = username
-                    proxy_config['password'] = password
-                elif len(parts) == 2:
-                    # Simple host:port format
-                    host, port = parts
-                    proxy_config['server'] = f"{proxy_type}://{host}:{port}"
-                elif len(parts) > 2:
-                    # Assume last part is port, rest is hostname
-                    port = parts[-1]
-                    host = ':'.join(parts[:-1])
-                    proxy_config['server'] = f"{proxy_type}://{host}:{port}"
+                # Parse without @ symbol
+                # Check for IPv6 addresses first
+                if line.startswith('['):
+                    # IPv6 format: [ipv6]:port or [ipv6]:port:username:password
+                    bracket_end = line.find(']')
+                    if bracket_end != -1:
+                        host = line[:bracket_end+1]
+                        rest_parts = line[bracket_end+1:].lstrip(':').split(':')
+                        if len(rest_parts) >= 1:
+                            port = rest_parts[0]
+                            proxy_config['server'] = f"{proxy_type}://{host}:{port}"
+                            if len(rest_parts) == 3:
+                                # [ipv6]:port:username:password
+                                proxy_config['username'] = rest_parts[1]
+                                proxy_config['password'] = rest_parts[2]
+                else:
+                    # Check for host:port:username:password format
+                    parts = line.split(':')
+                    if len(parts) == 4:
+                        # Assume host:port:username:password
+                        host, port, username, password = parts
+                        proxy_config['server'] = f"{proxy_type}://{host}:{port}"
+                        proxy_config['username'] = username
+                        proxy_config['password'] = password
+                    elif len(parts) == 2:
+                        # Simple host:port format
+                        host, port = parts
+                        proxy_config['server'] = f"{proxy_type}://{host}:{port}"
+                    elif len(parts) > 2:
+                        # Assume last part is port, rest is hostname
+                        # This could be hostname:with:colons:port
+                        port = parts[-1]
+                        host = ':'.join(parts[:-1])
+                        proxy_config['server'] = f"{proxy_type}://{host}:{port}"
             
             if proxy_config.get('server'):
                 proxies.append(proxy_config)
@@ -1328,6 +1358,8 @@ class AppGUI(QMainWindow):
         # Initialize confidence_input with default value (since sponsored tab is removed)
         self.confidence_input = QDoubleSpinBox()
         self.confidence_input.setValue(0.7)
+        # Create a reusable proxy manager for counting
+        self._proxy_count_manager = ProxyManager()
         self.init_ui()
     
     def init_ui(self):
@@ -1950,10 +1982,9 @@ class AppGUI(QMainWindow):
                 self.proxy_count_label.setText('📊 Proxies loaded: 0')
                 return
             
-            # Create temporary proxy manager to parse
-            temp_manager = ProxyManager()
-            temp_manager.proxy_type = self.proxy_type_combo.currentText()
-            proxies = temp_manager.parse_proxy_list(proxy_text)
+            # Reuse proxy manager for parsing
+            self._proxy_count_manager.proxy_type = self.proxy_type_combo.currentText()
+            proxies = self._proxy_count_manager.parse_proxy_list(proxy_text)
             count = len(proxies)
             self.proxy_count_label.setText(f'📊 Proxies loaded: {count}')
             
