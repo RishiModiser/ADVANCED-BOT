@@ -2291,9 +2291,6 @@ class AppGUI(QMainWindow):
                 # Set the JSON text (this will trigger sync_json_to_visual via textChanged signal)
                 self.script_editor.setPlainText(script_text)
                 
-                # Explicitly sync to ensure visual builder is updated
-                self.sync_json_to_visual()
-                
                 QMessageBox.information(self, 'Success', 'Script loaded and synced to Visual Builder successfully')
                 
         except json.JSONDecodeError as e:
@@ -2545,10 +2542,10 @@ class AppGUI(QMainWindow):
             self.syncing = False
     
     def force_sync(self):
-        """Force bidirectional synchronization between visual and JSON."""
-        # Sync visual to JSON first
+        """Force synchronization from visual builder to JSON editor."""
+        # Sync visual to JSON
         self.sync_visual_to_json()
-        QMessageBox.information(self, 'Sync Complete', 'Visual builder and JSON editor are now synchronized')
+        QMessageBox.information(self, 'Sync Complete', 'Visual builder synced to JSON editor')
     
     def action_to_step_type(self, action_name: str) -> str:
         """Convert action name to step type. Handles both old and new action names."""
