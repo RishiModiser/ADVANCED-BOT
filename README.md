@@ -43,8 +43,29 @@ cd ADVANCED-BOT
 pip install -r requirements.txt
 ```
 
-3. Install Playwright browsers:
+3. **⚠️ IMPORTANT: Install Playwright browsers** (Required!)
 ```bash
+playwright install chromium
+```
+
+Or use the setup helper:
+```bash
+python setup_browser.py
+```
+
+### Troubleshooting
+
+**Error: "Failed to initialize browser"**
+
+This error occurs when Playwright browsers are not installed. To fix:
+
+1. Run: `playwright install chromium`
+2. Or: `python -m playwright install chromium`
+3. Or: `python setup_browser.py`
+
+If the issue persists, ensure you have installed the requirements:
+```bash
+pip install -r requirements.txt
 playwright install chromium
 ```
 
@@ -55,6 +76,8 @@ playwright install chromium
 ```bash
 python advanced_bot.py
 ```
+
+**Note:** On first launch, the app will check if browsers are installed and show a warning if they're missing.
 
 ### GUI Features
 
