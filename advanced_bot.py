@@ -419,7 +419,7 @@ class HumanBehavior:
             # Find text elements (paragraphs, divs with text)
             text_elements = await page.query_selector_all('p, div, span, article, section')
             
-            if not text_elements or len(text_elements) == 0:
+            if not text_elements:
                 return
             
             # Select random element with text
@@ -1050,7 +1050,16 @@ class ProxyGeolocation:
         self.cache = {}
     
     def extract_ip_from_proxy(self, proxy_config: Dict[str, str]) -> Optional[str]:
-        """Extract IP address from proxy configuration."""
+        """
+        Extract IP address from proxy configuration.
+        
+        Args:
+            proxy_config: Dict with 'server' key containing proxy URL
+                         (e.g., {'server': 'http://31.56.70.200:8080'})
+        
+        Returns:
+            IP address as string, or None if extraction fails
+        """
         try:
             server = proxy_config.get('server', '')
             # Remove protocol prefix
@@ -1114,11 +1123,21 @@ class ProxyGeolocation:
             }
     
     def _guess_country_from_ip(self, ip: str) -> str:
-        """Simple country guessing based on IP pattern (for demo purposes)."""
+        """
+        Simple country guessing based on IP pattern (DEMO/MOCK DATA ONLY).
+        
+        WARNING: This is NOT accurate geolocation! For production use,
+        integrate with a real geolocation API like:
+        - ip-api.com
+        - ipinfo.io
+        - maxmind.com
+        
+        This mock implementation is for demonstration purposes only.
+        """
         # In production, this should use a real geolocation API
         if ip.startswith('192.168') or ip.startswith('10.') or ip.startswith('172.'):
             return 'Local Network'
-        # Mock logic for demo
+        # Mock logic for demo - NOT ACCURATE
         first_octet = ip.split('.')[0] if '.' in ip else '0'
         try:
             num = int(first_octet)
@@ -1808,9 +1827,16 @@ class AutomationWorker(QObject):
                 # Display proxy location in page title if available
                 proxy_location = getattr(context, '_proxy_location', None)
                 if proxy_location:
-                    location_text = f"Proxy: {proxy_location['country']} | IP: {proxy_location['ip']}"
-                    self.emit_log(f'[INFO] {location_text}')
-                    # Inject location display into page
+                    # Sanitize location text to prevent XSS
+                    import json
+                    country = proxy_location.get('country', 'Unknown')
+                    ip = proxy_location.get('ip', 'unknown')
+                    
+                    # Create safe JSON-encoded strings
+                    location_text_safe = json.dumps(f"Proxy: {country} | IP: {ip}")
+                    
+                    self.emit_log(f'[INFO] Proxy: {country} | IP: {ip}')
+                    # Inject location display into page with proper escaping
                     await page.add_init_script(f"""
                         window.addEventListener('load', () => {{
                             const locationDiv = document.createElement('div');
@@ -1828,7 +1854,7 @@ class AutomationWorker(QObject):
                                 z-index: 999999;
                                 pointer-events: none;
                             `;
-                            locationDiv.textContent = '{location_text}';
+                            locationDiv.textContent = {location_text_safe};
                             document.body.appendChild(locationDiv);
                         }});
                     """)
