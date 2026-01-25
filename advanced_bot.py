@@ -1253,7 +1253,7 @@ class AppGUI(QMainWindow):
     
     def init_ui(self):
         """Initialize the user interface."""
-        self.setWindowTitle('Windows Desktop Automation System - RPA Bot')
+        self.setWindowTitle('Humanex Version 5 - Advanced Simulation Traffic')
         self.setGeometry(100, 100, 1600, 900)
         self.setMinimumSize(1200, 700)  # Set minimum size for responsiveness
         
@@ -1309,21 +1309,9 @@ class AppGUI(QMainWindow):
         sidebar = self.create_sidebar()
         main_layout.addWidget(sidebar)
         
-        # Create splitter for content area
-        splitter = QSplitter(Qt.Horizontal)
-        
-        # Left panel - Settings content
+        # Content panel - Now takes full width (no right panel)
         self.content_panel = self.create_content_panel()
-        splitter.addWidget(self.content_panel)
-        
-        # Right panel - Logs + Control
-        right_panel = self.create_right_panel()
-        splitter.addWidget(right_panel)
-        
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 1)
-        
-        main_layout.addWidget(splitter)
+        main_layout.addWidget(self.content_panel)
     
     def create_sidebar(self) -> QWidget:
         """Create modern sidebar navigation."""
@@ -1362,7 +1350,7 @@ class AppGUI(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         
         # App title
-        title = QLabel('🤖 RPA Bot')
+        title = QLabel('🤖 Humanex v5')
         title.setFont(QFont('Arial', 18, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet('padding: 20px; background-color: #1a252f; color: white;')
@@ -1376,7 +1364,9 @@ class AppGUI(QMainWindow):
             ('🔧 Website Traffic', 0),
             ('🧠 Traffic Behaviour', 1),
             ('🌐 Proxy Settings', 2),
-            ('🧩 RPA Script Creator', 3)
+            ('🧩 RPA Script Creator', 3),
+            ('🎮 Control', 4),
+            ('📋 Logs', 5)
         ]
         
         for text, idx in nav_items:
@@ -1392,7 +1382,7 @@ class AppGUI(QMainWindow):
         layout.addStretch()
         
         # Footer
-        footer = QLabel('v2.0 • 2026')
+        footer = QLabel('v5.0 • 2026')
         footer.setAlignment(Qt.AlignCenter)
         footer.setStyleSheet('color: #7f8c8d; font-size: 11px; padding: 15px;')
         layout.addWidget(footer)
@@ -1417,6 +1407,8 @@ class AppGUI(QMainWindow):
         self.stacked_widget.addWidget(self.create_behavior_tab())
         self.stacked_widget.addWidget(self.create_proxy_tab())
         self.stacked_widget.addWidget(self.create_script_tab())
+        self.stacked_widget.addWidget(self.create_control_tab())
+        self.stacked_widget.addWidget(self.create_logs_tab())
         
         layout.addWidget(self.stacked_widget)
         
@@ -2028,52 +2020,111 @@ class AppGUI(QMainWindow):
         scroll_area.setWidget(widget)
         return scroll_area
     
-    def create_right_panel(self) -> QWidget:
-        """Create right control panel."""
-        panel = QWidget()
-        layout = QVBoxLayout(panel)
-        layout.setSpacing(15)
+    def create_control_tab(self) -> QWidget:
+        """Create control tab for automation controls."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(20)
+        layout.setContentsMargins(20, 20, 20, 20)
         
-        # Title
-        title = QLabel('📜 Control & Logs')
-        title.setFont(QFont('Arial', 16, QFont.Bold))
-        layout.addWidget(title)
+        # Section Title
+        section_title = QLabel('🎮 Automation Control')
+        section_title.setFont(QFont('Arial', 20, QFont.Bold))
+        section_title.setStyleSheet('color: #2c3e50; padding: 10px 0;')
+        layout.addWidget(section_title)
+        
+        # Control Panel Group
+        control_group = QGroupBox('Control Panel')
+        control_layout = QVBoxLayout()
+        control_layout.setSpacing(15)
         
         # Control buttons
-        control_layout = QHBoxLayout()
+        control_btn_layout = QHBoxLayout()
         
         self.start_btn = QPushButton('▶️ Start Automation')
         self.start_btn.clicked.connect(self.start_automation)
-        self.start_btn.setStyleSheet('background-color: #4CAF50; color: white; padding: 10px; font-weight: bold;')
-        control_layout.addWidget(self.start_btn)
+        self.start_btn.setStyleSheet('background-color: #4CAF50; color: white; padding: 15px; font-weight: bold; font-size: 14px;')
+        self.start_btn.setMinimumHeight(50)
+        control_btn_layout.addWidget(self.start_btn)
         
         self.stop_btn = QPushButton('⛔ Stop')
         self.stop_btn.clicked.connect(self.stop_automation)
         self.stop_btn.setEnabled(False)
-        self.stop_btn.setStyleSheet('background-color: #f44336; color: white; padding: 10px; font-weight: bold;')
-        control_layout.addWidget(self.stop_btn)
+        self.stop_btn.setStyleSheet('background-color: #f44336; color: white; padding: 15px; font-weight: bold; font-size: 14px;')
+        self.stop_btn.setMinimumHeight(50)
+        control_btn_layout.addWidget(self.stop_btn)
         
-        layout.addLayout(control_layout)
+        control_layout.addLayout(control_btn_layout)
         
         # Status
+        status_layout = QVBoxLayout()
+        status_layout.addWidget(QLabel('Current Status:'))
         self.status_label = QLabel('📊 Status: Ready')
-        self.status_label.setStyleSheet('padding: 10px; background-color: #e0e0e0; border-radius: 5px; font-weight: bold;')
-        layout.addWidget(self.status_label)
+        self.status_label.setStyleSheet('padding: 15px; background-color: #e0e0e0; border-radius: 5px; font-weight: bold; font-size: 14px;')
+        self.status_label.setMinimumHeight(50)
+        status_layout.addWidget(self.status_label)
+        control_layout.addLayout(status_layout)
         
-        # Logs
-        layout.addWidget(QLabel('📋 Live Logs:'))
+        control_group.setLayout(control_layout)
+        layout.addWidget(control_group)
+        
+        # Instructions Group
+        instructions_group = QGroupBox('ℹ️ Instructions')
+        instructions_layout = QVBoxLayout()
+        
+        instructions_text = QLabel(
+            '1. Configure your settings in the "Website Traffic" tab\n'
+            '2. Set traffic behavior patterns in "Traffic Behaviour" tab\n'
+            '3. (Optional) Configure proxy settings in "Proxy Settings" tab\n'
+            '4. (Optional) Create custom RPA scripts in "RPA Script Creator" tab\n'
+            '5. Click "Start Automation" to begin\n'
+            '6. Monitor progress in the "Logs" tab\n'
+            '7. Click "Stop" to halt the automation at any time'
+        )
+        instructions_text.setWordWrap(True)
+        instructions_text.setStyleSheet('padding: 10px; line-height: 1.6;')
+        instructions_layout.addWidget(instructions_text)
+        
+        instructions_group.setLayout(instructions_layout)
+        layout.addWidget(instructions_group)
+        
+        layout.addStretch()
+        
+        return widget
+    
+    def create_logs_tab(self) -> QWidget:
+        """Create logs tab for viewing automation logs."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Section Title
+        section_title = QLabel('📋 Live Logs')
+        section_title.setFont(QFont('Arial', 20, QFont.Bold))
+        section_title.setStyleSheet('color: #2c3e50; padding: 10px 0;')
+        layout.addWidget(section_title)
+        
+        # Logs display
+        logs_group = QGroupBox('Activity Logs')
+        logs_layout = QVBoxLayout()
         
         self.log_display = QTextEdit()
         self.log_display.setReadOnly(True)
-        self.log_display.setStyleSheet('background-color: #1e1e1e; color: white; font-family: monospace;')
-        layout.addWidget(self.log_display)
+        self.log_display.setStyleSheet('background-color: #1e1e1e; color: white; font-family: monospace; font-size: 12px;')
+        self.log_display.setMinimumHeight(400)
+        logs_layout.addWidget(self.log_display)
         
         # Clear logs button
         clear_btn = QPushButton('🧹 Clear Logs')
         clear_btn.clicked.connect(self.clear_logs)
-        layout.addWidget(clear_btn)
+        clear_btn.setStyleSheet('background-color: #ff9800; color: white; padding: 10px; font-weight: bold;')
+        logs_layout.addWidget(clear_btn)
         
-        return panel
+        logs_group.setLayout(logs_layout)
+        layout.addWidget(logs_group)
+        
+        return widget
     
     def start_automation(self):
         """Start the automation process."""
