@@ -1080,11 +1080,10 @@ class ProxyGeolocation:
     
     async def fetch_location(self, proxy_config: Dict[str, str]) -> Dict[str, str]:
         """
-        Fetch geolocation for a proxy.
+        Fetch geolocation for a proxy using real geolocation API.
         Returns a dictionary with location info like country, city, timezone.
         
-        Note: This uses a simple IP extraction and mock data for demo purposes.
-        For production, integrate with ip-api.com, ipinfo.io, or similar services.
+        Uses ip-api.com free API for accurate geolocation.
         """
         try:
             ip = self.extract_ip_from_proxy(proxy_config)
@@ -1100,8 +1099,30 @@ class ProxyGeolocation:
             if ip in self.cache:
                 return self.cache[ip]
             
-            # For demo: Parse IP and determine mock location
-            # In production, make HTTP request to geolocation API
+            # Try to fetch real geolocation data from ip-api.com
+            try:
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        f'http://ip-api.com/json/{ip}',
+                        timeout=aiohttp.ClientTimeout(total=5)
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            if data.get('status') == 'success':
+                                location_info = {
+                                    'ip': ip,
+                                    'country': data.get('country', 'Unknown'),
+                                    'city': data.get('city', 'Unknown'),
+                                    'timezone': data.get('timezone', 'UTC')
+                                }
+                                # Cache the result
+                                self.cache[ip] = location_info
+                                return location_info
+            except Exception as api_error:
+                logging.warning(f'Failed to fetch real geolocation, using fallback: {api_error}')
+            
+            # Fallback to mock data if API fails
             location_info = {
                 'ip': ip,
                 'country': self._guess_country_from_ip(ip),
@@ -2055,6 +2076,80 @@ class AutomationWorker(QObject):
             self.running = True
             self.emit_log('Starting automation...')
             
+            # Check if RPA mode is enabled
+            rpa_mode = self.config.get('rpa_mode', False)
+            
+            if rpa_mode:
+                # RPA Mode: Execute RPA script
+                await self.run_rpa_mode()
+            else:
+                # Normal Mode: Execute standard automation
+                await self.run_normal_mode()
+            
+        except Exception as e:
+            self.emit_log(f'Automation error: {e}', 'ERROR')
+        
+        finally:
+            self.running = False
+            self.finished_signal.emit()
+    
+    async def run_rpa_mode(self):
+        """Execute RPA script mode."""
+        try:
+            self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+            self.emit_log('RPA MODE: Executing RPA script only')
+            self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+            
+            rpa_script = self.config.get('rpa_script', {})
+            
+            # Check proxy configuration
+            proxy_manager = self.browser_manager.proxy_manager
+            if proxy_manager.proxy_enabled:
+                proxy_count = proxy_manager.get_proxy_count()
+                if proxy_count > 0:
+                    self.emit_log(f'✓ Proxy configuration loaded: {proxy_count} proxies available')
+                else:
+                    self.emit_log('⚠ Proxy enabled but no proxies loaded', 'WARNING')
+            else:
+                self.emit_log('Proxy disabled, using direct connection')
+            
+            # Initialize browser
+            self.browser_manager.headless = self.config.get('headless', False)
+            self.emit_log('Initializing browser...')
+            success = await self.browser_manager.initialize()
+            if not success:
+                self.emit_log('Failed to initialize browser', 'ERROR')
+                return
+            
+            # Create browser context
+            self.emit_log('Creating browser context...')
+            context = await self.browser_manager.create_context()
+            if not context:
+                self.emit_log('Failed to create browser context', 'ERROR')
+                return
+            
+            try:
+                # Execute RPA script
+                script_executor = ScriptExecutor(self.log_manager)
+                self.emit_log('Executing RPA script...')
+                success = await script_executor.execute_script(rpa_script, context)
+                
+                if success:
+                    self.emit_log('✓ RPA script execution completed successfully')
+                else:
+                    self.emit_log('✗ RPA script execution had errors', 'WARNING')
+                    
+            finally:
+                await context.close()
+                await self.browser_manager.close()
+                self.emit_log('Browser closed, RPA execution finished')
+            
+        except Exception as e:
+            self.emit_log(f'RPA mode error: {e}', 'ERROR')
+    
+    async def run_normal_mode(self):
+        """Execute normal automation mode."""
+        try:
             # Get configuration
             url_list = self.config.get('url_list', [])
             num_tabs = self.config.get('num_visits', 1)  # Now represents number of tabs per browser
@@ -2171,11 +2266,7 @@ class AutomationWorker(QObject):
             self.emit_log('Browser closed, automation finished')
             
         except Exception as e:
-            self.emit_log(f'Automation error: {e}', 'ERROR')
-        
-        finally:
-            self.running = False
-            self.finished_signal.emit()
+            self.emit_log(f'Normal mode error: {e}', 'ERROR')
     
     def run(self):
         """Entry point for thread execution."""
@@ -2757,6 +2848,24 @@ class AppGUI(QMainWindow):
         consent_group.setLayout(consent_layout)
         layout.addWidget(consent_group)
         
+        # RPA Mode (NEW FEATURE)
+        rpa_mode_group = QGroupBox('🧩 RPA Mode')
+        rpa_mode_layout = QVBoxLayout()
+        rpa_mode_layout.setSpacing(10)
+        
+        self.enable_rpa_mode = QCheckBox('✅ Enable RPA Mode Only')
+        self.enable_rpa_mode.setChecked(False)
+        self.enable_rpa_mode.stateChanged.connect(self.toggle_rpa_mode)
+        rpa_mode_layout.addWidget(self.enable_rpa_mode)
+        
+        rpa_info = QLabel('ℹ️ When enabled, only RPA script and proxy settings are active. All other features are disabled.')
+        rpa_info.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
+        rpa_info.setWordWrap(True)
+        rpa_mode_layout.addWidget(rpa_info)
+        
+        rpa_mode_group.setLayout(rpa_mode_layout)
+        layout.addWidget(rpa_mode_group)
+        
         layout.addStretch()
         
         scroll_area.setWidget(widget)
@@ -2767,6 +2876,52 @@ class AppGUI(QMainWindow):
         # PySide6 stateChanged emits int (0=unchecked, 2=checked), compare with enum or value
         enabled = state in (Qt.Checked, Qt.Checked.value)
         self.max_pages_input.setEnabled(enabled)
+    
+    def toggle_rpa_mode(self, state):
+        """Enable/disable other features based on RPA mode checkbox state."""
+        # PySide6 stateChanged emits int (0=unchecked, 2=checked), compare with enum or value
+        rpa_mode_enabled = state in (Qt.Checked, Qt.Checked.value)
+        
+        # When RPA mode is enabled, disable all other features except proxy
+        # When disabled, enable all features
+        disable_features = rpa_mode_enabled
+        
+        # Disable/enable all traffic settings except proxy
+        self.min_time_input.setEnabled(not disable_features)
+        self.max_time_input.setEnabled(not disable_features)
+        self.num_visits_input.setEnabled(not disable_features)
+        self.threads_input.setEnabled(not disable_features)
+        self.total_threads_input.setEnabled(not disable_features)
+        self.content_ratio_input.setEnabled(not disable_features)
+        self.sponsored_ratio_input.setEnabled(not disable_features)
+        
+        # Disable/enable platform settings
+        self.platform_desktop_check.setEnabled(not disable_features)
+        self.platform_android_check.setEnabled(not disable_features)
+        
+        # Disable/enable visit type settings
+        self.visit_direct_radio.setEnabled(not disable_features)
+        self.visit_referral_radio.setEnabled(not disable_features)
+        self.visit_search_radio.setEnabled(not disable_features)
+        
+        # Disable/enable URL input
+        self.url_input.setEnabled(not disable_features)
+        self.url_list_widget.setEnabled(not disable_features)
+        
+        # Disable/enable behavior settings
+        self.enable_interaction.setEnabled(not disable_features)
+        self.enable_extra_pages.setEnabled(not disable_features)
+        self.enable_consent.setEnabled(not disable_features)
+        self.enable_popups.setEnabled(not disable_features)
+        self.enable_text_highlight.setEnabled(not disable_features)
+        self.enable_ad_interaction.setEnabled(not disable_features)
+        self.scroll_depth_input.setEnabled(not disable_features)
+        self.enable_mouse_movement.setEnabled(not disable_features)
+        self.enable_idle_pauses.setEnabled(not disable_features)
+        self.max_pages_input.setEnabled(not disable_features)
+        
+        # Proxy settings remain enabled
+        # Script editor remains enabled (needed for RPA mode)
     
     def validate_time_range(self):
         """Ensure minimum time is not greater than maximum time."""
@@ -3199,103 +3354,142 @@ class AppGUI(QMainWindow):
     def start_automation(self):
         """Start the automation process."""
         try:
-            # Validate inputs - collect URLs from list widget
-            url_list = []
-            for i in range(self.url_list_widget.count()):
-                url = self.url_list_widget.item(i).text().strip()
-                if url:
-                    url_list.append(url)
+            # Check if RPA mode is enabled
+            rpa_mode_enabled = self.enable_rpa_mode.isChecked()
             
-            # If no URLs in list, check input field
-            if not url_list:
-                url = self.url_input.text().strip()
-                if url:
-                    if not url.startswith(('http://', 'https://')):
-                        url = 'https://' + url
-                    url_list.append(url)
-            
-            if not url_list:
-                QMessageBox.warning(self, 'Input Error', 'Please enter at least one target URL')
-                return
-            
-            # Get visit type
-            visit_type = 'direct'
-            if self.visit_referral_radio.isChecked():
-                visit_type = 'referral'
-            elif self.visit_search_radio.isChecked():
-                visit_type = 'search'
-            
-            # Validate search keyword and target domain if search type is selected
-            if visit_type == 'search':
-                keyword = self.search_keyword_input.text().strip()
-                target_domain = self.target_domain_input.text().strip()
-                if not keyword:
-                    QMessageBox.warning(self, 'Input Error', 'Please enter a search keyword for Search Visit type')
+            if rpa_mode_enabled:
+                # RPA Mode: Only RPA script and proxy are used
+                rpa_script_text = self.script_editor.toPlainText().strip()
+                if not rpa_script_text:
+                    QMessageBox.warning(self, 'Input Error', 'RPA Mode is enabled but no RPA script is provided. Please enter an RPA script in the RPA Script Creator tab.')
                     return
-                if not target_domain:
-                    QMessageBox.warning(self, 'Input Error', 'Please enter a target domain for Search Visit type')
-                    return
-            
-            # Collect referral sources if referral type is selected
-            referral_sources = []
-            if visit_type == 'referral':
-                if self.referral_facebook.isChecked():
-                    referral_sources.append('facebook')
-                if self.referral_google.isChecked():
-                    referral_sources.append('google')
-                if self.referral_twitter.isChecked():
-                    referral_sources.append('twitter')
-                if self.referral_telegram.isChecked():
-                    referral_sources.append('telegram')
-                if self.referral_instagram.isChecked():
-                    referral_sources.append('instagram')
                 
-                if not referral_sources:
-                    QMessageBox.warning(self, 'Input Error', 'Please select at least one referral source')
+                # Validate RPA script JSON
+                try:
+                    rpa_script = json.loads(rpa_script_text)
+                    if 'steps' not in rpa_script or not isinstance(rpa_script['steps'], list):
+                        QMessageBox.warning(self, 'Invalid Script', 'RPA script must contain a "steps" array')
+                        return
+                except json.JSONDecodeError as e:
+                    QMessageBox.warning(self, 'Invalid JSON', f'RPA script has invalid JSON syntax: {str(e)}')
+                    return
+                
+                # Collect configuration for RPA mode (only proxy settings)
+                config = {
+                    'rpa_mode': True,
+                    'rpa_script': rpa_script,
+                    'proxy_enabled': self.proxy_enabled_check.isChecked(),
+                    'proxy_type': self.proxy_type_combo.currentText(),
+                    'proxy_list': self.proxy_list_input.toPlainText(),
+                    'rotate_proxy': True,
+                    'headless': False,  # Always visible
+                }
+                
+                self.log_manager.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+                self.log_manager.log('RPA Mode Enabled - All other features disabled')
+                self.log_manager.log('Only RPA script and proxy settings are active')
+                self.log_manager.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+                
+            else:
+                # Normal Mode: Standard automation
+                # Validate inputs - collect URLs from list widget
+                url_list = []
+                for i in range(self.url_list_widget.count()):
+                    url = self.url_list_widget.item(i).text().strip()
+                    if url:
+                        url_list.append(url)
+                
+                # If no URLs in list, check input field
+                if not url_list:
+                    url = self.url_input.text().strip()
+                    if url:
+                        if not url.startswith(('http://', 'https://')):
+                            url = 'https://' + url
+                        url_list.append(url)
+                
+                if not url_list:
+                    QMessageBox.warning(self, 'Input Error', 'Please enter at least one target URL')
                     return
             
-            # Get selected platforms
-            selected_platforms = []
-            if self.platform_desktop_check.isChecked():
-                selected_platforms.append('desktop')
-            if self.platform_android_check.isChecked():
-                selected_platforms.append('android')
-            
-            if not selected_platforms:
-                QMessageBox.warning(self, 'Input Error', 'Please select at least one platform (Desktop or Android)')
-                return
-            
-            # Collect configuration
-            config = {
-                'url_list': url_list,
-                'num_visits': self.num_visits_input.value(),
-                'min_time_spend': self.min_time_input.value(),
-                'max_time_spend': self.max_time_input.value(),
-                'threads': self.threads_input.value(),
-                'total_threads': self.total_threads_input.value(),
-                'content_ratio': self.content_ratio_input.value(),
-                'sponsored_ratio': self.sponsored_ratio_input.value(),
-                'platforms': selected_platforms,
-                'headless': False,  # Always False - browser must be visible
-                'proxy_enabled': self.proxy_enabled_check.isChecked(),
-                'proxy_type': self.proxy_type_combo.currentText(),
-                'proxy_list': self.proxy_list_input.toPlainText(),
-                'rotate_proxy': True,  # Always rotate for authenticity
-                'visit_type': visit_type,
-                'search_keyword': self.search_keyword_input.text().strip() if visit_type == 'search' else '',
-                'target_domain': self.target_domain_input.text().strip() if visit_type == 'search' else '',
-                'referral_sources': referral_sources,
-                'enable_interaction': self.enable_interaction.isChecked(),
-                'enable_extra_pages': self.enable_extra_pages.isChecked(),
-                'max_pages': self.max_pages_input.value(),
-                'scroll_depth': self.scroll_depth_input.value(),
-                'enable_mouse_movement': self.enable_mouse_movement.isChecked(),
-                'enable_idle_pauses': self.enable_idle_pauses.isChecked(),
-                'enable_consent': self.enable_consent.isChecked(),
-                'enable_popups': self.enable_popups.isChecked(),
-                'enable_text_highlight': self.enable_text_highlight.isChecked(),
-                'enable_ad_interaction': self.enable_ad_interaction.isChecked(),
-            }
+                # Get visit type
+                visit_type = 'direct'
+                if self.visit_referral_radio.isChecked():
+                    visit_type = 'referral'
+                elif self.visit_search_radio.isChecked():
+                    visit_type = 'search'
+                
+                # Validate search keyword and target domain if search type is selected
+                if visit_type == 'search':
+                    keyword = self.search_keyword_input.text().strip()
+                    target_domain = self.target_domain_input.text().strip()
+                    if not keyword:
+                        QMessageBox.warning(self, 'Input Error', 'Please enter a search keyword for Search Visit type')
+                        return
+                    if not target_domain:
+                        QMessageBox.warning(self, 'Input Error', 'Please enter a target domain for Search Visit type')
+                        return
+                
+                # Collect referral sources if referral type is selected
+                referral_sources = []
+                if visit_type == 'referral':
+                    if self.referral_facebook.isChecked():
+                        referral_sources.append('facebook')
+                    if self.referral_google.isChecked():
+                        referral_sources.append('google')
+                    if self.referral_twitter.isChecked():
+                        referral_sources.append('twitter')
+                    if self.referral_telegram.isChecked():
+                        referral_sources.append('telegram')
+                    if self.referral_instagram.isChecked():
+                        referral_sources.append('instagram')
+                    
+                    if not referral_sources:
+                        QMessageBox.warning(self, 'Input Error', 'Please select at least one referral source')
+                        return
+                
+                # Get selected platforms
+                selected_platforms = []
+                if self.platform_desktop_check.isChecked():
+                    selected_platforms.append('desktop')
+                if self.platform_android_check.isChecked():
+                    selected_platforms.append('android')
+                
+                if not selected_platforms:
+                    QMessageBox.warning(self, 'Input Error', 'Please select at least one platform (Desktop or Android)')
+                    return
+                
+                # Collect configuration
+                config = {
+                    'rpa_mode': False,
+                    'url_list': url_list,
+                    'num_visits': self.num_visits_input.value(),
+                    'min_time_spend': self.min_time_input.value(),
+                    'max_time_spend': self.max_time_input.value(),
+                    'threads': self.threads_input.value(),
+                    'total_threads': self.total_threads_input.value(),
+                    'content_ratio': self.content_ratio_input.value(),
+                    'sponsored_ratio': self.sponsored_ratio_input.value(),
+                    'platforms': selected_platforms,
+                    'headless': False,  # Always False - browser must be visible
+                    'proxy_enabled': self.proxy_enabled_check.isChecked(),
+                    'proxy_type': self.proxy_type_combo.currentText(),
+                    'proxy_list': self.proxy_list_input.toPlainText(),
+                    'rotate_proxy': True,  # Always rotate for authenticity
+                    'visit_type': visit_type,
+                    'search_keyword': self.search_keyword_input.text().strip() if visit_type == 'search' else '',
+                    'target_domain': self.target_domain_input.text().strip() if visit_type == 'search' else '',
+                    'referral_sources': referral_sources,
+                    'enable_interaction': self.enable_interaction.isChecked(),
+                    'enable_extra_pages': self.enable_extra_pages.isChecked(),
+                    'max_pages': self.max_pages_input.value(),
+                    'scroll_depth': self.scroll_depth_input.value(),
+                    'enable_mouse_movement': self.enable_mouse_movement.isChecked(),
+                    'enable_idle_pauses': self.enable_idle_pauses.isChecked(),
+                    'enable_consent': self.enable_consent.isChecked(),
+                    'enable_popups': self.enable_popups.isChecked(),
+                    'enable_text_highlight': self.enable_text_highlight.isChecked(),
+                    'enable_ad_interaction': self.enable_ad_interaction.isChecked(),
+                }
             
             # Update UI
             self.start_btn.setEnabled(False)
