@@ -1415,6 +1415,70 @@ class AutomationWorker(QObject):
         except Exception as e:
             self.emit_log(f'Error during interaction: {e}', 'WARNING')
     
+    async def execute_single_visit(self, visit_num, url_list, platforms, visit_type, 
+                                   search_keyword, target_domain, referral_sources,
+                                   min_time_spend, max_time_spend, enable_consent, 
+                                   enable_interaction, enable_extra_pages, max_pages,
+                                   consent_manager):
+        """Execute a single visit/profile session."""
+        try:
+            # Select random URL and platform
+            target_url = random.choice(url_list)
+            platform = random.choice(platforms)
+            
+            self.emit_log(f'━━━ Profile {visit_num} | Platform: {platform} | URL: {target_url[:50]}... ━━━')
+            
+            # Create new context for this visit (session isolation)
+            self.emit_log(f'Creating browser context for profile {visit_num}...')
+            context = await self.browser_manager.create_context(platform)
+            if not context:
+                self.emit_log(f'Failed to create browser context for profile {visit_num}', 'ERROR')
+                return False
+            
+            try:
+                # Create new page
+                page = await context.new_page()
+                
+                # Navigate based on visit type
+                if visit_type == 'referral':
+                    await self.handle_referral_visit(page, target_url, referral_sources)
+                elif visit_type == 'search':
+                    # Search visit - find target domain in Google results
+                    found = await self.handle_search_visit(page, target_domain, search_keyword)
+                    if not found:
+                        self.emit_log(f'Target domain not found in search for profile {visit_num}', 'WARNING')
+                        return False
+                else:
+                    # Direct visit
+                    self.emit_log(f'[INFO] Direct visit to {target_url}')
+                    await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
+                
+                # Handle consents if enabled
+                if consent_manager and enable_consent:
+                    await consent_manager.handle_consents(page)
+                
+                # Time-based human scrolling behavior
+                self.emit_log(f'Starting time-based browsing ({min_time_spend}-{max_time_spend} seconds)...')
+                await HumanBehavior.time_based_browsing(page, min_time_spend, max_time_spend)
+                
+                # Handle interaction if enabled (legacy mode)
+                if enable_interaction:
+                    await self.handle_interaction(page, max_pages, enable_extra_pages)
+                
+                # Close page
+                await page.close()
+                
+                self.emit_log(f'✓ Profile {visit_num} completed successfully')
+                return True
+                
+            finally:
+                # Always close context after visit (session isolation)
+                await context.close()
+                
+        except Exception as e:
+            self.emit_log(f'✗ Profile {visit_num} error: {e}', 'ERROR')
+            return False
+    
     async def run_automation(self):
         """Main automation loop with multi-threading, multiple URLs, and platform mixing support."""
         try:
@@ -1475,135 +1539,70 @@ class AutomationWorker(QObject):
                 self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'ERROR')
                 return
             
-            # Create managers
+            # Create consent manager
             consent_manager = ConsentManager(self.log_manager) if enable_consent else None
-            sponsored_engine = SponsoredClickEngine(self.log_manager)
             
-            # Failure tracking for browser restart
-            consecutive_failures = 0
-            max_failures_before_restart = 3
+            # Track completed profiles
+            total_profiles_completed = 0
             
-            # Thread counter
-            total_threads_executed = 0
+            self.emit_log(f'Starting concurrent execution: {threads} browsers at a time')
             
-            # Run visits with session isolation
-            for visit in range(num_visits):
+            # Run visits in batches based on thread count
+            for batch_start in range(0, num_visits, threads):
                 if not self.running:
                     self.emit_log('Stop requested, exiting gracefully...')
                     break
                 
                 # Check total thread limit
-                if total_threads_limit > 0 and total_threads_executed >= total_threads_limit:
+                if total_threads_limit > 0 and total_profiles_completed >= total_threads_limit:
                     self.emit_log(f'✓ Total thread limit reached ({total_threads_limit}), stopping...')
                     break
                 
-                # Select random URL from list
-                target_url = random.choice(url_list)
+                # Calculate how many visits in this batch
+                batch_end = min(batch_start + threads, num_visits)
+                batch_size = batch_end - batch_start
                 
-                # Select random platform from selected platforms
-                platform = random.choice(platforms)
+                if total_threads_limit > 0:
+                    remaining = total_threads_limit - total_profiles_completed
+                    batch_size = min(batch_size, remaining)
                 
-                self.emit_log(f'━━━ Visit {visit + 1}/{num_visits} | Platform: {platform} | URL: {target_url[:50]}... ━━━')
+                self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+                self.emit_log(f'Starting batch: {batch_size} browsers running simultaneously')
+                self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
                 
-                context = None
-                page = None
+                # Create tasks for concurrent execution
+                tasks = []
+                for i in range(batch_size):
+                    visit_num = batch_start + i + 1
+                    task = self.execute_single_visit(
+                        visit_num, url_list, platforms, visit_type,
+                        search_keyword, target_domain, referral_sources,
+                        min_time_spend, max_time_spend, enable_consent,
+                        enable_interaction, enable_extra_pages, max_pages,
+                        consent_manager
+                    )
+                    tasks.append(task)
                 
-                try:
-                    # Create new context for this visit (session isolation)
-                    self.emit_log(f'Creating browser context for visit {visit + 1}...')
-                    context = await self.browser_manager.create_context(platform)
-                    if not context:
-                        self.emit_log('Failed to create browser context', 'ERROR')
-                        consecutive_failures += 1
-                        
-                        # Restart browser if too many failures
-                        if consecutive_failures >= max_failures_before_restart:
-                            self.emit_log(f'Too many failures ({consecutive_failures}), restarting browser...')
-                            await self.browser_manager.close()
-                            await asyncio.sleep(2)
-                            success = await self.browser_manager.initialize()
-                            if not success:
-                                self.emit_log('Browser restart failed', 'ERROR')
-                                break
-                            consecutive_failures = 0
-                        
-                        continue
-                    
-                    # Create new page
-                    page = await context.new_page()
-                    total_threads_executed += 1
-                    
-                    # Navigate based on visit type
-                    if visit_type == 'referral':
-                        await self.handle_referral_visit(page, target_url, referral_sources)
-                    elif visit_type == 'search':
-                        # Search visit - find target domain in Google results
-                        found = await self.handle_search_visit(page, target_domain, search_keyword)
-                        if not found:
-                            # If domain not found, close page and count as failed attempt
-                            self.emit_log('Target domain not found in search, counting as failed visit', 'WARNING')
-                            if page:
-                                await page.close()
-                            consecutive_failures += 1
-                            continue
-                    else:
-                        # Direct visit
-                        self.emit_log(f'[INFO] Direct visit to {target_url}')
-                        await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
-                    
-                    # Handle consents if enabled
-                    if consent_manager and enable_consent:
-                        await consent_manager.handle_consents(page)
-                    
-                    # Time-based human scrolling behavior
-                    self.emit_log(f'Starting time-based browsing ({min_time_spend}-{max_time_spend} seconds)...')
-                    await HumanBehavior.time_based_browsing(page, min_time_spend, max_time_spend)
-                    
-                    # Handle interaction if enabled (legacy mode)
-                    if enable_interaction:
-                        await self.handle_interaction(page, max_pages, enable_extra_pages)
-                    
-                    # Close page
-                    if page:
-                        await page.close()
-                    
-                    self.emit_log(f'✓ Visit {visit + 1} completed successfully (Thread {total_threads_executed})')
-                    
-                    # Reset failure counter on success
-                    consecutive_failures = 0
-                    
-                    # Delay between visits
-                    if visit < num_visits - 1 and self.running:
-                        delay = random.uniform(2, 5)
-                        await asyncio.sleep(delay)
+                # Execute all tasks concurrently
+                results = await asyncio.gather(*tasks, return_exceptions=True)
                 
-                except Exception as e:
-                    self.emit_log(f'✗ Visit {visit + 1} error: {e}', 'ERROR')
-                    consecutive_failures += 1
-                    
-                    # Restart browser if too many failures
-                    if consecutive_failures >= max_failures_before_restart:
-                        self.emit_log(f'Too many failures ({consecutive_failures}), restarting browser...')
-                        await self.browser_manager.close()
-                        await asyncio.sleep(2)
-                        success = await self.browser_manager.initialize()
-                        if not success:
-                            self.emit_log('Browser restart failed', 'ERROR')
-                            break
-                        consecutive_failures = 0
+                # Count successes
+                success_count = sum(1 for r in results if r is True)
+                total_profiles_completed += success_count
                 
-                finally:
-                    # Always close context after visit (session isolation)
-                    if context:
-                        try:
-                            await context.close()
-                            self.emit_log(f'Context closed for visit {visit + 1}')
-                        except Exception as e:
-                            self.emit_log(f'Error closing context: {e}', 'ERROR')
+                self.emit_log(f'Batch completed: {success_count}/{batch_size} profiles successful')
+                
+                # Small delay between batches
+                if batch_end < num_visits and self.running:
+                    await asyncio.sleep(random.uniform(1, 3))
+            
+            self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+            self.emit_log(f'✓ Automation completed: {total_profiles_completed} profiles processed')
+            self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             
             # Cleanup
             await self.browser_manager.close()
-            self.emit_log(f'Automation completed - Total threads executed: {total_threads_executed}')
+            self.emit_log('Browser closed, automation finished')
             
         except Exception as e:
             self.emit_log(f'Automation error: {e}', 'ERROR')
