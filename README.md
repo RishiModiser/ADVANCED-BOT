@@ -57,29 +57,37 @@ python setup_browser.py
 
 **Error: "Failed to initialize browser"**
 
-This error occurs when Playwright browsers are not installed. The bot now includes **automatic browser installation** that attempts to resolve this issue automatically.
+This error occurs when Playwright browsers are not installed or system dependencies are missing. The bot now includes **enhanced automatic installation** that attempts to resolve this issue automatically.
 
-**Automatic Installation (New!):**
-When you run the bot and it detects a missing browser, it will:
+**Automatic Installation (Enhanced!):**
+When you run the bot and it detects a missing browser or system dependencies, it will:
 1. Automatically download and install Chromium browser
-2. Retry the initialization process
-3. Start working without manual intervention
+2. Install required system dependencies (Linux only)
+3. Retry the initialization process
+4. Start working without manual intervention
+
+The auto-install now detects more error types including:
+- Missing browser binaries
+- Missing system libraries (libgobject, libnss, libatk, etc.)
+- Launch failures
 
 **Manual Installation (if needed):**
 If automatic installation fails, you can install manually:
 
-1. Run: `playwright install chromium`
-2. Or: `python -m playwright install chromium`
-3. Or: `python setup_browser.py`
+1. Install browser: `playwright install chromium`
+2. Install system dependencies (Linux only): `sudo playwright install-deps chromium`
+3. Or use the helper: `python setup_browser.py`
 
 If the issue persists, ensure you have installed the requirements:
 ```bash
 pip install -r requirements.txt
 playwright install chromium
+# On Linux, also run:
+sudo playwright install-deps chromium
 ```
 
 **CI/CD Environments:**
-For CI/CD pipelines, use the provided GitHub Actions workflow (`.github/workflows/test.yml`) which automatically installs browsers during the build process.
+For CI/CD pipelines, use the provided GitHub Actions workflow (`.github/workflows/test.yml`) which automatically installs browsers and system dependencies during the build process.
 
 ## 🖥️ Usage
 
