@@ -903,9 +903,9 @@ class AutomationWorker(QObject):
             self.emit_log(f'Error during referral visit: {e}', 'ERROR')
             raise
     
-    async def handle_search_visit(self, page: Page, target_url: str, keyword: str):
-        """Handle search visit - search on Google and click result."""
-        self.emit_log(f'[INFO] Search visit with keyword: "{keyword}"')
+    async def handle_search_visit(self, page: Page, target_domain: str, keyword: str):
+        """Handle search visit - search on Google, find target domain, and click it."""
+        self.emit_log(f'[INFO] Search visit with keyword: "{keyword}" for domain: "{target_domain}"')
         
         try:
             # Navigate to Google
@@ -926,9 +926,8 @@ class AutomationWorker(QObject):
                     continue
             
             if not search_box:
-                self.emit_log('Could not find Google search box, using direct navigation', 'WARNING')
-                await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
-                return
+                self.emit_log('Could not find Google search box, skipping search', 'WARNING')
+                return False
             
             # Type keyword character by character with delays
             self.emit_log('Typing search keyword...')
@@ -950,29 +949,65 @@ class AutomationWorker(QObject):
             await HumanBehavior.scroll_page(page, random.randint(30, 60))
             await asyncio.sleep(random.uniform(1, 2))
             
-            # Try to find and click target domain in results
-            # For now, navigate directly (in production, would search for matching link)
-            self.emit_log(f'Navigating to target from search results...')
-            await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
+            # Try to find and click target domain in top 10 results
+            self.emit_log(f'Searching for target domain "{target_domain}" in top 10 results...')
+            
+            # Get all result links
+            result_links = await page.query_selector_all('a[href]')
+            
+            found_link = None
+            for link in result_links[:30]:  # Check first 30 links (covers top 10 results)
+                try:
+                    href = await link.get_attribute('href')
+                    if href and target_domain in href:
+                        found_link = link
+                        self.emit_log(f'✓ Found target domain in results: {href[:80]}...')
+                        break
+                except:
+                    continue
+            
+            if found_link:
+                # Click the found link
+                self.emit_log('Clicking on target domain link...')
+                await found_link.click()
+                await asyncio.sleep(random.uniform(2, 4))
+                return True
+            else:
+                self.emit_log(f'⚠ Target domain "{target_domain}" not found in top results', 'WARNING')
+                return False
             
         except Exception as e:
             self.emit_log(f'Error during search visit: {e}', 'ERROR')
-            raise
+            return False
     
-    async def handle_interaction(self, page: Page, min_stay_minutes: int, max_stay_minutes: int, 
-                                  max_pages: int, enable_extra_pages: bool):
-        """Handle page interaction - click links, navigate pages, extended stay."""
-        stay_time = random.randint(min_stay_minutes * 60, max_stay_minutes * 60)
-        self.emit_log(f'[INFO] Interaction enabled - staying for {stay_time // 60} minutes')
+    async def handle_interaction(self, page: Page, max_pages: int, enable_extra_pages: bool):
+        """Handle advanced page interaction - click posts, explore pages, follow links with human behavior."""
+        self.emit_log('[INFO] Advanced human behavior interaction enabled')
         
-        start_time = asyncio.get_event_loop().time()
         pages_visited = 1
+        interactions_count = 0
+        max_interactions = random.randint(5, 15)
         
         try:
-            while (asyncio.get_event_loop().time() - start_time) < stay_time and self.running:
-                # Scroll and pause
-                await HumanBehavior.scroll_page(page, random.randint(40, 90))
+            for interaction in range(max_interactions):
+                if not self.running:
+                    break
+                
+                # Scroll and pause (human-like reading)
+                scroll_depth = random.randint(40, 90)
+                await HumanBehavior.scroll_page(page, scroll_depth)
                 await asyncio.sleep(random.uniform(5, 15))
+                
+                # Random mouse movements
+                try:
+                    viewport_size = page.viewport_size
+                    if viewport_size:
+                        x = random.randint(100, viewport_size['width'] - 100)
+                        y = random.randint(100, viewport_size['height'] - 100)
+                        await page.mouse.move(x, y)
+                        await asyncio.sleep(random.uniform(0.5, 2))
+                except:
+                    pass
                 
                 # Try to click a link if extra pages enabled
                 if enable_extra_pages and pages_visited < max_pages:
@@ -991,6 +1026,7 @@ class AutomationWorker(QObject):
                                 await content_link.click()
                                 await asyncio.sleep(random.uniform(3, 6))
                                 pages_visited += 1
+                                interactions_count += 1
                                 
                                 # Handle consents on new page
                                 consent_manager = ConsentManager(self.log_manager)
@@ -999,20 +1035,43 @@ class AutomationWorker(QObject):
                     except Exception as e:
                         self.emit_log(f'Could not click link: {e}', 'WARNING')
                 
-                # Random idle pause
-                await asyncio.sleep(random.uniform(10, 30))
+                # Random idle pause (simulating reading)
+                await asyncio.sleep(random.uniform(8, 25))
+                
+            self.emit_log(f'✓ Completed {interactions_count} interactions across {pages_visited} pages')
                 
         except Exception as e:
             self.emit_log(f'Error during interaction: {e}', 'WARNING')
     
     async def run_automation(self):
-        """Main automation loop with session isolation and stability improvements."""
+        """Main automation loop with multi-threading, multiple URLs, and platform mixing support."""
         try:
             self.running = True
             self.emit_log('Starting automation...')
             
+            # Get configuration
+            url_list = self.config.get('url_list', [])
+            num_visits = self.config.get('num_visits', 1)
+            threads = self.config.get('threads', 1)
+            total_threads_limit = self.config.get('total_threads', 0)
+            platforms = self.config.get('platforms', ['desktop'])
+            content_ratio = self.config.get('content_ratio', 85) / 100
+            sponsored_ratio = self.config.get('sponsored_ratio', 15) / 100
+            visit_type = self.config.get('visit_type', 'direct')
+            search_keyword = self.config.get('search_keyword', '')
+            target_domain = self.config.get('target_domain', '')
+            referral_sources = self.config.get('referral_sources', [])
+            enable_interaction = self.config.get('enable_interaction', False)
+            enable_extra_pages = self.config.get('enable_extra_pages', False)
+            max_pages = self.config.get('max_pages', 5)
+            enable_consent = self.config.get('enable_consent', True)
+            enable_popups = self.config.get('enable_popups', True)
+            
+            self.emit_log(f'Configuration: {len(url_list)} URLs, {num_visits} visits, {threads} threads')
+            if total_threads_limit > 0:
+                self.emit_log(f'Total thread limit: {total_threads_limit}')
+            
             # Initialize browser
-            platform = self.config.get('platform', 'desktop')
             self.browser_manager.headless = self.config.get('headless', False)
             
             success = await self.browser_manager.initialize()
@@ -1021,26 +1080,15 @@ class AutomationWorker(QObject):
                 return
             
             # Create managers
-            consent_manager = ConsentManager(self.log_manager)
+            consent_manager = ConsentManager(self.log_manager) if enable_consent else None
             sponsored_engine = SponsoredClickEngine(self.log_manager)
-            
-            # Get configuration
-            target_url = self.config.get('url', '')
-            num_visits = self.config.get('num_visits', 1)
-            content_ratio = self.config.get('content_ratio', 85) / 100
-            sponsored_ratio = self.config.get('sponsored_ratio', 15) / 100
-            visit_type = self.config.get('visit_type', 'direct')
-            search_keyword = self.config.get('search_keyword', '')
-            referral_sources = self.config.get('referral_sources', [])
-            enable_interaction = self.config.get('enable_interaction', False)
-            min_stay_time = self.config.get('min_stay_time', 3)
-            max_stay_time = self.config.get('max_stay_time', 10)
-            enable_extra_pages = self.config.get('enable_extra_pages', False)
-            max_pages = self.config.get('max_pages', 5)
             
             # Failure tracking for browser restart
             consecutive_failures = 0
             max_failures_before_restart = 3
+            
+            # Thread counter
+            total_threads_executed = 0
             
             # Run visits with session isolation
             for visit in range(num_visits):
@@ -1048,7 +1096,18 @@ class AutomationWorker(QObject):
                     self.emit_log('Stop requested, exiting gracefully...')
                     break
                 
-                self.emit_log(f'━━━ Visit {visit + 1}/{num_visits} ━━━')
+                # Check total thread limit
+                if total_threads_limit > 0 and total_threads_executed >= total_threads_limit:
+                    self.emit_log(f'✓ Total thread limit reached ({total_threads_limit}), stopping...')
+                    break
+                
+                # Select random URL from list
+                target_url = random.choice(url_list)
+                
+                # Select random platform from selected platforms
+                platform = random.choice(platforms)
+                
+                self.emit_log(f'━━━ Visit {visit + 1}/{num_visits} | Platform: {platform} | URL: {target_url[:50]}... ━━━')
                 
                 context = None
                 page = None
@@ -1075,19 +1134,29 @@ class AutomationWorker(QObject):
                     
                     # Create new page
                     page = await context.new_page()
+                    total_threads_executed += 1
                     
                     # Navigate based on visit type
                     if visit_type == 'referral':
                         await self.handle_referral_visit(page, target_url, referral_sources)
                     elif visit_type == 'search':
-                        await self.handle_search_visit(page, target_url, search_keyword)
+                        # Search visit - find target domain in Google results
+                        found = await self.handle_search_visit(page, target_domain, search_keyword)
+                        if not found:
+                            # If domain not found, close page and count as failed attempt
+                            self.emit_log('Target domain not found in search, counting as failed visit', 'WARNING')
+                            if page:
+                                await page.close()
+                            consecutive_failures += 1
+                            continue
                     else:
                         # Direct visit
                         self.emit_log(f'[INFO] Direct visit to {target_url}')
                         await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
                     
-                    # Handle consents
-                    await consent_manager.handle_consents(page)
+                    # Handle consents if enabled
+                    if consent_manager and enable_consent:
+                        await consent_manager.handle_consents(page)
                     
                     # Random scroll
                     await HumanBehavior.scroll_page(page)
@@ -1097,8 +1166,7 @@ class AutomationWorker(QObject):
                     
                     # Handle interaction if enabled
                     if enable_interaction:
-                        await self.handle_interaction(page, min_stay_time, max_stay_time, 
-                                                     max_pages, enable_extra_pages)
+                        await self.handle_interaction(page, max_pages, enable_extra_pages)
                     else:
                         # Decide on interaction type based on ratio
                         if random.random() < sponsored_ratio:
@@ -1116,7 +1184,7 @@ class AutomationWorker(QObject):
                     if page:
                         await page.close()
                     
-                    self.emit_log(f'✓ Visit {visit + 1} completed successfully')
+                    self.emit_log(f'✓ Visit {visit + 1} completed successfully (Thread {total_threads_executed})')
                     
                     # Reset failure counter on success
                     consecutive_failures = 0
@@ -1152,7 +1220,7 @@ class AutomationWorker(QObject):
             
             # Cleanup
             await self.browser_manager.close()
-            self.emit_log('Automation completed')
+            self.emit_log(f'Automation completed - Total threads executed: {total_threads_executed}')
             
         except Exception as e:
             self.emit_log(f'Automation error: {e}', 'ERROR')
@@ -1178,6 +1246,9 @@ class AppGUI(QMainWindow):
         self.log_manager = LogManager()
         self.automation_thread = None
         self.automation_worker = None
+        # Initialize confidence_input with default value (since sponsored tab is removed)
+        self.confidence_input = QDoubleSpinBox()
+        self.confidence_input.setValue(0.7)
         self.init_ui()
     
     def init_ui(self):
@@ -1224,16 +1295,13 @@ class AppGUI(QMainWindow):
         # Tab 1: Website & Traffic
         tabs.addTab(self.create_website_tab(), '🔧 Website Traffic')
         
-        # Tab 2: Behavior Settings
-        tabs.addTab(self.create_behavior_tab(), '🧠 Behavior')
+        # Tab 2: Traffic Behaviour Settings
+        tabs.addTab(self.create_behavior_tab(), '🧠 Traffic Behaviour')
         
         # Tab 3: Proxy Settings
         tabs.addTab(self.create_proxy_tab(), '🌐 Proxy Settings')
         
-        # Tab 4: Sponsored Content
-        tabs.addTab(self.create_sponsored_tab(), '📱 Sponsored Content')
-        
-        # Tab 5: RPA Script
+        # Tab 4: RPA Script
         tabs.addTab(self.create_script_tab(), '🧩 RPA Script')
         
         layout.addWidget(tabs)
@@ -1246,15 +1314,33 @@ class AppGUI(QMainWindow):
         layout = QVBoxLayout(widget)
         layout.setSpacing(15)
         
-        # Website URL
+        # Website URL - Multiple URLs Support
         url_group = QGroupBox('🌍 Website Configuration')
         url_layout = QVBoxLayout()
         url_layout.setSpacing(10)
         
-        url_layout.addWidget(QLabel('Target URL:'))
+        url_layout.addWidget(QLabel('Target URLs (one URL opens per browser):'))
+        
+        # URL input and add button
+        url_input_layout = QHBoxLayout()
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText('https://example.com')
-        url_layout.addWidget(self.url_input)
+        url_input_layout.addWidget(self.url_input)
+        
+        add_url_btn = QPushButton('➕ Add URL')
+        add_url_btn.clicked.connect(self.add_url_to_list)
+        url_input_layout.addWidget(add_url_btn)
+        url_layout.addLayout(url_input_layout)
+        
+        # URL list widget
+        self.url_list_widget = QListWidget()
+        self.url_list_widget.setMaximumHeight(100)
+        url_layout.addWidget(self.url_list_widget)
+        
+        # Remove URL button
+        remove_url_btn = QPushButton('🗑 Remove Selected URL')
+        remove_url_btn.clicked.connect(self.remove_url_from_list)
+        url_layout.addWidget(remove_url_btn)
         
         url_group.setLayout(url_layout)
         layout.addWidget(url_group)
@@ -1326,6 +1412,16 @@ class AppGUI(QMainWindow):
         self.search_keyword_input.setPlaceholderText('Enter keyword to search...')
         search_layout.addWidget(self.search_keyword_input)
         
+        search_layout.addWidget(QLabel('Target Domain (e.g., example.com):'))
+        self.target_domain_input = QLineEdit()
+        self.target_domain_input.setPlaceholderText('Enter your target domain...')
+        search_layout.addWidget(self.target_domain_input)
+        
+        info_label = QLabel('ℹ️ Bot will search keyword on Google, find target domain in top 10, and click it')
+        info_label.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
+        info_label.setWordWrap(True)
+        search_layout.addWidget(info_label)
+        
         self.search_group.setLayout(search_layout)
         self.search_group.setVisible(False)  # Hidden by default
         layout.addWidget(self.search_group)
@@ -1337,9 +1433,23 @@ class AppGUI(QMainWindow):
         
         traffic_layout.addWidget(QLabel('Number of Visits:'))
         self.num_visits_input = QSpinBox()
-        self.num_visits_input.setRange(1, 1000)
+        self.num_visits_input.setRange(1, 10000)
         self.num_visits_input.setValue(10)
+        self.num_visits_input.setToolTip('High values with concurrent threads may consume significant resources')
         traffic_layout.addWidget(self.num_visits_input)
+        
+        traffic_layout.addWidget(QLabel('Threads (concurrent browsers):'))
+        self.threads_input = QSpinBox()
+        self.threads_input.setRange(1, 100)
+        self.threads_input.setValue(1)
+        traffic_layout.addWidget(self.threads_input)
+        
+        traffic_layout.addWidget(QLabel('Total Threads to Run (0 = unlimited):'))
+        self.total_threads_input = QSpinBox()
+        self.total_threads_input.setRange(0, 100000)
+        self.total_threads_input.setValue(0)
+        self.total_threads_input.setSpecialValueText('Unlimited')
+        traffic_layout.addWidget(self.total_threads_input)
         
         traffic_layout.addWidget(QLabel('Content Interaction % (0-100):'))
         self.content_ratio_input = QSpinBox()
@@ -1361,9 +1471,17 @@ class AppGUI(QMainWindow):
         platform_layout = QVBoxLayout()
         platform_layout.setSpacing(10)
         
-        self.platform_combo = QComboBox()
-        self.platform_combo.addItems(['desktop', 'android'])
-        platform_layout.addWidget(self.platform_combo)
+        platform_layout.addWidget(QLabel('Select Platform(s):'))
+        self.platform_desktop_check = QCheckBox('🖥 Desktop')
+        self.platform_desktop_check.setChecked(True)
+        platform_layout.addWidget(self.platform_desktop_check)
+        
+        self.platform_android_check = QCheckBox('📱 Android')
+        platform_layout.addWidget(self.platform_android_check)
+        
+        info_label = QLabel('ℹ️ Select both to mix Desktop and Android browsers')
+        info_label.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
+        platform_layout.addWidget(info_label)
         
         platform_group.setLayout(platform_layout)
         layout.addWidget(platform_group)
@@ -1379,6 +1497,28 @@ class AppGUI(QMainWindow):
     def toggle_search_section(self, checked):
         """Toggle visibility of search settings."""
         self.search_group.setVisible(checked)
+    
+    def add_url_to_list(self):
+        """Add URL from input to list widget."""
+        url = self.url_input.text().strip()
+        if url:
+            # Add https:// if no protocol specified
+            if not url.startswith(('http://', 'https://')):
+                url = 'https://' + url
+            
+            # Basic URL validation
+            if '.' not in url or len(url) < 10:
+                QMessageBox.warning(self, 'Invalid URL', 'Please enter a valid URL')
+                return
+            
+            self.url_list_widget.addItem(url)
+            self.url_input.clear()
+    
+    def remove_url_from_list(self):
+        """Remove selected URL from list widget."""
+        current_item = self.url_list_widget.currentItem()
+        if current_item:
+            self.url_list_widget.takeItem(self.url_list_widget.row(current_item))
     
     def create_behavior_tab(self) -> QWidget:
         """Create behavior settings tab."""
@@ -1421,29 +1561,19 @@ class AppGUI(QMainWindow):
         behavior_group.setLayout(behavior_layout)
         layout.addWidget(behavior_group)
         
-        # Interaction Settings (NEW FEATURE)
+        # Interaction Settings (Simplified)
         interaction_group = QGroupBox('🔗 Interaction Settings')
         interaction_layout = QVBoxLayout()
         interaction_layout.setSpacing(10)
         
-        self.enable_interaction = QCheckBox('✅ Enable Interaction (click links, explore pages)')
+        self.enable_interaction = QCheckBox('✅ Enable Interaction')
         self.enable_interaction.setChecked(False)
-        self.enable_interaction.stateChanged.connect(self.toggle_interaction_settings)
         interaction_layout.addWidget(self.enable_interaction)
         
-        interaction_layout.addWidget(QLabel('⏱ Minimum Stay Time (minutes):'))
-        self.min_stay_time_input = QSpinBox()
-        self.min_stay_time_input.setRange(1, 60)
-        self.min_stay_time_input.setValue(3)
-        self.min_stay_time_input.setEnabled(False)
-        interaction_layout.addWidget(self.min_stay_time_input)
-        
-        interaction_layout.addWidget(QLabel('⏱ Maximum Stay Time (minutes):'))
-        self.max_stay_time_input = QSpinBox()
-        self.max_stay_time_input.setRange(1, 120)
-        self.max_stay_time_input.setValue(10)
-        self.max_stay_time_input.setEnabled(False)
-        interaction_layout.addWidget(self.max_stay_time_input)
+        info_label = QLabel('ℹ️ Advanced human behavior: click posts, explore pages, follow links, natural scrolling')
+        info_label.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
+        info_label.setWordWrap(True)
+        interaction_layout.addWidget(info_label)
         
         interaction_group.setLayout(interaction_layout)
         layout.addWidget(interaction_group)
@@ -1488,12 +1618,6 @@ class AppGUI(QMainWindow):
         
         return widget
     
-    def toggle_interaction_settings(self, state):
-        """Enable/disable interaction time inputs based on checkbox state."""
-        enabled = state == Qt.Checked
-        self.min_stay_time_input.setEnabled(enabled)
-        self.max_stay_time_input.setEnabled(enabled)
-    
     def toggle_page_visit_settings(self, state):
         """Enable/disable page visit inputs based on checkbox state."""
         enabled = state == Qt.Checked
@@ -1537,13 +1661,20 @@ class AppGUI(QMainWindow):
         proxy_list_layout.setSpacing(10)
         
         proxy_list_layout.addWidget(QLabel('Enter proxies (one per line):'))
-        proxy_list_layout.addWidget(QLabel('Formats: ip:port or user:pass@ip:port'))
+        proxy_list_layout.addWidget(QLabel('Formats: ip:port, user:pass@ip:port, socks5://ip:port'))
         
         self.proxy_list_input = QTextEdit()
-        self.proxy_list_input.setPlaceholderText('127.0.0.1:8080\nuser:pass@192.168.1.1:3128\n10.0.0.1:1080')
-        self.proxy_list_input.setMaximumHeight(150)
+        self.proxy_list_input.setPlaceholderText('127.0.0.1:8080\nuser:pass@192.168.1.1:3128\nsocks5://10.0.0.1:1080\nhttp://proxy.com:8080')
+        self.proxy_list_input.setMaximumHeight(120)
         self.proxy_list_input.setEnabled(False)
         proxy_list_layout.addWidget(self.proxy_list_input)
+        
+        # Import from file button
+        import_btn = QPushButton('📁 Import from File')
+        import_btn.clicked.connect(self.import_proxies_from_file)
+        import_btn.setEnabled(False)
+        self.proxy_import_btn = import_btn
+        proxy_list_layout.addWidget(import_btn)
         
         proxy_list_group.setLayout(proxy_list_layout)
         layout.addWidget(proxy_list_group)
@@ -1553,10 +1684,15 @@ class AppGUI(QMainWindow):
         rotation_layout = QVBoxLayout()
         rotation_layout.setSpacing(10)
         
-        self.rotate_proxy_check = QCheckBox('✅ Rotate proxy per session')
+        self.rotate_proxy_check = QCheckBox('✅ Rotate proxy per session/profile')
         self.rotate_proxy_check.setChecked(True)
         self.rotate_proxy_check.setEnabled(False)
         rotation_layout.addWidget(self.rotate_proxy_check)
+        
+        info_label = QLabel('ℹ️ Timezone and fingerprints will be set according to proxy location')
+        info_label.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
+        info_label.setWordWrap(True)
+        rotation_layout.addWidget(info_label)
         
         rotation_group.setLayout(rotation_layout)
         layout.addWidget(rotation_group)
@@ -1570,55 +1706,29 @@ class AppGUI(QMainWindow):
         enabled = state == Qt.Checked
         self.proxy_type_combo.setEnabled(enabled)
         self.proxy_list_input.setEnabled(enabled)
+        self.proxy_import_btn.setEnabled(enabled)
         self.rotate_proxy_check.setEnabled(enabled)
     
-    def create_sponsored_tab(self) -> QWidget:
-        """Create sponsored content tab."""
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setSpacing(15)
-        
-        # Safety Rules
-        safety_group = QGroupBox('🛡️ Safety Rules')
-        safety_layout = QVBoxLayout()
-        safety_layout.setSpacing(10)
-        
-        safety_layout.addWidget(QLabel('⚠️ Ad Network Blocklist:'))
-        
-        self.blocklist_display = QTextEdit()
-        self.blocklist_display.setReadOnly(True)
-        self.blocklist_display.setMaximumHeight(150)
-        self.blocklist_display.setText('\n'.join(AD_NETWORK_BLOCKLIST))
-        safety_layout.addWidget(self.blocklist_display)
-        
-        safety_group.setLayout(safety_layout)
-        layout.addWidget(safety_group)
-        
-        # Detection Rules
-        detection_group = QGroupBox('🔍 Sponsored Element Detection')
-        detection_layout = QVBoxLayout()
-        detection_layout.setSpacing(10)
-        
-        detection_layout.addWidget(QLabel('✅ Safe Selectors:'))
-        self.selectors_display = QTextEdit()
-        self.selectors_display.setReadOnly(True)
-        self.selectors_display.setMaximumHeight(150)
-        self.selectors_display.setText('\n'.join(SPONSORED_SELECTORS))
-        detection_layout.addWidget(self.selectors_display)
-        
-        detection_layout.addWidget(QLabel('📊 Confidence Threshold (0.0-1.0):'))
-        self.confidence_input = QDoubleSpinBox()
-        self.confidence_input.setRange(0.0, 1.0)
-        self.confidence_input.setSingleStep(0.1)
-        self.confidence_input.setValue(0.7)
-        detection_layout.addWidget(self.confidence_input)
-        
-        detection_group.setLayout(detection_layout)
-        layout.addWidget(detection_group)
-        
-        layout.addStretch()
-        
-        return widget
+    def import_proxies_from_file(self):
+        """Import proxies from a text file."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Proxy File",
+            "",
+            "Text Files (*.txt);;All Files (*)"
+        )
+        if file_path:
+            try:
+                with open(file_path, 'r') as f:
+                    proxies = f.read()
+                    current_text = self.proxy_list_input.toPlainText()
+                    if current_text.strip():
+                        self.proxy_list_input.setPlainText(current_text + '\n' + proxies)
+                    else:
+                        self.proxy_list_input.setPlainText(proxies)
+                self.log_manager.log('INFO', f'Imported proxies from {file_path}')
+            except Exception as e:
+                QMessageBox.warning(self, 'Error', f'Failed to import proxies: {str(e)}')
     
     def create_script_tab(self) -> QWidget:
         """Create RPA script tab with visual builder and JSON editor."""
@@ -1641,11 +1751,11 @@ class AppGUI(QMainWindow):
         self.action_toolbox.setDragEnabled(True)
         self.action_toolbox.setMaximumWidth(200)
         
-        # Add action items with emojis
+        # Add action items with emojis - UPDATED NAMES
         actions = [
-            '➕ New Page',
-            '🌐 Navigate',
-            '⏱ Wait',
+            '➕ New Tab',
+            '🌐 Access Website',
+            '⏱ Time',
             '📜 Scroll',
             '🖱 Click Element',
             '⌨ Input Text',
@@ -1806,10 +1916,23 @@ class AppGUI(QMainWindow):
     def start_automation(self):
         """Start the automation process."""
         try:
-            # Validate inputs
-            url = self.url_input.text().strip()
-            if not url:
-                QMessageBox.warning(self, 'Input Error', 'Please enter a target URL')
+            # Validate inputs - collect URLs from list widget
+            url_list = []
+            for i in range(self.url_list_widget.count()):
+                url = self.url_list_widget.item(i).text().strip()
+                if url:
+                    url_list.append(url)
+            
+            # If no URLs in list, check input field
+            if not url_list:
+                url = self.url_input.text().strip()
+                if url:
+                    if not url.startswith(('http://', 'https://')):
+                        url = 'https://' + url
+                    url_list.append(url)
+            
+            if not url_list:
+                QMessageBox.warning(self, 'Input Error', 'Please enter at least one target URL')
                 return
             
             # Get visit type
@@ -1819,11 +1942,15 @@ class AppGUI(QMainWindow):
             elif self.visit_search_radio.isChecked():
                 visit_type = 'search'
             
-            # Validate search keyword if search type is selected
+            # Validate search keyword and target domain if search type is selected
             if visit_type == 'search':
                 keyword = self.search_keyword_input.text().strip()
+                target_domain = self.target_domain_input.text().strip()
                 if not keyword:
                     QMessageBox.warning(self, 'Input Error', 'Please enter a search keyword for Search Visit type')
+                    return
+                if not target_domain:
+                    QMessageBox.warning(self, 'Input Error', 'Please enter a target domain for Search Visit type')
                     return
             
             # Collect referral sources if referral type is selected
@@ -1844,13 +1971,26 @@ class AppGUI(QMainWindow):
                     QMessageBox.warning(self, 'Input Error', 'Please select at least one referral source')
                     return
             
+            # Get selected platforms
+            selected_platforms = []
+            if self.platform_desktop_check.isChecked():
+                selected_platforms.append('desktop')
+            if self.platform_android_check.isChecked():
+                selected_platforms.append('android')
+            
+            if not selected_platforms:
+                QMessageBox.warning(self, 'Input Error', 'Please select at least one platform (Desktop or Android)')
+                return
+            
             # Collect configuration
             config = {
-                'url': url,
+                'url_list': url_list,
                 'num_visits': self.num_visits_input.value(),
+                'threads': self.threads_input.value(),
+                'total_threads': self.total_threads_input.value(),
                 'content_ratio': self.content_ratio_input.value(),
                 'sponsored_ratio': self.sponsored_ratio_input.value(),
-                'platform': self.platform_combo.currentText(),
+                'platforms': selected_platforms,
                 'headless': False,  # Always False - browser must be visible
                 'proxy_enabled': self.proxy_enabled_check.isChecked(),
                 'proxy_type': self.proxy_type_combo.currentText(),
@@ -1858,12 +1998,16 @@ class AppGUI(QMainWindow):
                 'rotate_proxy': self.rotate_proxy_check.isChecked(),
                 'visit_type': visit_type,
                 'search_keyword': self.search_keyword_input.text().strip() if visit_type == 'search' else '',
+                'target_domain': self.target_domain_input.text().strip() if visit_type == 'search' else '',
                 'referral_sources': referral_sources,
                 'enable_interaction': self.enable_interaction.isChecked(),
-                'min_stay_time': self.min_stay_time_input.value(),
-                'max_stay_time': self.max_stay_time_input.value(),
                 'enable_extra_pages': self.enable_extra_pages.isChecked(),
                 'max_pages': self.max_pages_input.value(),
+                'scroll_depth': self.scroll_depth_input.value(),
+                'enable_mouse_movement': self.enable_mouse_movement.isChecked(),
+                'enable_idle_pauses': self.enable_idle_pauses.isChecked(),
+                'enable_consent': self.enable_consent.isChecked(),
+                'enable_popups': self.enable_popups.isChecked(),
             }
             
             # Update UI
@@ -2072,23 +2216,63 @@ class AppGUI(QMainWindow):
         
         # Add configuration fields based on step type
         if step_type == 'navigate':
+            # Access Website configuration
             url_input = QLineEdit(config.get('url', ''))
             url_input.textChanged.connect(lambda text: self.update_step_config(step, 'url', text))
-            self.step_config_layout.addRow('URL:', url_input)
+            self.step_config_layout.addRow('Access URL:', url_input)
+            
+            timeout_input = QSpinBox()
+            timeout_input.setRange(1000, 120000)
+            timeout_input.setValue(config.get('timeout', 30000))
+            timeout_input.valueChanged.connect(lambda val: self.update_step_config(step, 'timeout', val))
+            self.step_config_layout.addRow('Timeout (ms):', timeout_input)
         
         elif step_type == 'wait':
+            # Time configuration
+            mode_combo = QComboBox()
+            mode_combo.addItems(['Fixed', 'Random'])
+            mode_combo.setCurrentText(config.get('mode', 'Fixed'))
+            mode_combo.currentTextChanged.connect(lambda text: self.update_step_config(step, 'mode', text))
+            self.step_config_layout.addRow('Timeout Waiting:', mode_combo)
+            
             duration_input = QSpinBox()
             duration_input.setRange(100, 60000)
             duration_input.setValue(config.get('duration', 2000))
             duration_input.valueChanged.connect(lambda val: self.update_step_config(step, 'duration', val))
             self.step_config_layout.addRow('Duration (ms):', duration_input)
+            
+            if config.get('mode', 'Fixed') == 'Random':
+                max_duration_input = QSpinBox()
+                max_duration_input.setRange(100, 60000)
+                max_duration_input.setValue(config.get('max_duration', 5000))
+                max_duration_input.valueChanged.connect(lambda val: self.update_step_config(step, 'max_duration', val))
+                self.step_config_layout.addRow('Max Duration (ms):', max_duration_input)
         
         elif step_type == 'scroll':
+            # Scroll configuration with type and speed
+            scroll_type_combo = QComboBox()
+            scroll_type_combo.addItems(['Smooth', 'Auto'])
+            scroll_type_combo.setCurrentText(config.get('scroll_type', 'Smooth'))
+            scroll_type_combo.currentTextChanged.connect(lambda text: self.update_step_config(step, 'scroll_type', text))
+            self.step_config_layout.addRow('Scroll Type:', scroll_type_combo)
+            
             depth_input = QSpinBox()
             depth_input.setRange(0, 100)
             depth_input.setValue(config.get('depth', 50))
             depth_input.valueChanged.connect(lambda val: self.update_step_config(step, 'depth', val))
             self.step_config_layout.addRow('Depth (%):', depth_input)
+            
+            min_speed_input = QSpinBox()
+            min_speed_input.setRange(50, 2000)
+            min_speed_input.setValue(config.get('min_speed', 100))
+            min_speed_input.valueChanged.connect(lambda val: self.update_step_config(step, 'min_speed', val))
+            self.step_config_layout.addRow('Min Scroll Speed (ms):', min_speed_input)
+            
+            max_speed_input = QSpinBox()
+            max_speed_input.setRange(50, 2000)
+            max_speed_input.setValue(config.get('max_speed', 500))
+            max_speed_input.valueChanged.connect(lambda val: self.update_step_config(step, 'max_speed', val))
+            self.step_config_layout.addRow('Max Scroll Speed (ms):', max_speed_input)
         
         elif step_type == 'click':
             selector_input = QLineEdit(config.get('selector', ''))
@@ -2199,24 +2383,33 @@ class AppGUI(QMainWindow):
         QMessageBox.information(self, 'Sync', 'Visual builder synced to JSON')
     
     def action_to_step_type(self, action_name: str) -> str:
-        """Convert action name to step type."""
+        """Convert action name to step type. Handles both old and new action names."""
+        # Remove emoji prefix for matching
+        clean_name = action_name.split(' ', 1)[1] if ' ' in action_name else action_name
+        
         mapping = {
-            'Open Page': 'newPage',
-            'Navigate': 'navigate',
-            'Wait': 'wait',
+            # New names
+            'New Tab': 'newPage',
+            'Access Website': 'navigate',
+            'Time': 'wait',
             'Scroll': 'scroll',
             'Click Element': 'click',
             'Input Text': 'input',
-            'Close Page': 'closePage'
+            'Close Page': 'closePage',
+            # Old names for backward compatibility
+            'New Page': 'newPage',
+            'Open Page': 'newPage',
+            'Navigate': 'navigate',
+            'Wait': 'wait',
         }
-        return mapping.get(action_name, 'unknown')
+        return mapping.get(clean_name, 'unknown')
     
     def step_type_to_action(self, step_type: str) -> str:
         """Convert step type to action name."""
         mapping = {
-            'newPage': 'Open Page',
-            'navigate': 'Navigate',
-            'wait': 'Wait',
+            'newPage': 'New Tab',
+            'navigate': 'Access Website',
+            'wait': 'Time',
             'scroll': 'Scroll',
             'click': 'Click Element',
             'input': 'Input Text',
@@ -2227,9 +2420,9 @@ class AppGUI(QMainWindow):
     def get_default_config(self, step_type: str) -> Dict[str, Any]:
         """Get default configuration for step type."""
         defaults = {
-            'navigate': {'url': 'https://example.com'},
-            'wait': {'duration': 2000},
-            'scroll': {'depth': 50},
+            'navigate': {'url': 'https://example.com', 'timeout': 30000},
+            'wait': {'duration': 2000, 'mode': 'Fixed'},
+            'scroll': {'depth': 50, 'scroll_type': 'Smooth', 'min_speed': 100, 'max_speed': 500},
             'click': {'selector': ''},
             'input': {'selector': '', 'text': ''}
         }

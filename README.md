@@ -60,31 +60,44 @@ python advanced_bot.py
 The application provides a fully responsive GUI with the following sections:
 
 1. **Website & Traffic Tab**
-   - Target URL configuration
-   - Number of visits
-   - Content vs Sponsored interaction ratios
-   - Platform selection (Desktop/Android)
+   - **Multiple Target URLs** - Add and manage multiple URLs in a list
+   - **Visit Type Selection** - Direct, Referral, or Search visits
+   - **Search Settings** - Keyword and target domain for Google search visits
+   - **Traffic Settings** - Number of visits, concurrent threads, total thread limit
+   - **Content vs Sponsored interaction ratios**
+   - **Platform Mix** - Select Desktop, Android, or both for mixed traffic
 
-2. **Behavior Tab**
-   - Browser settings (Headless mode)
-   - Human behavior simulation
+2. **Traffic Behaviour Tab** (formerly "Behavior")
+   - Browser settings (Always visible mode)
+   - Human behavior simulation with advanced interactions
    - Scroll depth configuration
    - Mouse movement and idle pauses
+   - **Enable Interaction** - Advanced human behavior (click posts, explore pages, follow links)
+   - **Page Visit Settings** - Enable extra pages and set maximum pages to visit
    - Consent & popup auto-handler
 
-3. **Sponsored Content Tab**
-   - Ad network blocklist (read-only)
-   - Safe sponsored element selectors
-   - Confidence threshold adjustment
+3. **Proxy Settings Tab**
+   - Enable/disable proxy
+   - Proxy type selection (HTTP, HTTPS, SOCKS5)
+   - Proxy list management (manual entry or import from file)
+   - **Import from File** - Import proxies from .txt file
+   - Rotation settings (rotate per session/profile)
+   - Automatic timezone/location handling based on proxy
 
 4. **RPA Script Tab**
+   - **Visual Builder** - Drag and drop interface for creating workflows
+   - **Action Toolbox** - New Tab, Access Website, Time, Scroll, Click, Input, Close Page
+   - **Enhanced Actions:**
+     - **Access Website** - URL and timeout configuration
+     - **Time** - Fixed or Random wait modes
+     - **Scroll** - Smooth/Auto types with speed configuration
    - JSON-based script editor
    - Save/Load scripts
    - Custom automation workflows
 
 5. **Control & Logs Panel**
    - Start/Stop automation
-   - Real-time logging
+   - Real-time logging with thread tracking
    - Status monitoring
 
 ### Example RPA Script
@@ -94,9 +107,9 @@ The application provides a fully responsive GUI with the following sections:
   "name": "Sample Automation",
   "steps": [
     {"type": "newPage"},
-    {"type": "navigate", "url": "https://example.com"},
-    {"type": "wait", "duration": 2000},
-    {"type": "scroll", "depth": 50},
+    {"type": "navigate", "url": "https://example.com", "timeout": 30000},
+    {"type": "wait", "duration": 2000, "mode": "Fixed"},
+    {"type": "scroll", "depth": 50, "scroll_type": "Smooth", "min_speed": 100, "max_speed": 500},
     {"type": "click", "selector": ".promo-button"},
     {"type": "closePage"}
   ]
@@ -104,6 +117,49 @@ The application provides a fully responsive GUI with the following sections:
 ```
 
 ## 🔧 Features
+
+### 🆕 New Features (Latest Update)
+
+#### Multiple URL Support
+- Add multiple target URLs to a list
+- Random URL selection per browser instance
+- Each browser opens a different URL
+- Easy URL management with add/remove buttons
+
+#### Thread Management
+- Configure concurrent browser threads (e.g., 20 chromes at once)
+- Set total thread limit to control automation scale
+- Real-time thread count tracking in logs
+- Ideal for large-scale operations with proxies
+
+#### Platform Mixing
+- Select Desktop, Android, or both platforms
+- Mixed traffic simulation with random platform selection
+- Realistic user agent and viewport handling
+
+#### Enhanced Search Visit
+- Google search integration with keyword support
+- Automatic target domain detection in top 10 results
+- Human-like typing and interaction
+- Continues with normal behavior after finding target
+
+#### Advanced Human Behavior
+- Click posts, links, and explore pages naturally
+- Random mouse movements across viewport
+- Variable interaction counts (5-15 per visit)
+- Realistic reading pauses (8-25 seconds)
+
+#### Improved Proxy Management
+- Import proxies from .txt files
+- Support for HTTP, HTTPS, SOCKS5, and IP formats
+- Automatic rotation per session/profile
+- Ready for timezone/location/fingerprint customization
+
+#### Enhanced RPA Script Creator
+- Updated action names (New Tab, Access Website, Time)
+- Configurable timeouts and wait modes
+- Scroll type selection (Smooth/Auto)
+- Scroll speed configuration (min/max range)
 
 ### Browser Automation
 - Playwright-based Chromium automation
