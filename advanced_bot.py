@@ -399,6 +399,52 @@ class HumanBehavior:
     async def idle_pause():
         """Random idle pause to simulate reading/thinking."""
         await asyncio.sleep(random.uniform(2, 5))
+    
+    @staticmethod
+    async def time_based_browsing(page: Page, min_time: int, max_time: int):
+        """
+        Simulate advanced human browsing behavior for a specified time period.
+        
+        Args:
+            page: Playwright page object
+            min_time: Minimum time to spend in seconds (120-480)
+            max_time: Maximum time to spend in seconds (120-480)
+        """
+        try:
+            # Calculate actual time to spend (between min and max)
+            time_to_spend = random.uniform(min_time, max_time)
+            start_time = time.time()
+            
+            logging.info(f'Starting time-based browsing for {time_to_spend:.1f} seconds')
+            
+            while time.time() - start_time < time_to_spend:
+                # Random scroll depth
+                scroll_depth = random.randint(30, 100)
+                
+                # Scroll down with human-like behavior
+                await HumanBehavior.scroll_page(page, scroll_depth)
+                
+                # Random reading pause
+                await asyncio.sleep(random.uniform(2.0, 5.0))
+                
+                # Occasionally scroll back up
+                if random.random() < 0.3:
+                    back_scroll_depth = random.randint(10, 40)
+                    await HumanBehavior.scroll_page(page, back_scroll_depth)
+                    await asyncio.sleep(random.uniform(1.0, 3.0))
+                
+                # Check if we should continue
+                elapsed = time.time() - start_time
+                if elapsed >= time_to_spend:
+                    break
+                
+                # Random idle pause
+                await asyncio.sleep(random.uniform(1.0, 4.0))
+            
+            logging.info(f'Completed time-based browsing ({time.time() - start_time:.1f} seconds)')
+            
+        except Exception as e:
+            logging.error(f'Time-based browsing error: {e}')
 
 
 # ============================================================================
@@ -1378,6 +1424,8 @@ class AutomationWorker(QObject):
             # Get configuration
             url_list = self.config.get('url_list', [])
             num_visits = self.config.get('num_visits', 1)
+            min_time_spend = self.config.get('min_time_spend', 120)  # 2 minutes default
+            max_time_spend = self.config.get('max_time_spend', 240)  # 4 minutes default
             threads = self.config.get('threads', 1)
             total_threads_limit = self.config.get('total_threads', 0)
             platforms = self.config.get('platforms', ['desktop'])
@@ -1393,7 +1441,8 @@ class AutomationWorker(QObject):
             enable_consent = self.config.get('enable_consent', True)
             enable_popups = self.config.get('enable_popups', True)
             
-            self.emit_log(f'Configuration: {len(url_list)} URLs, {num_visits} visits, {threads} threads')
+            self.emit_log(f'Configuration: {len(url_list)} URLs, {num_visits} profiles, {threads} threads')
+            self.emit_log(f'Time per profile: {min_time_spend}-{max_time_spend} seconds with human scrolling')
             if total_threads_limit > 0:
                 self.emit_log(f'Total thread limit: {total_threads_limit}')
             
@@ -1506,27 +1555,13 @@ class AutomationWorker(QObject):
                     if consent_manager and enable_consent:
                         await consent_manager.handle_consents(page)
                     
-                    # Random scroll
-                    await HumanBehavior.scroll_page(page)
+                    # Time-based human scrolling behavior
+                    self.emit_log(f'Starting time-based browsing ({min_time_spend}-{max_time_spend} seconds)...')
+                    await HumanBehavior.time_based_browsing(page, min_time_spend, max_time_spend)
                     
-                    # Idle pause
-                    await HumanBehavior.idle_pause()
-                    
-                    # Handle interaction if enabled
+                    # Handle interaction if enabled (legacy mode)
                     if enable_interaction:
                         await self.handle_interaction(page, max_pages, enable_extra_pages)
-                    else:
-                        # Decide on interaction type based on ratio
-                        if random.random() < sponsored_ratio:
-                            # Try sponsored click
-                            await sponsored_engine.click_sponsored_content(page, 1.0)
-                        else:
-                            # Regular content interaction
-                            self.emit_log('Performing content interaction')
-                            await HumanBehavior.scroll_page(page, random.randint(50, 100))
-                        
-                        # Idle before closing
-                        await asyncio.sleep(random.uniform(1, 3))
                     
                     # Close page
                     if page:
@@ -1902,11 +1937,38 @@ class AppGUI(QMainWindow):
         traffic_layout = QVBoxLayout()
         traffic_layout.setSpacing(10)
         
-        traffic_layout.addWidget(QLabel('Number of Visits:'))
+        # Time spend settings
+        time_layout = QHBoxLayout()
+        time_layout.addWidget(QLabel('Time to Spend per Profile (seconds):'))
+        traffic_layout.addLayout(time_layout)
+        
+        min_time_layout = QHBoxLayout()
+        min_time_layout.addWidget(QLabel('  Minimum:'))
+        self.min_time_input = QSpinBox()
+        self.min_time_input.setRange(120, 480)  # 2 to 8 minutes
+        self.min_time_input.setValue(120)  # 2 minutes default
+        self.min_time_input.setSuffix(' sec')
+        self.min_time_input.setToolTip('Minimum time to spend on each profile with human scrolling (2-8 minutes)')
+        min_time_layout.addWidget(self.min_time_input)
+        min_time_layout.addStretch()
+        traffic_layout.addLayout(min_time_layout)
+        
+        max_time_layout = QHBoxLayout()
+        max_time_layout.addWidget(QLabel('  Maximum:'))
+        self.max_time_input = QSpinBox()
+        self.max_time_input.setRange(120, 480)  # 2 to 8 minutes
+        self.max_time_input.setValue(240)  # 4 minutes default
+        self.max_time_input.setSuffix(' sec')
+        self.max_time_input.setToolTip('Maximum time to spend on each profile with human scrolling (2-8 minutes)')
+        max_time_layout.addWidget(self.max_time_input)
+        max_time_layout.addStretch()
+        traffic_layout.addLayout(max_time_layout)
+        
+        traffic_layout.addWidget(QLabel('Number of Profiles to Visit:'))
         self.num_visits_input = QSpinBox()
         self.num_visits_input.setRange(1, 10000)
         self.num_visits_input.setValue(10)
-        self.num_visits_input.setToolTip('High values with concurrent threads may consume significant resources')
+        self.num_visits_input.setToolTip('Number of profiles/pages to visit')
         traffic_layout.addWidget(self.num_visits_input)
         
         traffic_layout.addWidget(QLabel('Threads (concurrent browsers):'))
@@ -2147,6 +2209,26 @@ class AppGUI(QMainWindow):
         self.proxy_type_combo = QComboBox()
         self.proxy_type_combo.addItems(['HTTP', 'HTTPS', 'SOCKS5'])
         self.proxy_type_combo.setEnabled(False)
+        # Fix color issue - ensure text is readable when enabled
+        self.proxy_type_combo.setStyleSheet("""
+            QComboBox {
+                color: #000000;
+                background-color: #ffffff;
+            }
+            QComboBox:disabled {
+                color: #999999;
+                background-color: #f0f0f0;
+            }
+            QComboBox::drop-down {
+                border: 0px;
+            }
+            QComboBox QAbstractItemView {
+                color: #000000;
+                background-color: #ffffff;
+                selection-background-color: #3498db;
+                selection-color: #ffffff;
+            }
+        """)
         proxy_type_layout.addWidget(self.proxy_type_combo)
         
         proxy_type_group.setLayout(proxy_type_layout)
@@ -2183,23 +2265,18 @@ class AppGUI(QMainWindow):
         proxy_list_group.setLayout(proxy_list_layout)
         layout.addWidget(proxy_list_group)
         
-        # Rotation Settings
-        rotation_group = QGroupBox('🔄 Rotation Settings')
-        rotation_layout = QVBoxLayout()
-        rotation_layout.setSpacing(10)
+        # Info about timezone/location matching
+        info_group = QGroupBox('ℹ️ Proxy Information')
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(5)
         
-        self.rotate_proxy_check = QCheckBox('✅ Rotate proxy per session/profile')
-        self.rotate_proxy_check.setChecked(True)
-        self.rotate_proxy_check.setEnabled(False)
-        rotation_layout.addWidget(self.rotate_proxy_check)
-        
-        info_label = QLabel('ℹ️ Timezone and fingerprints will be set according to proxy location')
+        info_label = QLabel('• Timezone and fingerprints will be set according to proxy location\n• Each profile uses a unique proxy for maximum authenticity\n• Failed proxies are automatically skipped')
         info_label.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
         info_label.setWordWrap(True)
-        rotation_layout.addWidget(info_label)
+        info_layout.addWidget(info_label)
         
-        rotation_group.setLayout(rotation_layout)
-        layout.addWidget(rotation_group)
+        info_group.setLayout(info_layout)
+        layout.addWidget(info_group)
         
         layout.addStretch()
         
@@ -2213,7 +2290,6 @@ class AppGUI(QMainWindow):
         self.proxy_type_combo.setEnabled(enabled)
         self.proxy_list_input.setEnabled(enabled)
         self.proxy_import_btn.setEnabled(enabled)
-        self.rotate_proxy_check.setEnabled(enabled)
     
     def update_proxy_count(self):
         """Update proxy count label based on current input."""
@@ -2586,6 +2662,8 @@ class AppGUI(QMainWindow):
             config = {
                 'url_list': url_list,
                 'num_visits': self.num_visits_input.value(),
+                'min_time_spend': self.min_time_input.value(),
+                'max_time_spend': self.max_time_input.value(),
                 'threads': self.threads_input.value(),
                 'total_threads': self.total_threads_input.value(),
                 'content_ratio': self.content_ratio_input.value(),
@@ -2595,7 +2673,7 @@ class AppGUI(QMainWindow):
                 'proxy_enabled': self.proxy_enabled_check.isChecked(),
                 'proxy_type': self.proxy_type_combo.currentText(),
                 'proxy_list': self.proxy_list_input.toPlainText(),
-                'rotate_proxy': self.rotate_proxy_check.isChecked(),
+                'rotate_proxy': True,  # Always rotate for authenticity
                 'visit_type': visit_type,
                 'search_keyword': self.search_keyword_input.text().strip() if visit_type == 'search' else '',
                 'target_domain': self.target_domain_input.text().strip() if visit_type == 'search' else '',
