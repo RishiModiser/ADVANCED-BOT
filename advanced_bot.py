@@ -25,10 +25,10 @@ from PySide6.QtWidgets import (
     QComboBox, QCheckBox, QTabWidget, QGroupBox, QListWidget,
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
     QMessageBox, QFileDialog, QScrollArea, QListWidgetItem, QFormLayout,
-    QAbstractItemView, QRadioButton, QButtonGroup, QGridLayout
+    QAbstractItemView, QRadioButton, QButtonGroup, QGridLayout, QStackedWidget
 )
 from PySide6.QtCore import Qt, QThread, Signal, QObject
-from PySide6.QtGui import QFont, QColor
+from PySide6.QtGui import QFont, QColor, QPalette
 
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Playwright
 
@@ -1253,8 +1253,48 @@ class AppGUI(QMainWindow):
     
     def init_ui(self):
         """Initialize the user interface."""
-        self.setWindowTitle('Windows Desktop Automation System')
-        self.setGeometry(100, 100, 1400, 900)
+        self.setWindowTitle('Windows Desktop Automation System - RPA Bot')
+        self.setGeometry(100, 100, 1600, 900)
+        self.setMinimumSize(1200, 700)  # Set minimum size for responsiveness
+        
+        # Apply modern color scheme
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #f5f5f5;
+            }
+            QGroupBox {
+                font-weight: bold;
+                border: 2px solid #e0e0e0;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+                background-color: white;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+                color: #2c3e50;
+            }
+            QPushButton {
+                border: none;
+                border-radius: 5px;
+                padding: 8px 15px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                opacity: 0.9;
+            }
+            QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {
+                border: 1px solid #d0d0d0;
+                border-radius: 4px;
+                padding: 5px;
+                background-color: white;
+            }
+            QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
+                border: 2px solid #3498db;
+            }
+        """)
         
         # Central widget
         central_widget = QWidget()
@@ -1262,13 +1302,19 @@ class AppGUI(QMainWindow):
         
         # Main layout
         main_layout = QHBoxLayout(central_widget)
+        main_layout.setSpacing(0)
+        main_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Create splitter
+        # Create sidebar navigation
+        sidebar = self.create_sidebar()
+        main_layout.addWidget(sidebar)
+        
+        # Create splitter for content area
         splitter = QSplitter(Qt.Horizontal)
         
-        # Left panel - Navigation + Settings
-        left_panel = self.create_left_panel()
-        splitter.addWidget(left_panel)
+        # Left panel - Settings content
+        self.content_panel = self.create_content_panel()
+        splitter.addWidget(self.content_panel)
         
         # Right panel - Logs + Control
         right_panel = self.create_right_panel()
@@ -1279,40 +1325,119 @@ class AppGUI(QMainWindow):
         
         main_layout.addWidget(splitter)
     
-    def create_left_panel(self) -> QWidget:
-        """Create left settings panel."""
-        panel = QWidget()
-        layout = QVBoxLayout(panel)
+    def create_sidebar(self) -> QWidget:
+        """Create modern sidebar navigation."""
+        sidebar = QWidget()
+        sidebar.setFixedWidth(220)
+        sidebar.setStyleSheet("""
+            QWidget {
+                background-color: #2c3e50;
+            }
+            QPushButton {
+                text-align: left;
+                padding: 15px 20px;
+                color: white;
+                background-color: transparent;
+                border: none;
+                font-size: 14px;
+                border-left: 4px solid transparent;
+            }
+            QPushButton:hover {
+                background-color: #34495e;
+                border-left: 4px solid #3498db;
+            }
+            QPushButton:checked {
+                background-color: #34495e;
+                border-left: 4px solid #3498db;
+                font-weight: bold;
+            }
+            QLabel {
+                color: white;
+                padding: 10px;
+            }
+        """)
         
-        # Title
-        title = QLabel('Configuration')
-        title.setFont(QFont('Arial', 16, QFont.Bold))
+        layout = QVBoxLayout(sidebar)
+        layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        # App title
+        title = QLabel('🤖 RPA Bot')
+        title.setFont(QFont('Arial', 18, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet('padding: 20px; background-color: #1a252f; color: white;')
         layout.addWidget(title)
         
-        # Tab widget
-        tabs = QTabWidget()
+        # Navigation buttons
+        self.nav_button_group = QButtonGroup()
+        self.nav_button_group.setExclusive(True)
         
-        # Tab 1: Website & Traffic
-        tabs.addTab(self.create_website_tab(), '🔧 Website Traffic')
+        nav_items = [
+            ('🔧 Website Traffic', 0),
+            ('🧠 Traffic Behaviour', 1),
+            ('🌐 Proxy Settings', 2),
+            ('🧩 RPA Script Creator', 3)
+        ]
         
-        # Tab 2: Traffic Behaviour Settings
-        tabs.addTab(self.create_behavior_tab(), '🧠 Traffic Behaviour')
+        for text, idx in nav_items:
+            btn = QPushButton(text)
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda checked, i=idx: self.switch_content(i))
+            self.nav_button_group.addButton(btn, idx)
+            layout.addWidget(btn)
         
-        # Tab 3: Proxy Settings
-        tabs.addTab(self.create_proxy_tab(), '🌐 Proxy Settings')
+        # Set first button as checked
+        self.nav_button_group.button(0).setChecked(True)
         
-        # Tab 4: RPA Script
-        tabs.addTab(self.create_script_tab(), '🧩 RPA Script')
+        layout.addStretch()
         
-        layout.addWidget(tabs)
+        # Footer
+        footer = QLabel('v2.0 • 2026')
+        footer.setAlignment(Qt.AlignCenter)
+        footer.setStyleSheet('color: #7f8c8d; font-size: 11px; padding: 15px;')
+        layout.addWidget(footer)
+        
+        return sidebar
+    
+    def switch_content(self, index: int):
+        """Switch between different content sections."""
+        self.stacked_widget.setCurrentIndex(index)
+    
+    def create_content_panel(self) -> QWidget:
+        """Create content panel with stacked widget."""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Stacked widget to hold different sections
+        self.stacked_widget = QStackedWidget()
+        
+        # Add all sections
+        self.stacked_widget.addWidget(self.create_website_tab())
+        self.stacked_widget.addWidget(self.create_behavior_tab())
+        self.stacked_widget.addWidget(self.create_proxy_tab())
+        self.stacked_widget.addWidget(self.create_script_tab())
+        
+        layout.addWidget(self.stacked_widget)
         
         return panel
     
     def create_website_tab(self) -> QWidget:
         """Create website configuration tab."""
+        # Create scroll area wrapper
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.NoFrame)
+        
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setSpacing(15)
+        
+        # Section Title
+        section_title = QLabel('🔧 Website Traffic Configuration')
+        section_title.setFont(QFont('Arial', 20, QFont.Bold))
+        section_title.setStyleSheet('color: #2c3e50; padding: 10px 0;')
+        layout.addWidget(section_title)
         
         # Website URL - Multiple URLs Support
         url_group = QGroupBox('🌍 Website Configuration')
@@ -1488,7 +1613,8 @@ class AppGUI(QMainWindow):
         
         layout.addStretch()
         
-        return widget
+        scroll_area.setWidget(widget)
+        return scroll_area
     
     def toggle_referral_section(self, checked):
         """Toggle visibility of referral source selector."""
@@ -1522,9 +1648,20 @@ class AppGUI(QMainWindow):
     
     def create_behavior_tab(self) -> QWidget:
         """Create behavior settings tab."""
+        # Create scroll area wrapper
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.NoFrame)
+        
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setSpacing(15)
+        
+        # Section Title
+        section_title = QLabel('🧠 Traffic Behaviour Configuration')
+        section_title.setFont(QFont('Arial', 20, QFont.Bold))
+        section_title.setStyleSheet('color: #2c3e50; padding: 10px 0;')
+        layout.addWidget(section_title)
         
         # Browser Settings
         browser_group = QGroupBox('🌐 Browser Settings')
@@ -1590,7 +1727,7 @@ class AppGUI(QMainWindow):
         
         page_visit_layout.addWidget(QLabel('🔢 Maximum Pages:'))
         self.max_pages_input = QSpinBox()
-        self.max_pages_input.setRange(1, 50)
+        self.max_pages_input.setRange(1, 100)  # Increased range from 50 to 100
         self.max_pages_input.setValue(5)
         self.max_pages_input.setEnabled(False)
         page_visit_layout.addWidget(self.max_pages_input)
@@ -1616,7 +1753,8 @@ class AppGUI(QMainWindow):
         
         layout.addStretch()
         
-        return widget
+        scroll_area.setWidget(widget)
+        return scroll_area
     
     def toggle_page_visit_settings(self, state):
         """Enable/disable page visit inputs based on checkbox state."""
@@ -1625,9 +1763,20 @@ class AppGUI(QMainWindow):
     
     def create_proxy_tab(self) -> QWidget:
         """Create proxy settings tab."""
+        # Create scroll area wrapper
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.NoFrame)
+        
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setSpacing(15)
+        
+        # Section Title
+        section_title = QLabel('🌐 Proxy Settings')
+        section_title.setFont(QFont('Arial', 20, QFont.Bold))
+        section_title.setStyleSheet('color: #2c3e50; padding: 10px 0;')
+        layout.addWidget(section_title)
         
         # Enable Proxy
         proxy_enable_group = QGroupBox('🔧 Proxy Configuration')
@@ -1699,7 +1848,8 @@ class AppGUI(QMainWindow):
         
         layout.addStretch()
         
-        return widget
+        scroll_area.setWidget(widget)
+        return scroll_area
     
     def toggle_proxy_inputs(self, state):
         """Enable/disable proxy inputs based on checkbox state."""
@@ -1732,8 +1882,19 @@ class AppGUI(QMainWindow):
     
     def create_script_tab(self) -> QWidget:
         """Create RPA script tab with visual builder and JSON editor."""
+        # Create scroll area wrapper
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.NoFrame)
+        
         widget = QWidget()
         main_layout = QVBoxLayout(widget)
+        
+        # Section Title
+        section_title = QLabel('🧩 RPA Script Creator')
+        section_title.setFont(QFont('Arial', 20, QFont.Bold))
+        section_title.setStyleSheet('color: #2c3e50; padding: 10px 0;')
+        main_layout.addWidget(section_title)
         
         # Tab widget for Visual Builder and JSON Editor
         script_tabs = QTabWidget()
@@ -1864,7 +2025,8 @@ class AppGUI(QMainWindow):
         self.workflow_steps = []
         self.syncing = False  # Prevent recursive syncing
         
-        return widget
+        scroll_area.setWidget(widget)
+        return scroll_area
     
     def create_right_panel(self) -> QWidget:
         """Create right control panel."""
@@ -2126,8 +2288,13 @@ class AppGUI(QMainWindow):
                 # Validate JSON
                 json.loads(script_text)
                 
+                # Set the JSON text (this will trigger sync_json_to_visual via textChanged signal)
                 self.script_editor.setPlainText(script_text)
-                QMessageBox.information(self, 'Success', 'Script loaded successfully')
+                
+                # Explicitly sync to ensure visual builder is updated
+                self.sync_json_to_visual()
+                
+                QMessageBox.information(self, 'Success', 'Script loaded and synced to Visual Builder successfully')
                 
         except json.JSONDecodeError as e:
             QMessageBox.critical(self, 'Error', f'Invalid JSON: {e}')
@@ -2378,9 +2545,10 @@ class AppGUI(QMainWindow):
             self.syncing = False
     
     def force_sync(self):
-        """Force synchronization between visual and JSON."""
+        """Force bidirectional synchronization between visual and JSON."""
+        # Sync visual to JSON first
         self.sync_visual_to_json()
-        QMessageBox.information(self, 'Sync', 'Visual builder synced to JSON')
+        QMessageBox.information(self, 'Sync Complete', 'Visual builder and JSON editor are now synchronized')
     
     def action_to_step_type(self, action_name: str) -> str:
         """Convert action name to step type. Handles both old and new action names."""
