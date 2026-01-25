@@ -734,87 +734,96 @@ class ProxyManager:
         - protocol://ip:port or protocol://host:port (http, https, socks5)
         - protocol://user:pass@ip:port or protocol://user:pass@host:port
         - IPv6: [ipv6]:port or protocol://[ipv6]:port
+        
+        Returns:
+            List of parsed proxy configurations
         """
         proxies = []
         lines = proxy_text.strip().split('\n')
         
-        for line in lines:
+        for line_num, line in enumerate(lines, 1):
             line = line.strip()
             if not line or line.startswith('#'):
                 continue
             
-            proxy_config = {}
-            proxy_type = self.proxy_type.lower()  # Default to selected type
-            
-            # Check if protocol is specified in the line
-            if '://' in line:
-                protocol, rest = line.split('://', 1)
-                proxy_type = protocol.lower()
-                if proxy_type not in ['http', 'https', 'socks5']:
-                    proxy_type = self.proxy_type.lower()
-                line = rest
-            
-            # Check for user:pass@host:port format
-            if '@' in line:
-                auth_part, server_part = line.split('@', 1)
-                if ':' in auth_part:
-                    username, password = auth_part.split(':', 1)
-                    proxy_config['username'] = username
-                    proxy_config['password'] = password
+            try:
+                proxy_config = {}
+                proxy_type = self.proxy_type.lower()  # Default to selected type
                 
-                # Build server URL from host:port
-                if ':' in server_part:
-                    # Handle IPv6 addresses [ipv6]:port
-                    if server_part.startswith('['):
-                        # IPv6 format
-                        bracket_end = server_part.find(']')
-                        if bracket_end != -1:
-                            host = server_part[:bracket_end+1]
-                            port_part = server_part[bracket_end+1:]
-                            if port_part.startswith(':'):
-                                port = port_part[1:]
-                                proxy_config['server'] = f"{proxy_type}://{host}:{port}"
-                    else:
-                        host, port = server_part.rsplit(':', 1)
-                        proxy_config['server'] = f"{proxy_type}://{host}:{port}"
-            else:
-                # Parse without @ symbol
-                # Check for IPv6 addresses first
-                if line.startswith('['):
-                    # IPv6 format: [ipv6]:port or [ipv6]:port:username:password
-                    bracket_end = line.find(']')
-                    if bracket_end != -1:
-                        host = line[:bracket_end+1]
-                        rest_parts = line[bracket_end+1:].lstrip(':').split(':')
-                        if len(rest_parts) >= 1:
-                            port = rest_parts[0]
-                            proxy_config['server'] = f"{proxy_type}://{host}:{port}"
-                            if len(rest_parts) == 3:
-                                # [ipv6]:port:username:password
-                                proxy_config['username'] = rest_parts[1]
-                                proxy_config['password'] = rest_parts[2]
-                else:
-                    # Check for host:port:username:password format
-                    parts = line.split(':')
-                    if len(parts) == 4:
-                        # Assume host:port:username:password
-                        host, port, username, password = parts
-                        proxy_config['server'] = f"{proxy_type}://{host}:{port}"
+                # Check if protocol is specified in the line
+                if '://' in line:
+                    protocol, rest = line.split('://', 1)
+                    proxy_type = protocol.lower()
+                    if proxy_type not in ['http', 'https', 'socks5']:
+                        proxy_type = self.proxy_type.lower()
+                    line = rest
+                
+                # Check for user:pass@host:port format
+                if '@' in line:
+                    auth_part, server_part = line.split('@', 1)
+                    if ':' in auth_part:
+                        username, password = auth_part.split(':', 1)
                         proxy_config['username'] = username
                         proxy_config['password'] = password
-                    elif len(parts) == 2:
-                        # Simple host:port format
-                        host, port = parts
-                        proxy_config['server'] = f"{proxy_type}://{host}:{port}"
-                    elif len(parts) > 2:
-                        # Assume last part is port, rest is hostname
-                        # This could be hostname:with:colons:port
-                        port = parts[-1]
-                        host = ':'.join(parts[:-1])
-                        proxy_config['server'] = f"{proxy_type}://{host}:{port}"
-            
-            if proxy_config.get('server'):
-                proxies.append(proxy_config)
+                    
+                    # Build server URL from host:port
+                    if ':' in server_part:
+                        # Handle IPv6 addresses [ipv6]:port
+                        if server_part.startswith('['):
+                            # IPv6 format
+                            bracket_end = server_part.find(']')
+                            if bracket_end != -1:
+                                host = server_part[:bracket_end+1]
+                                port_part = server_part[bracket_end+1:]
+                                if port_part.startswith(':'):
+                                    port = port_part[1:]
+                                    proxy_config['server'] = f"{proxy_type}://{host}:{port}"
+                        else:
+                            host, port = server_part.rsplit(':', 1)
+                            proxy_config['server'] = f"{proxy_type}://{host}:{port}"
+                else:
+                    # Parse without @ symbol
+                    # Check for IPv6 addresses first
+                    if line.startswith('['):
+                        # IPv6 format: [ipv6]:port or [ipv6]:port:username:password
+                        bracket_end = line.find(']')
+                        if bracket_end != -1:
+                            host = line[:bracket_end+1]
+                            rest_parts = line[bracket_end+1:].lstrip(':').split(':')
+                            if len(rest_parts) >= 1:
+                                port = rest_parts[0]
+                                proxy_config['server'] = f"{proxy_type}://{host}:{port}"
+                                if len(rest_parts) == 3:
+                                    # [ipv6]:port:username:password
+                                    proxy_config['username'] = rest_parts[1]
+                                    proxy_config['password'] = rest_parts[2]
+                    else:
+                        # Check for host:port:username:password format
+                        parts = line.split(':')
+                        if len(parts) == 4:
+                            # Assume host:port:username:password
+                            host, port, username, password = parts
+                            proxy_config['server'] = f"{proxy_type}://{host}:{port}"
+                            proxy_config['username'] = username
+                            proxy_config['password'] = password
+                        elif len(parts) == 2:
+                            # Simple host:port format
+                            host, port = parts
+                            proxy_config['server'] = f"{proxy_type}://{host}:{port}"
+                        elif len(parts) > 2:
+                            # Assume last part is port, rest is hostname
+                            # This could be hostname:with:colons:port
+                            port = parts[-1]
+                            host = ':'.join(parts[:-1])
+                            proxy_config['server'] = f"{proxy_type}://{host}:{port}"
+                
+                if proxy_config.get('server'):
+                    proxies.append(proxy_config)
+                    
+            except Exception as e:
+                # Log parsing error but continue with other proxies
+                print(f"Warning: Failed to parse proxy on line {line_num}: {line} - {e}")
+                continue
         
         return proxies
     
@@ -873,8 +882,10 @@ class BrowserManager:
     async def initialize(self):
         """Initialize Playwright and browser."""
         try:
+            self.log_manager.log('━━━ Browser Initialization Started ━━━')
             self.log_manager.log('Initializing Playwright...')
             self.playwright = await async_playwright().start()
+            self.log_manager.log('✓ Playwright started successfully')
             
             launch_options = {
                 'headless': self.headless,
@@ -887,8 +898,10 @@ class BrowserManager:
             
             # Note: Proxy is now set per-context, not per-browser
             
+            self.log_manager.log(f'Launching Chromium browser (headless={self.headless})...')
             self.browser = await self.playwright.chromium.launch(**launch_options)
-            self.log_manager.log('Browser launched successfully')
+            self.log_manager.log('✓ Browser launched successfully')
+            self.log_manager.log('━━━ Browser Initialization Complete ━━━')
             
             return True
             
@@ -916,7 +929,9 @@ class BrowserManager:
             self.fingerprint_manager.platform = platform
             fingerprint = self.fingerprint_manager.generate_fingerprint()
             
-            self.log_manager.log(f'Creating context with {platform} fingerprint')
+            self.log_manager.log(f'━━━ Creating Browser Context ━━━')
+            self.log_manager.log(f'Platform: {platform}')
+            self.log_manager.log(f'User Agent: {fingerprint["user_agent"][:60]}...')
             
             context_options = {
                 'user_agent': fingerprint['user_agent'],
@@ -931,7 +946,9 @@ class BrowserManager:
                 if proxy_config:
                     context_options['proxy'] = proxy_config
                     server = proxy_config.get('server', 'unknown')
-                    self.log_manager.log(f'Using proxy: {server}')
+                    self.log_manager.log(f'✓ Using proxy: {server}')
+                else:
+                    self.log_manager.log('No proxy configured, using direct connection')
             
             self.context = await self.browser.new_context(**context_options)
             
@@ -945,7 +962,8 @@ class BrowserManager:
                 }});
             """)
             
-            self.log_manager.log('Browser context created')
+            self.log_manager.log('✓ Browser context created successfully')
+            self.log_manager.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             return self.context
             
         except Exception as e:
@@ -1191,12 +1209,33 @@ class AutomationWorker(QObject):
             if total_threads_limit > 0:
                 self.emit_log(f'Total thread limit: {total_threads_limit}')
             
-            # Initialize browser
+            # Check proxy configuration and log proxy status BEFORE browser initialization
+            proxy_manager = self.browser_manager.proxy_manager
+            if proxy_manager.proxy_enabled:
+                proxy_count = proxy_manager.get_proxy_count()
+                if proxy_count > 0:
+                    self.emit_log(f'✓ Proxy configuration loaded: {proxy_count} proxies available')
+                    if proxy_manager.rotate_proxy:
+                        self.emit_log('✓ Proxy rotation enabled')
+                else:
+                    self.emit_log('⚠ Proxy enabled but no proxies loaded', 'WARNING')
+            else:
+                self.emit_log('Proxy disabled, using direct connection')
+            
+            # Initialize browser AFTER proxy validation
             self.browser_manager.headless = self.config.get('headless', False)
             
+            self.emit_log('Initializing browser...')
             success = await self.browser_manager.initialize()
             if not success:
+                self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'ERROR')
                 self.emit_log('Failed to initialize browser', 'ERROR')
+                self.emit_log('Please check the logs above for details', 'ERROR')
+                self.emit_log('Common issues:', 'ERROR')
+                self.emit_log('  1. Chromium not installed: Run "playwright install chromium"', 'ERROR')
+                self.emit_log('  2. Port conflict or permission issues', 'ERROR')
+                self.emit_log('  3. System resources (memory/disk) insufficient', 'ERROR')
+                self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'ERROR')
                 return
             
             # Create managers
@@ -1234,9 +1273,14 @@ class AutomationWorker(QObject):
                 
                 try:
                     # Create new context for this visit (session isolation)
+                    self.emit_log(f'Creating browser context for visit {visit + 1}...')
                     context = await self.browser_manager.create_context(platform)
                     if not context:
                         self.emit_log('Failed to create browser context', 'ERROR')
+                        self.emit_log('This may be due to:', 'ERROR')
+                        self.emit_log('  - Invalid proxy configuration', 'ERROR')
+                        self.emit_log('  - Network connectivity issues', 'ERROR')
+                        self.emit_log('  - Browser crash or resource exhaustion', 'ERROR')
                         consecutive_failures += 1
                         
                         # Restart browser if too many failures
@@ -2392,13 +2436,19 @@ class AppGUI(QMainWindow):
             self.automation_thread = QThread()
             self.automation_worker = AutomationWorker(config, self.log_manager)
             
-            # Configure proxy manager
+            # Configure proxy manager BEFORE starting thread
             if config['proxy_enabled'] and config['proxy_list'].strip():
+                self.log_manager.log('Configuring proxy settings...')
                 self.automation_worker.browser_manager.proxy_manager.proxy_enabled = True
                 self.automation_worker.browser_manager.proxy_manager.proxy_type = config['proxy_type']
                 self.automation_worker.browser_manager.proxy_manager.rotate_proxy = config['rotate_proxy']
                 self.automation_worker.browser_manager.proxy_manager.proxy_list = \
                     self.automation_worker.browser_manager.proxy_manager.parse_proxy_list(config['proxy_list'])
+                
+                proxy_count = len(self.automation_worker.browser_manager.proxy_manager.proxy_list)
+                self.log_manager.log(f'✓ Proxy configuration complete: {proxy_count} proxies loaded')
+            else:
+                self.log_manager.log('Proxy disabled, using direct connection')
             
             self.automation_worker.moveToThread(self.automation_thread)
             
