@@ -22,6 +22,41 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 from enum import Enum
 
+# Check for required dependencies before importing them
+def check_dependencies():
+    """Check if required packages are installed and provide helpful error messages."""
+    missing_packages = []
+    
+    try:
+        import PySide6
+    except ImportError:
+        missing_packages.append('PySide6')
+    
+    try:
+        import playwright
+    except ImportError:
+        missing_packages.append('playwright')
+    
+    if missing_packages:
+        print("\n" + "="*70)
+        print("ERROR: Missing Required Dependencies")
+        print("="*70)
+        print(f"\nThe following packages are not installed: {', '.join(missing_packages)}")
+        print("\nTo fix this issue, please run:")
+        print("\n    pip install -r requirements.txt")
+        print("\nThis will install all required dependencies including:")
+        print("  - PySide6 (GUI framework)")
+        print("  - playwright (browser automation)")
+        print("  - python-dateutil (date utilities)")
+        print("\nAfter installation, you also need to install Playwright browsers:")
+        print("\n    playwright install chromium")
+        print("\nFor more details, see README.md")
+        print("="*70 + "\n")
+        sys.exit(1)
+
+# Run dependency check
+check_dependencies()
+
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox,
