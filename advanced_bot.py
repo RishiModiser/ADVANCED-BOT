@@ -1128,14 +1128,9 @@ class BrowserManager:
                     # Mark proxy as failed
                     self.proxy_manager.mark_proxy_failed(proxy_config)
                     
-                    # Retry without proxy
-                    context_options_no_proxy = {
-                        'user_agent': fingerprint['user_agent'],
-                        'viewport': fingerprint['viewport'],
-                        'locale': fingerprint['locale'],
-                        'timezone_id': fingerprint['timezone'],
-                    }
-                    self.context = await self.browser.new_context(**context_options_no_proxy)
+                    # Retry without proxy (remove proxy from options)
+                    context_options.pop('proxy', None)
+                    self.context = await self.browser.new_context(**context_options)
                     self.log_manager.log('✓ Browser context created with direct connection (proxy bypassed)')
                 else:
                     # Re-raise if not a proxy error
