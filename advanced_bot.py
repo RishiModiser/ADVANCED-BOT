@@ -1000,6 +1000,12 @@ class BrowserManager:
                     # Retry initialization
                     self.log_manager.log('Retrying browser initialization...', 'INFO')
                     try:
+                        # Ensure Playwright is initialized before launching browser
+                        if not self.playwright:
+                            self.log_manager.log('Initializing Playwright...', 'INFO')
+                            self.playwright = await async_playwright().start()
+                            self.log_manager.log('✓ Playwright started successfully', 'INFO')
+                        
                         self.browser = await self.playwright.chromium.launch(**launch_options)
                         self.log_manager.log('✓ Browser launched successfully after auto-install')
                         self.log_manager.log('━━━ Browser Initialization Complete ━━━')
