@@ -2126,53 +2126,6 @@ class AppGUI(QMainWindow):
         
         return widget
     
-    def create_right_panel(self) -> QWidget:
-        """Create right control panel."""
-        panel = QWidget()
-        layout = QVBoxLayout(panel)
-        layout.setSpacing(15)
-        
-        # Title
-        title = QLabel('📜 Control & Logs')
-        title.setFont(QFont('Arial', 16, QFont.Bold))
-        layout.addWidget(title)
-        
-        # Control buttons
-        control_layout = QHBoxLayout()
-        
-        self.start_btn = QPushButton('▶️ Start Automation')
-        self.start_btn.clicked.connect(self.start_automation)
-        self.start_btn.setStyleSheet('background-color: #4CAF50; color: white; padding: 10px; font-weight: bold;')
-        control_layout.addWidget(self.start_btn)
-        
-        self.stop_btn = QPushButton('⛔ Stop')
-        self.stop_btn.clicked.connect(self.stop_automation)
-        self.stop_btn.setEnabled(False)
-        self.stop_btn.setStyleSheet('background-color: #f44336; color: white; padding: 10px; font-weight: bold;')
-        control_layout.addWidget(self.stop_btn)
-        
-        layout.addLayout(control_layout)
-        
-        # Status
-        self.status_label = QLabel('📊 Status: Ready')
-        self.status_label.setStyleSheet('padding: 10px; background-color: #e0e0e0; border-radius: 5px; font-weight: bold;')
-        layout.addWidget(self.status_label)
-        
-        # Logs
-        layout.addWidget(QLabel('📋 Live Logs:'))
-        
-        self.log_display = QTextEdit()
-        self.log_display.setReadOnly(True)
-        self.log_display.setStyleSheet('background-color: #1e1e1e; color: white; font-family: monospace;')
-        layout.addWidget(self.log_display)
-        
-        # Clear logs button
-        clear_btn = QPushButton('🧹 Clear Logs')
-        clear_btn.clicked.connect(self.clear_logs)
-        layout.addWidget(clear_btn)
-        
-        return panel
-    
     def start_automation(self):
         """Start the automation process."""
         try:
