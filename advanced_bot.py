@@ -1903,6 +1903,152 @@ class AutomationWorker(QObject):
             self.emit_log(f'✗ Profile {visit_num} error: {e}', 'ERROR')
             return False
     
+    async def execute_single_tab(self, page, tab_num, target_url, visit_type,
+                                  search_keyword, target_domain, referral_sources,
+                                  min_time_spend, max_time_spend, enable_consent,
+                                  enable_interaction, enable_extra_pages, max_pages,
+                                  consent_manager, enable_highlight=False, enable_ad_interaction=False):
+        """Execute a single tab within a browser."""
+        try:
+            self.emit_log(f'[Tab {tab_num}] Processing URL: {target_url[:50]}...')
+            
+            # Navigate based on visit type
+            if visit_type == 'referral':
+                await self.handle_referral_visit(page, target_url, referral_sources)
+            elif visit_type == 'search':
+                # Search visit - find target domain in Google results
+                found = await self.handle_search_visit(page, target_domain, search_keyword)
+                if not found:
+                    self.emit_log(f'[Tab {tab_num}] Target domain not found in search', 'WARNING')
+                    return False
+            else:
+                # Direct visit
+                self.emit_log(f'[Tab {tab_num}] Direct visit to {target_url}')
+                await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
+            
+            # Handle consents if enabled
+            if consent_manager and enable_consent:
+                await consent_manager.handle_consents(page)
+            
+            # Detect and interact with ads if enabled
+            if enable_ad_interaction:
+                await self.handle_ad_detection_and_interaction(page)
+            
+            # Time-based human scrolling behavior with highlighting
+            self.emit_log(f'[Tab {tab_num}] Starting time-based browsing ({min_time_spend}-{max_time_spend} seconds)...')
+            await HumanBehavior.time_based_browsing(page, min_time_spend, max_time_spend, enable_highlight)
+            
+            # Handle interaction if enabled (legacy mode)
+            if enable_interaction:
+                await self.handle_interaction(page, max_pages, enable_extra_pages)
+            
+            self.emit_log(f'✓ [Tab {tab_num}] Completed successfully')
+            return True
+            
+        except Exception as e:
+            self.emit_log(f'✗ [Tab {tab_num}] Error: {e}', 'ERROR')
+            return False
+    
+    async def execute_browser_with_tabs(self, browser_num, url_list, num_tabs, platforms, visit_type,
+                                        search_keyword, target_domain, referral_sources,
+                                        min_time_spend, max_time_spend, enable_consent,
+                                        enable_interaction, enable_extra_pages, max_pages,
+                                        consent_manager, enable_highlight=False, enable_ad_interaction=False):
+        """Execute a single browser with multiple tabs."""
+        try:
+            # Select random platform for this browser
+            platform = random.choice(platforms)
+            
+            self.emit_log(f'━━━ Browser {browser_num} | Platform: {platform} | Opening {num_tabs} tabs ━━━')
+            
+            # Create new context for this browser (session isolation)
+            self.emit_log(f'Creating browser context for browser {browser_num}...')
+            context = await self.browser_manager.create_context(platform)
+            if not context:
+                self.emit_log(f'Failed to create browser context for browser {browser_num}', 'ERROR')
+                return False
+            
+            try:
+                # Get proxy location once for the browser
+                proxy_location = getattr(context, '_proxy_location', None)
+                
+                # Create multiple tabs (pages) in this browser
+                tasks = []
+                pages = []
+                
+                for tab_idx in range(num_tabs):
+                    # Create new page (tab)
+                    page = await context.new_page()
+                    pages.append(page)
+                    
+                    # Display proxy location in each tab if available
+                    if proxy_location:
+                        import json
+                        country = proxy_location.get('country', 'Unknown')
+                        ip = proxy_location.get('ip', 'unknown')
+                        location_text_safe = json.dumps(f"Proxy: {country} | IP: {ip}")
+                        
+                        # Inject location display into page
+                        await page.add_init_script(f"""
+                            window.addEventListener('load', () => {{
+                                const locationDiv = document.createElement('div');
+                                locationDiv.id = 'proxy-location-display';
+                                locationDiv.style.cssText = `
+                                    position: fixed;
+                                    top: 10px;
+                                    right: 10px;
+                                    background: rgba(0, 0, 0, 0.8);
+                                    color: #00ff00;
+                                    padding: 10px 15px;
+                                    border-radius: 5px;
+                                    font-family: monospace;
+                                    font-size: 12px;
+                                    z-index: 999999;
+                                    pointer-events: none;
+                                `;
+                                locationDiv.textContent = {location_text_safe};
+                                document.body.appendChild(locationDiv);
+                            }});
+                        """)
+                    
+                    # Select URL for this tab (cycle through URL list if more tabs than URLs)
+                    target_url = url_list[tab_idx % len(url_list)]
+                    
+                    # Create task for this tab
+                    task = self.execute_single_tab(
+                        page, tab_idx + 1, target_url, visit_type,
+                        search_keyword, target_domain, referral_sources,
+                        min_time_spend, max_time_spend, enable_consent,
+                        enable_interaction, enable_extra_pages, max_pages,
+                        consent_manager, enable_highlight, enable_ad_interaction
+                    )
+                    tasks.append(task)
+                
+                # Execute all tabs concurrently
+                self.emit_log(f'[Browser {browser_num}] Running {num_tabs} tabs simultaneously...')
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # Count successes
+                success_count = sum(1 for r in results if r is True)
+                self.emit_log(f'[Browser {browser_num}] Completed: {success_count}/{num_tabs} tabs successful')
+                
+                # Close all pages
+                for page in pages:
+                    try:
+                        await page.close()
+                    except:
+                        pass
+                
+                return success_count > 0
+                
+            finally:
+                # Always close context after all tabs complete
+                await context.close()
+                
+        except Exception as e:
+            self.emit_log(f'✗ Browser {browser_num} error: {e}', 'ERROR')
+            return False
+    
     async def run_automation(self):
         """Main automation loop with multi-threading, multiple URLs, and platform mixing support."""
         try:
@@ -1911,10 +2057,10 @@ class AutomationWorker(QObject):
             
             # Get configuration
             url_list = self.config.get('url_list', [])
-            num_visits = self.config.get('num_visits', 1)
+            num_tabs = self.config.get('num_visits', 1)  # Now represents number of tabs per browser
             min_time_spend = self.config.get('min_time_spend', 120)  # 2 minutes default
             max_time_spend = self.config.get('max_time_spend', 240)  # 4 minutes default
-            threads = self.config.get('threads', 1)
+            threads = self.config.get('threads', 1)  # Number of concurrent browsers
             total_threads_limit = self.config.get('total_threads', 0)
             platforms = self.config.get('platforms', ['desktop'])
             content_ratio = self.config.get('content_ratio', 85) / 100
@@ -1931,8 +2077,8 @@ class AutomationWorker(QObject):
             enable_text_highlight = self.config.get('enable_text_highlight', False)
             enable_ad_interaction = self.config.get('enable_ad_interaction', False)
             
-            self.emit_log(f'Configuration: {len(url_list)} URLs, {num_visits} profiles, {threads} threads')
-            self.emit_log(f'Time per profile: {min_time_spend}-{max_time_spend} seconds with human scrolling')
+            self.emit_log(f'Configuration: {len(url_list)} URLs, {num_tabs} tabs per browser, {threads} concurrent browsers')
+            self.emit_log(f'Time per tab: {min_time_spend}-{max_time_spend} seconds with human scrolling')
             if enable_text_highlight:
                 self.emit_log('✓ Text highlighting enabled')
             if enable_ad_interaction:
@@ -1972,69 +2118,52 @@ class AutomationWorker(QObject):
             # Create consent manager
             consent_manager = ConsentManager(self.log_manager) if enable_consent else None
             
-            # Track completed profiles
-            total_profiles_completed = 0
+            # Track completed browsers
+            total_browsers_completed = 0
             
-            self.emit_log(f'Starting concurrent execution: {threads} browsers at a time')
+            self.emit_log(f'Starting concurrent execution: {threads} browsers at a time, {num_tabs} tabs per browser')
             
-            # Run visits in batches based on thread count
-            for batch_start in range(0, num_visits, threads):
+            # Determine how many browser iterations to run
+            # If total_threads_limit is set, it limits the total number of browser instances
+            num_browser_iterations = threads if total_threads_limit == 0 else min(threads, total_threads_limit)
+            
+            # Execute browsers concurrently
+            self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+            self.emit_log(f'Starting execution: {num_browser_iterations} browsers running simultaneously')
+            self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+            
+            # Create tasks for concurrent browser execution
+            tasks = []
+            for i in range(num_browser_iterations):
                 if not self.running:
-                    self.emit_log('Stop requested, exiting gracefully...')
                     break
                 
-                # Check total thread limit
-                if total_threads_limit > 0 and total_profiles_completed >= total_threads_limit:
-                    self.emit_log(f'✓ Total thread limit reached ({total_threads_limit}), stopping...')
-                    break
-                
-                # Calculate how many visits in this batch
-                batch_end = min(batch_start + threads, num_visits)
-                batch_size = batch_end - batch_start
-                
-                if total_threads_limit > 0:
-                    remaining = total_threads_limit - total_profiles_completed
-                    batch_size = min(batch_size, remaining)
-                
-                self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-                self.emit_log(f'Starting batch: {batch_size} browsers running simultaneously')
-                self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-                
-                # Create tasks for concurrent execution
-                tasks = []
-                for i in range(batch_size):
-                    visit_num = batch_start + i + 1
-                    task = self.execute_single_visit(
-                        visit_num, url_list, platforms, visit_type,
-                        search_keyword, target_domain, referral_sources,
-                        min_time_spend, max_time_spend, enable_consent,
-                        enable_interaction, enable_extra_pages, max_pages,
-                        consent_manager, enable_text_highlight, enable_ad_interaction
-                    )
-                    tasks.append(task)
-                
-                # Execute all tasks concurrently
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                
-                # Count successes and log exceptions
-                success_count = 0
-                for i, result in enumerate(results):
-                    if result is True:
-                        success_count += 1
-                    elif isinstance(result, Exception):
-                        visit_num = batch_start + i + 1
-                        self.emit_log(f'Profile {visit_num} exception: {result}', 'ERROR')
-                
-                total_profiles_completed += success_count
-                
-                self.emit_log(f'Batch completed: {success_count}/{batch_size} profiles successful')
-                
-                # Small delay between batches
-                if batch_end < num_visits and self.running:
-                    await asyncio.sleep(random.uniform(1, 3))
+                browser_num = i + 1
+                task = self.execute_browser_with_tabs(
+                    browser_num, url_list, num_tabs, platforms, visit_type,
+                    search_keyword, target_domain, referral_sources,
+                    min_time_spend, max_time_spend, enable_consent,
+                    enable_interaction, enable_extra_pages, max_pages,
+                    consent_manager, enable_text_highlight, enable_ad_interaction
+                )
+                tasks.append(task)
+            
+            # Execute all browser tasks concurrently
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Count successes and log exceptions
+            success_count = 0
+            for i, result in enumerate(results):
+                if result is True:
+                    success_count += 1
+                elif isinstance(result, Exception):
+                    browser_num = i + 1
+                    self.emit_log(f'Browser {browser_num} exception: {result}', 'ERROR')
+            
+            total_browsers_completed = success_count
             
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-            self.emit_log(f'✓ Automation completed: {total_profiles_completed} profiles processed')
+            self.emit_log(f'✓ Automation completed: {total_browsers_completed} browsers processed successfully')
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             
             # Cleanup
@@ -2375,38 +2504,38 @@ class AppGUI(QMainWindow):
         
         # Time spend settings
         time_layout = QHBoxLayout()
-        time_layout.addWidget(QLabel('Time to Spend per Profile (seconds):'))
+        time_layout.addWidget(QLabel('Random Time to Spend per Profile (seconds):'))
         traffic_layout.addLayout(time_layout)
         
         min_time_layout = QHBoxLayout()
-        min_time_layout.addWidget(QLabel('  Minimum:'))
+        min_time_layout.addWidget(QLabel('  Random Minimum:'))
         self.min_time_input = QSpinBox()
         self.min_time_input.setRange(120, 480)  # 2 to 8 minutes
         self.min_time_input.setValue(120)  # 2 minutes default
         self.min_time_input.setSuffix(' sec')
-        self.min_time_input.setToolTip('Minimum time to spend on each profile with human scrolling (2-8 minutes)')
+        self.min_time_input.setToolTip('Random minimum time to spend on each profile with human scrolling (2-8 minutes)')
         self.min_time_input.valueChanged.connect(self.validate_time_range)
         min_time_layout.addWidget(self.min_time_input)
         min_time_layout.addStretch()
         traffic_layout.addLayout(min_time_layout)
         
         max_time_layout = QHBoxLayout()
-        max_time_layout.addWidget(QLabel('  Maximum:'))
+        max_time_layout.addWidget(QLabel('  Random Maximum:'))
         self.max_time_input = QSpinBox()
         self.max_time_input.setRange(120, 480)  # 2 to 8 minutes
         self.max_time_input.setValue(240)  # 4 minutes default
         self.max_time_input.setSuffix(' sec')
-        self.max_time_input.setToolTip('Maximum time to spend on each profile with human scrolling (2-8 minutes)')
+        self.max_time_input.setToolTip('Random maximum time to spend on each profile with human scrolling (2-8 minutes)')
         self.max_time_input.valueChanged.connect(self.validate_time_range)
         max_time_layout.addWidget(self.max_time_input)
         max_time_layout.addStretch()
         traffic_layout.addLayout(max_time_layout)
         
-        traffic_layout.addWidget(QLabel('Number of Profiles to Visit:'))
+        traffic_layout.addWidget(QLabel('Number of Tabs to Open:'))
         self.num_visits_input = QSpinBox()
         self.num_visits_input.setRange(1, 10000)
         self.num_visits_input.setValue(10)
-        self.num_visits_input.setToolTip('Number of profiles/pages to visit')
+        self.num_visits_input.setToolTip('Number of tabs to open per browser with different URLs')
         traffic_layout.addWidget(self.num_visits_input)
         
         traffic_layout.addWidget(QLabel('Threads (concurrent browsers):'))
