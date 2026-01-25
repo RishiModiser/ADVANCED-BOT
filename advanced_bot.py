@@ -1143,9 +1143,11 @@ class AutomationWorker(QObject):
                         # Search visit - find target domain in Google results
                         found = await self.handle_search_visit(page, target_domain, search_keyword)
                         if not found:
-                            # If domain not found, skip this visit
-                            self.emit_log('Target domain not found in search, skipping interaction')
-                            await page.close()
+                            # If domain not found, close page and count as failed attempt
+                            self.emit_log('Target domain not found in search, counting as failed visit', 'WARNING')
+                            if page:
+                                await page.close()
+                            consecutive_failures += 1
                             continue
                     else:
                         # Direct visit
@@ -1433,6 +1435,7 @@ class AppGUI(QMainWindow):
         self.num_visits_input = QSpinBox()
         self.num_visits_input.setRange(1, 10000)
         self.num_visits_input.setValue(10)
+        self.num_visits_input.setToolTip('High values with concurrent threads may consume significant resources')
         traffic_layout.addWidget(self.num_visits_input)
         
         traffic_layout.addWidget(QLabel('Threads (concurrent browsers):'))
@@ -1499,8 +1502,15 @@ class AppGUI(QMainWindow):
         """Add URL from input to list widget."""
         url = self.url_input.text().strip()
         if url:
+            # Add https:// if no protocol specified
             if not url.startswith(('http://', 'https://')):
                 url = 'https://' + url
+            
+            # Basic URL validation
+            if '.' not in url or len(url) < 10:
+                QMessageBox.warning(self, 'Invalid URL', 'Please enter a valid URL')
+                return
+            
             self.url_list_widget.addItem(url)
             self.url_input.clear()
     
@@ -2373,21 +2383,24 @@ class AppGUI(QMainWindow):
         QMessageBox.information(self, 'Sync', 'Visual builder synced to JSON')
     
     def action_to_step_type(self, action_name: str) -> str:
-        """Convert action name to step type."""
+        """Convert action name to step type. Handles both old and new action names."""
         # Remove emoji prefix for matching
         clean_name = action_name.split(' ', 1)[1] if ' ' in action_name else action_name
         
         mapping = {
+            # New names
             'New Tab': 'newPage',
-            'New Page': 'newPage',
             'Access Website': 'navigate',
-            'Navigate': 'navigate',
             'Time': 'wait',
-            'Wait': 'wait',
             'Scroll': 'scroll',
             'Click Element': 'click',
             'Input Text': 'input',
-            'Close Page': 'closePage'
+            'Close Page': 'closePage',
+            # Old names for backward compatibility
+            'New Page': 'newPage',
+            'Open Page': 'newPage',
+            'Navigate': 'navigate',
+            'Wait': 'wait',
         }
         return mapping.get(clean_name, 'unknown')
     
