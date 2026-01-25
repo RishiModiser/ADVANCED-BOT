@@ -87,6 +87,52 @@ READING_PAUSE_CHANCE = 0.3  # 30% chance to pause for reading
 
 
 # ============================================================================
+# CUSTOM WIDGETS
+# ============================================================================
+
+class DragDropTextEdit(QTextEdit):
+    """Custom QTextEdit that supports drag and drop of files."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+    
+    def dragEnterEvent(self, event):
+        """Handle drag enter event."""
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+    
+    def dragMoveEvent(self, event):
+        """Handle drag move event."""
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+    
+    def dropEvent(self, event):
+        """Handle drop event for files."""
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                file_path = url.toLocalFile()
+                if file_path.lower().endswith('.txt'):
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                            current_text = self.toPlainText()
+                            if current_text.strip():
+                                self.setPlainText(current_text + '\n' + content)
+                            else:
+                                self.setPlainText(content)
+                    except Exception as e:
+                        print(f"Error reading file: {e}")
+            event.acceptProposedAction()
+        else:
+            super().dropEvent(event)
+
+
+# ============================================================================
 # LOGGING MANAGER
 # ============================================================================
 
@@ -678,18 +724,36 @@ class ProxyManager:
         self.failed_proxies = set()
     
     def parse_proxy_list(self, proxy_text: str) -> List[Dict[str, str]]:
-        """Parse proxy list from text input."""
+        """Parse proxy list from text input.
+        
+        Supported formats:
+        - ip:port or host:port
+        - user:pass@ip:port or user:pass@host:port
+        - ip:port:username:password or host:port:username:password
+        - protocol://ip:port or protocol://host:port (http, https, socks5)
+        - protocol://user:pass@ip:port or protocol://user:pass@host:port
+        - IPv6: [ipv6]:port or protocol://[ipv6]:port
+        """
         proxies = []
         lines = proxy_text.strip().split('\n')
         
         for line in lines:
             line = line.strip()
-            if not line:
+            if not line or line.startswith('#'):
                 continue
             
             proxy_config = {}
+            proxy_type = self.proxy_type.lower()  # Default to selected type
             
-            # Check for user:pass@ip:port format
+            # Check if protocol is specified in the line
+            if '://' in line:
+                protocol, rest = line.split('://', 1)
+                proxy_type = protocol.lower()
+                if proxy_type not in ['http', 'https', 'socks5']:
+                    proxy_type = self.proxy_type.lower()
+                line = rest
+            
+            # Check for user:pass@host:port format
             if '@' in line:
                 auth_part, server_part = line.split('@', 1)
                 if ':' in auth_part:
@@ -697,15 +761,56 @@ class ProxyManager:
                     proxy_config['username'] = username
                     proxy_config['password'] = password
                 
-                # Build server URL
+                # Build server URL from host:port
                 if ':' in server_part:
-                    ip, port = server_part.rsplit(':', 1)
-                    proxy_config['server'] = f"{self.proxy_type.lower()}://{ip}:{port}"
+                    # Handle IPv6 addresses [ipv6]:port
+                    if server_part.startswith('['):
+                        # IPv6 format
+                        bracket_end = server_part.find(']')
+                        if bracket_end != -1:
+                            host = server_part[:bracket_end+1]
+                            port_part = server_part[bracket_end+1:]
+                            if port_part.startswith(':'):
+                                port = port_part[1:]
+                                proxy_config['server'] = f"{proxy_type}://{host}:{port}"
+                    else:
+                        host, port = server_part.rsplit(':', 1)
+                        proxy_config['server'] = f"{proxy_type}://{host}:{port}"
             else:
-                # Simple ip:port format
-                if ':' in line:
-                    ip, port = line.rsplit(':', 1)
-                    proxy_config['server'] = f"{self.proxy_type.lower()}://{ip}:{port}"
+                # Parse without @ symbol
+                # Check for IPv6 addresses first
+                if line.startswith('['):
+                    # IPv6 format: [ipv6]:port or [ipv6]:port:username:password
+                    bracket_end = line.find(']')
+                    if bracket_end != -1:
+                        host = line[:bracket_end+1]
+                        rest_parts = line[bracket_end+1:].lstrip(':').split(':')
+                        if len(rest_parts) >= 1:
+                            port = rest_parts[0]
+                            proxy_config['server'] = f"{proxy_type}://{host}:{port}"
+                            if len(rest_parts) == 3:
+                                # [ipv6]:port:username:password
+                                proxy_config['username'] = rest_parts[1]
+                                proxy_config['password'] = rest_parts[2]
+                else:
+                    # Check for host:port:username:password format
+                    parts = line.split(':')
+                    if len(parts) == 4:
+                        # Assume host:port:username:password
+                        host, port, username, password = parts
+                        proxy_config['server'] = f"{proxy_type}://{host}:{port}"
+                        proxy_config['username'] = username
+                        proxy_config['password'] = password
+                    elif len(parts) == 2:
+                        # Simple host:port format
+                        host, port = parts
+                        proxy_config['server'] = f"{proxy_type}://{host}:{port}"
+                    elif len(parts) > 2:
+                        # Assume last part is port, rest is hostname
+                        # This could be hostname:with:colons:port
+                        port = parts[-1]
+                        host = ':'.join(parts[:-1])
+                        proxy_config['server'] = f"{proxy_type}://{host}:{port}"
             
             if proxy_config.get('server'):
                 proxies.append(proxy_config)
@@ -742,6 +847,10 @@ class ProxyManager:
             self.failed_proxies.add(idx)
         except ValueError:
             pass
+    
+    def get_proxy_count(self) -> int:
+        """Get total number of loaded proxies."""
+        return len(self.proxy_list)
 
 
 # ============================================================================
@@ -1249,6 +1358,8 @@ class AppGUI(QMainWindow):
         # Initialize confidence_input with default value (since sponsored tab is removed)
         self.confidence_input = QDoubleSpinBox()
         self.confidence_input.setValue(0.7)
+        # Create a reusable proxy manager for counting
+        self._proxy_count_manager = ProxyManager()
         self.init_ui()
     
     def init_ui(self):
@@ -1792,6 +1903,7 @@ class AppGUI(QMainWindow):
         proxy_type_layout = QVBoxLayout()
         proxy_type_layout.setSpacing(10)
         
+        proxy_type_layout.addWidget(QLabel('ℹ️ Default type for proxies without protocol prefix:'))
         self.proxy_type_combo = QComboBox()
         self.proxy_type_combo.addItems(['HTTP', 'HTTPS', 'SOCKS5'])
         self.proxy_type_combo.setEnabled(False)
@@ -1806,13 +1918,20 @@ class AppGUI(QMainWindow):
         proxy_list_layout.setSpacing(10)
         
         proxy_list_layout.addWidget(QLabel('Enter proxies (one per line):'))
-        proxy_list_layout.addWidget(QLabel('Formats: ip:port, user:pass@ip:port, socks5://ip:port'))
+        proxy_list_layout.addWidget(QLabel('Formats: ip:port, user:pass@ip:port, ip:port:user:pass, protocol://ip:port'))
         
-        self.proxy_list_input = QTextEdit()
-        self.proxy_list_input.setPlaceholderText('127.0.0.1:8080\nuser:pass@192.168.1.1:3128\nsocks5://10.0.0.1:1080\nhttp://proxy.com:8080')
+        self.proxy_list_input = DragDropTextEdit()
+        self.proxy_list_input.setPlaceholderText('127.0.0.1:8080\nuser:pass@192.168.1.1:3128\n10.0.0.1:1080:user:pass\nhttp://proxy.com:8080\nsocks5://10.0.0.2:1080')
         self.proxy_list_input.setMaximumHeight(120)
         self.proxy_list_input.setEnabled(False)
+        self.proxy_list_input.setAcceptDrops(True)
+        self.proxy_list_input.textChanged.connect(self.update_proxy_count)
         proxy_list_layout.addWidget(self.proxy_list_input)
+        
+        # Proxy count label
+        self.proxy_count_label = QLabel('📊 Proxies loaded: 0')
+        self.proxy_count_label.setStyleSheet('color: #27ae60; font-weight: bold; font-size: 12px;')
+        proxy_list_layout.addWidget(self.proxy_count_label)
         
         # Import from file button
         import_btn = QPushButton('📁 Import from File')
@@ -1855,6 +1974,28 @@ class AppGUI(QMainWindow):
         self.proxy_import_btn.setEnabled(enabled)
         self.rotate_proxy_check.setEnabled(enabled)
     
+    def update_proxy_count(self):
+        """Update proxy count label based on current input."""
+        try:
+            proxy_text = self.proxy_list_input.toPlainText()
+            if not proxy_text.strip():
+                self.proxy_count_label.setText('📊 Proxies loaded: 0')
+                return
+            
+            # Reuse proxy manager for parsing
+            self._proxy_count_manager.proxy_type = self.proxy_type_combo.currentText()
+            proxies = self._proxy_count_manager.parse_proxy_list(proxy_text)
+            count = len(proxies)
+            self.proxy_count_label.setText(f'📊 Proxies loaded: {count}')
+            
+            if count > 0:
+                self.proxy_count_label.setStyleSheet('color: #27ae60; font-weight: bold; font-size: 12px;')
+            else:
+                self.proxy_count_label.setStyleSheet('color: #e74c3c; font-weight: bold; font-size: 12px;')
+        except Exception as e:
+            self.proxy_count_label.setText(f'📊 Proxies loaded: 0 (Error parsing)')
+            self.proxy_count_label.setStyleSheet('color: #e74c3c; font-weight: bold; font-size: 12px;')
+    
     def import_proxies_from_file(self):
         """Import proxies from a text file."""
         file_path, _ = QFileDialog.getOpenFileName(
@@ -1872,6 +2013,7 @@ class AppGUI(QMainWindow):
                         self.proxy_list_input.setPlainText(current_text + '\n' + proxies)
                     else:
                         self.proxy_list_input.setPlainText(proxies)
+                self.update_proxy_count()
                 self.log_manager.log('INFO', f'Imported proxies from {file_path}')
             except Exception as e:
                 QMessageBox.warning(self, 'Error', f'Failed to import proxies: {str(e)}')

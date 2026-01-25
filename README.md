@@ -81,9 +81,15 @@ The application provides a modern, fully responsive GUI with improved navigation
 
 3. **🌐 Proxy Settings**
    - Enable/disable proxy
-   - Proxy type selection (HTTP, HTTPS, SOCKS5)
-   - Proxy list management (manual entry or import from file)
-   - **Import from File** - Import proxies from .txt file
+   - Auto-detect proxy type from protocol prefix or use default selection (HTTP, HTTPS, SOCKS5)
+   - Multiple proxy format support:
+     - Simple: `ip:port` or `host:port`
+     - With auth: `user:pass@host:port`
+     - Alternative auth: `host:port:username:password`
+     - Protocol prefix: `http://host:port`, `https://host:port`, `socks5://host:port`
+   - **Drag & Drop** - Drag and drop .txt files directly into the proxy list
+   - **Import from File** - Import proxies from .txt file via file picker
+   - **Proxy Counter** - Real-time display of loaded proxy count
    - Rotation settings (rotate per session/profile)
    - Automatic timezone/location handling based on proxy
 
@@ -161,9 +167,15 @@ The application provides a modern, fully responsive GUI with improved navigation
 - Realistic reading pauses (8-25 seconds)
 
 #### Improved Proxy Management
-- Import proxies from .txt files
-- Support for HTTP, HTTPS, SOCKS5, and IP formats
+- Import proxies from .txt files or drag & drop
+- Support for multiple proxy formats:
+  - Simple format: `ip:port`
+  - With authentication: `user:pass@ip:port` or `ip:port:username:password`
+  - Protocol-specific: `http://ip:port`, `https://ip:port`, `socks5://ip:port`
+  - Mixed formats in same list (auto-detection)
+- Real-time proxy count display
 - Automatic rotation per session/profile
+- Support for HTTP, HTTPS, SOCKS5, and IP formats
 - Ready for timezone/location/fingerprint customization
 
 #### Enhanced RPA Script Creator
@@ -248,6 +260,10 @@ Only interacts with elements containing:
 ## 📁 Project Structure
 
 The application is contained in a single file: `advanced_bot.py`
+
+### Example Files:
+- `example_script.json` - Sample RPA automation script
+- `example_proxies.txt` - Example proxy list with all supported formats
 
 ### Internal Classes:
 - `AppGUI` - Main GUI application
