@@ -6,6 +6,32 @@ Installs Playwright Chromium browser required for the bot to function.
 
 import subprocess
 import sys
+import platform
+
+def install_system_deps():
+    """Install system dependencies on Linux if needed."""
+    if platform.system() != 'Linux':
+        return True
+    
+    try:
+        print("Installing system dependencies for Linux...")
+        result = subprocess.run(
+            ['playwright', 'install-deps', 'chromium'],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            print("Note: System dependencies installation may require sudo privileges")
+            print("If browser fails to launch, run:")
+            print("  sudo playwright install-deps chromium")
+            print()
+        return True
+    except Exception as e:
+        print(f"Note: Could not install system dependencies: {e}")
+        print("If browser fails to launch, run:")
+        print("  sudo playwright install-deps chromium")
+        print()
+        return True
 
 def main():
     """Install Playwright Chromium browser."""
@@ -24,6 +50,10 @@ def main():
         )
         
         print()
+        
+        # Try to install system dependencies
+        install_system_deps()
+        
         print("=" * 60)
         print("✓ Browser installation completed successfully!")
         print("=" * 60)
