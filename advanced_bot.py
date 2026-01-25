@@ -873,8 +873,10 @@ class BrowserManager:
     async def initialize(self):
         """Initialize Playwright and browser."""
         try:
+            self.log_manager.log('━━━ Browser Initialization Started ━━━')
             self.log_manager.log('Initializing Playwright...')
             self.playwright = await async_playwright().start()
+            self.log_manager.log('✓ Playwright started successfully')
             
             launch_options = {
                 'headless': self.headless,
@@ -887,8 +889,10 @@ class BrowserManager:
             
             # Note: Proxy is now set per-context, not per-browser
             
+            self.log_manager.log(f'Launching Chromium browser (headless={self.headless})...')
             self.browser = await self.playwright.chromium.launch(**launch_options)
-            self.log_manager.log('Browser launched successfully')
+            self.log_manager.log('✓ Browser launched successfully')
+            self.log_manager.log('━━━ Browser Initialization Complete ━━━')
             
             return True
             
@@ -916,7 +920,9 @@ class BrowserManager:
             self.fingerprint_manager.platform = platform
             fingerprint = self.fingerprint_manager.generate_fingerprint()
             
-            self.log_manager.log(f'Creating context with {platform} fingerprint')
+            self.log_manager.log(f'━━━ Creating Browser Context ━━━')
+            self.log_manager.log(f'Platform: {platform}')
+            self.log_manager.log(f'User Agent: {fingerprint["user_agent"][:60]}...')
             
             context_options = {
                 'user_agent': fingerprint['user_agent'],
@@ -931,7 +937,9 @@ class BrowserManager:
                 if proxy_config:
                     context_options['proxy'] = proxy_config
                     server = proxy_config.get('server', 'unknown')
-                    self.log_manager.log(f'Using proxy: {server}')
+                    self.log_manager.log(f'✓ Using proxy: {server}')
+                else:
+                    self.log_manager.log('No proxy configured, using direct connection')
             
             self.context = await self.browser.new_context(**context_options)
             
@@ -945,7 +953,8 @@ class BrowserManager:
                 }});
             """)
             
-            self.log_manager.log('Browser context created')
+            self.log_manager.log('✓ Browser context created successfully')
+            self.log_manager.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             return self.context
             
         except Exception as e:
@@ -1191,12 +1200,33 @@ class AutomationWorker(QObject):
             if total_threads_limit > 0:
                 self.emit_log(f'Total thread limit: {total_threads_limit}')
             
-            # Initialize browser
+            # Check proxy configuration and log proxy status BEFORE browser initialization
+            proxy_manager = self.browser_manager.proxy_manager
+            if proxy_manager.proxy_enabled:
+                proxy_count = proxy_manager.get_proxy_count()
+                if proxy_count > 0:
+                    self.emit_log(f'✓ Proxy configuration loaded: {proxy_count} proxies available')
+                    if proxy_manager.rotate_proxy:
+                        self.emit_log('✓ Proxy rotation enabled')
+                else:
+                    self.emit_log('⚠ Proxy enabled but no proxies loaded', 'WARNING')
+            else:
+                self.emit_log('Proxy disabled, using direct connection')
+            
+            # Initialize browser AFTER proxy validation
             self.browser_manager.headless = self.config.get('headless', False)
             
+            self.emit_log('Initializing browser...')
             success = await self.browser_manager.initialize()
             if not success:
+                self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'ERROR')
                 self.emit_log('Failed to initialize browser', 'ERROR')
+                self.emit_log('Please check the logs above for details', 'ERROR')
+                self.emit_log('Common issues:', 'ERROR')
+                self.emit_log('  1. Chromium not installed: Run "playwright install chromium"', 'ERROR')
+                self.emit_log('  2. Port conflict or permission issues', 'ERROR')
+                self.emit_log('  3. System resources (memory/disk) insufficient', 'ERROR')
+                self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'ERROR')
                 return
             
             # Create managers
