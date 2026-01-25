@@ -70,6 +70,12 @@ from PySide6.QtGui import QFont, QColor, QPalette
 
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Playwright
 
+# Import aiohttp for geolocation API calls (will be used in ProxyGeolocation class)
+try:
+    import aiohttp
+except ImportError:
+    aiohttp = None  # Will handle gracefully in ProxyGeolocation
+
 
 # ============================================================================
 # CONFIGURATION & CONSTANTS
@@ -1080,11 +1086,10 @@ class ProxyGeolocation:
     
     async def fetch_location(self, proxy_config: Dict[str, str]) -> Dict[str, str]:
         """
-        Fetch geolocation for a proxy.
+        Fetch geolocation for a proxy using real geolocation API.
         Returns a dictionary with location info like country, city, timezone.
         
-        Note: This uses a simple IP extraction and mock data for demo purposes.
-        For production, integrate with ip-api.com, ipinfo.io, or similar services.
+        Uses ip-api.com free API for accurate geolocation.
         """
         try:
             ip = self.extract_ip_from_proxy(proxy_config)
@@ -1100,8 +1105,30 @@ class ProxyGeolocation:
             if ip in self.cache:
                 return self.cache[ip]
             
-            # For demo: Parse IP and determine mock location
-            # In production, make HTTP request to geolocation API
+            # Try to fetch real geolocation data from ip-api.com (using HTTPS)
+            if aiohttp is not None:
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            f'https://ip-api.com/json/{ip}',  # Using HTTPS for secure communication
+                            timeout=aiohttp.ClientTimeout(total=5)
+                        ) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                if data.get('status') == 'success':
+                                    location_info = {
+                                        'ip': ip,
+                                        'country': data.get('country', 'Unknown'),
+                                        'city': data.get('city', 'Unknown'),
+                                        'timezone': data.get('timezone', 'UTC')
+                                    }
+                                    # Cache the result
+                                    self.cache[ip] = location_info
+                                    return location_info
+                except Exception as api_error:
+                    logging.warning(f'Failed to fetch real geolocation, using fallback: {api_error}')
+            
+            # Fallback to mock data if API fails or aiohttp not available
             location_info = {
                 'ip': ip,
                 'country': self._guess_country_from_ip(ip),
@@ -1836,26 +1863,28 @@ class AutomationWorker(QObject):
                     location_text_safe = json.dumps(f"Proxy: {country} | IP: {ip}")
                     
                     self.emit_log(f'[INFO] Proxy: {country} | IP: {ip}')
-                    # Inject location display into page with proper escaping
+                    # Inject location display into page with proper escaping and null check
                     await page.add_init_script(f"""
                         window.addEventListener('load', () => {{
-                            const locationDiv = document.createElement('div');
-                            locationDiv.id = 'proxy-location-display';
-                            locationDiv.style.cssText = `
-                                position: fixed;
-                                top: 10px;
-                                right: 10px;
-                                background: rgba(0, 0, 0, 0.8);
-                                color: #00ff00;
-                                padding: 10px 15px;
-                                border-radius: 5px;
-                                font-family: monospace;
-                                font-size: 12px;
-                                z-index: 999999;
-                                pointer-events: none;
-                            `;
-                            locationDiv.textContent = {location_text_safe};
-                            document.body.appendChild(locationDiv);
+                            if (document.body) {{
+                                const locationDiv = document.createElement('div');
+                                locationDiv.id = 'proxy-location-display';
+                                locationDiv.style.cssText = `
+                                    position: fixed;
+                                    top: 10px;
+                                    right: 10px;
+                                    background: rgba(0, 0, 0, 0.8);
+                                    color: #00ff00;
+                                    padding: 10px 15px;
+                                    border-radius: 5px;
+                                    font-family: monospace;
+                                    font-size: 12px;
+                                    z-index: 999999;
+                                    pointer-events: none;
+                                `;
+                                locationDiv.textContent = {location_text_safe};
+                                document.body.appendChild(locationDiv);
+                            }}
                         }});
                     """)
                 
@@ -1903,18 +1932,239 @@ class AutomationWorker(QObject):
             self.emit_log(f'✗ Profile {visit_num} error: {e}', 'ERROR')
             return False
     
+    async def execute_single_tab(self, page, tab_num, target_url, visit_type,
+                                  search_keyword, target_domain, referral_sources,
+                                  min_time_spend, max_time_spend, enable_consent,
+                                  enable_interaction, enable_extra_pages, max_pages,
+                                  consent_manager, enable_highlight=False, enable_ad_interaction=False):
+        """Execute a single tab within a browser."""
+        try:
+            self.emit_log(f'[Tab {tab_num}] Processing URL: {target_url[:50]}...')
+            
+            # Navigate based on visit type
+            if visit_type == 'referral':
+                await self.handle_referral_visit(page, target_url, referral_sources)
+            elif visit_type == 'search':
+                # Search visit - find target domain in Google results
+                found = await self.handle_search_visit(page, target_domain, search_keyword)
+                if not found:
+                    self.emit_log(f'[Tab {tab_num}] Target domain not found in search', 'WARNING')
+                    return False
+            else:
+                # Direct visit
+                self.emit_log(f'[Tab {tab_num}] Direct visit to {target_url}')
+                await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
+            
+            # Handle consents if enabled
+            if consent_manager and enable_consent:
+                await consent_manager.handle_consents(page)
+            
+            # Detect and interact with ads if enabled
+            if enable_ad_interaction:
+                await self.handle_ad_detection_and_interaction(page)
+            
+            # Time-based human scrolling behavior with highlighting
+            self.emit_log(f'[Tab {tab_num}] Starting time-based browsing ({min_time_spend}-{max_time_spend} seconds)...')
+            await HumanBehavior.time_based_browsing(page, min_time_spend, max_time_spend, enable_highlight)
+            
+            # Handle interaction if enabled (legacy mode)
+            if enable_interaction:
+                await self.handle_interaction(page, max_pages, enable_extra_pages)
+            
+            self.emit_log(f'✓ [Tab {tab_num}] Completed successfully')
+            return True
+            
+        except Exception as e:
+            self.emit_log(f'✗ [Tab {tab_num}] Error: {e}', 'ERROR')
+            return False
+    
+    async def execute_browser_with_tabs(self, browser_num, url_list, num_tabs, platforms, visit_type,
+                                        search_keyword, target_domain, referral_sources,
+                                        min_time_spend, max_time_spend, enable_consent,
+                                        enable_interaction, enable_extra_pages, max_pages,
+                                        consent_manager, enable_highlight=False, enable_ad_interaction=False):
+        """Execute a single browser with multiple tabs."""
+        try:
+            # Select random platform for this browser
+            platform = random.choice(platforms)
+            
+            self.emit_log(f'━━━ Browser {browser_num} | Platform: {platform} | Opening {num_tabs} tabs ━━━')
+            
+            # Create new context for this browser (session isolation)
+            self.emit_log(f'Creating browser context for browser {browser_num}...')
+            context = await self.browser_manager.create_context(platform)
+            if not context:
+                self.emit_log(f'Failed to create browser context for browser {browser_num}', 'ERROR')
+                return False
+            
+            try:
+                # Get proxy location once for the browser
+                proxy_location = getattr(context, '_proxy_location', None)
+                
+                # Create multiple tabs (pages) in this browser
+                tasks = []
+                pages = []
+                
+                for tab_idx in range(num_tabs):
+                    # Create new page (tab)
+                    page = await context.new_page()
+                    pages.append(page)
+                    
+                    # Display proxy location in each tab if available
+                    if proxy_location:
+                        country = proxy_location.get('country', 'Unknown')
+                        ip = proxy_location.get('ip', 'unknown')
+                        location_text_safe = json.dumps(f"Proxy: {country} | IP: {ip}")
+                        
+                        # Inject location display into page with null check for document.body
+                        await page.add_init_script(f"""
+                            window.addEventListener('load', () => {{
+                                if (document.body) {{
+                                    const locationDiv = document.createElement('div');
+                                    locationDiv.id = 'proxy-location-display';
+                                    locationDiv.style.cssText = `
+                                        position: fixed;
+                                        top: 10px;
+                                        right: 10px;
+                                        background: rgba(0, 0, 0, 0.8);
+                                        color: #00ff00;
+                                        padding: 10px 15px;
+                                        border-radius: 5px;
+                                        font-family: monospace;
+                                        font-size: 12px;
+                                        z-index: 999999;
+                                        pointer-events: none;
+                                    `;
+                                    locationDiv.textContent = {location_text_safe};
+                                    document.body.appendChild(locationDiv);
+                                }}
+                            }});
+                        """)
+                    
+                    # Select URL for this tab (cycle through URL list if more tabs than URLs)
+                    target_url = url_list[tab_idx % len(url_list)]
+                    
+                    # Create task for this tab
+                    task = self.execute_single_tab(
+                        page, tab_idx + 1, target_url, visit_type,
+                        search_keyword, target_domain, referral_sources,
+                        min_time_spend, max_time_spend, enable_consent,
+                        enable_interaction, enable_extra_pages, max_pages,
+                        consent_manager, enable_highlight, enable_ad_interaction
+                    )
+                    tasks.append(task)
+                
+                # Execute all tabs concurrently
+                self.emit_log(f'[Browser {browser_num}] Running {num_tabs} tabs simultaneously...')
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # Count successes
+                success_count = sum(1 for r in results if r is True)
+                self.emit_log(f'[Browser {browser_num}] Completed: {success_count}/{num_tabs} tabs successful')
+                
+                # Close all pages
+                for page in pages:
+                    try:
+                        await page.close()
+                    except Exception:
+                        pass  # Ignore any errors during cleanup
+                
+                return success_count > 0
+                
+            finally:
+                # Always close context after all tabs complete
+                await context.close()
+                
+        except Exception as e:
+            self.emit_log(f'✗ Browser {browser_num} error: {e}', 'ERROR')
+            return False
+    
     async def run_automation(self):
         """Main automation loop with multi-threading, multiple URLs, and platform mixing support."""
         try:
             self.running = True
             self.emit_log('Starting automation...')
             
+            # Check if RPA mode is enabled
+            rpa_mode = self.config.get('rpa_mode', False)
+            
+            if rpa_mode:
+                # RPA Mode: Execute RPA script
+                await self.run_rpa_mode()
+            else:
+                # Normal Mode: Execute standard automation
+                await self.run_normal_mode()
+            
+        except Exception as e:
+            self.emit_log(f'Automation error: {e}', 'ERROR')
+        
+        finally:
+            self.running = False
+            self.finished_signal.emit()
+    
+    async def run_rpa_mode(self):
+        """Execute RPA script mode."""
+        try:
+            self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+            self.emit_log('RPA MODE: Executing RPA script only')
+            self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+            
+            rpa_script = self.config.get('rpa_script', {})
+            
+            # Check proxy configuration
+            proxy_manager = self.browser_manager.proxy_manager
+            if proxy_manager.proxy_enabled:
+                proxy_count = proxy_manager.get_proxy_count()
+                if proxy_count > 0:
+                    self.emit_log(f'✓ Proxy configuration loaded: {proxy_count} proxies available')
+                else:
+                    self.emit_log('⚠ Proxy enabled but no proxies loaded', 'WARNING')
+            else:
+                self.emit_log('Proxy disabled, using direct connection')
+            
+            # Initialize browser
+            self.browser_manager.headless = self.config.get('headless', False)
+            self.emit_log('Initializing browser...')
+            success = await self.browser_manager.initialize()
+            if not success:
+                self.emit_log('Failed to initialize browser', 'ERROR')
+                return
+            
+            # Create browser context
+            self.emit_log('Creating browser context...')
+            context = await self.browser_manager.create_context()
+            if not context:
+                self.emit_log('Failed to create browser context', 'ERROR')
+                return
+            
+            try:
+                # Execute RPA script
+                script_executor = ScriptExecutor(self.log_manager)
+                self.emit_log('Executing RPA script...')
+                success = await script_executor.execute_script(rpa_script, context)
+                
+                if success:
+                    self.emit_log('✓ RPA script execution completed successfully')
+                else:
+                    self.emit_log('✗ RPA script execution had errors', 'WARNING')
+                    
+            finally:
+                await context.close()
+                await self.browser_manager.close()
+                self.emit_log('Browser closed, RPA execution finished')
+            
+        except Exception as e:
+            self.emit_log(f'RPA mode error: {e}', 'ERROR')
+    
+    async def run_normal_mode(self):
+        """Execute normal automation mode."""
+        try:
             # Get configuration
             url_list = self.config.get('url_list', [])
-            num_visits = self.config.get('num_visits', 1)
+            num_tabs = self.config.get('num_visits', 1)  # Now represents number of tabs per browser
             min_time_spend = self.config.get('min_time_spend', 120)  # 2 minutes default
             max_time_spend = self.config.get('max_time_spend', 240)  # 4 minutes default
-            threads = self.config.get('threads', 1)
+            threads = self.config.get('threads', 1)  # Number of concurrent browsers
             total_threads_limit = self.config.get('total_threads', 0)
             platforms = self.config.get('platforms', ['desktop'])
             content_ratio = self.config.get('content_ratio', 85) / 100
@@ -1931,8 +2181,8 @@ class AutomationWorker(QObject):
             enable_text_highlight = self.config.get('enable_text_highlight', False)
             enable_ad_interaction = self.config.get('enable_ad_interaction', False)
             
-            self.emit_log(f'Configuration: {len(url_list)} URLs, {num_visits} profiles, {threads} threads')
-            self.emit_log(f'Time per profile: {min_time_spend}-{max_time_spend} seconds with human scrolling')
+            self.emit_log(f'Configuration: {len(url_list)} URLs, {num_tabs} tabs per browser, {threads} concurrent browsers')
+            self.emit_log(f'Time per tab: {min_time_spend}-{max_time_spend} seconds with human scrolling')
             if enable_text_highlight:
                 self.emit_log('✓ Text highlighting enabled')
             if enable_ad_interaction:
@@ -1972,69 +2222,52 @@ class AutomationWorker(QObject):
             # Create consent manager
             consent_manager = ConsentManager(self.log_manager) if enable_consent else None
             
-            # Track completed profiles
-            total_profiles_completed = 0
+            # Track completed browsers
+            total_browsers_completed = 0
             
-            self.emit_log(f'Starting concurrent execution: {threads} browsers at a time')
+            self.emit_log(f'Starting concurrent execution: {threads} browsers at a time, {num_tabs} tabs per browser')
             
-            # Run visits in batches based on thread count
-            for batch_start in range(0, num_visits, threads):
+            # Determine how many browser iterations to run
+            # If total_threads_limit is set, it limits the total number of browser instances
+            num_browser_iterations = threads if total_threads_limit == 0 else min(threads, total_threads_limit)
+            
+            # Execute browsers concurrently
+            self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+            self.emit_log(f'Starting execution: {num_browser_iterations} browsers running simultaneously')
+            self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+            
+            # Create tasks for concurrent browser execution
+            tasks = []
+            for i in range(num_browser_iterations):
                 if not self.running:
-                    self.emit_log('Stop requested, exiting gracefully...')
                     break
                 
-                # Check total thread limit
-                if total_threads_limit > 0 and total_profiles_completed >= total_threads_limit:
-                    self.emit_log(f'✓ Total thread limit reached ({total_threads_limit}), stopping...')
-                    break
-                
-                # Calculate how many visits in this batch
-                batch_end = min(batch_start + threads, num_visits)
-                batch_size = batch_end - batch_start
-                
-                if total_threads_limit > 0:
-                    remaining = total_threads_limit - total_profiles_completed
-                    batch_size = min(batch_size, remaining)
-                
-                self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-                self.emit_log(f'Starting batch: {batch_size} browsers running simultaneously')
-                self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-                
-                # Create tasks for concurrent execution
-                tasks = []
-                for i in range(batch_size):
-                    visit_num = batch_start + i + 1
-                    task = self.execute_single_visit(
-                        visit_num, url_list, platforms, visit_type,
-                        search_keyword, target_domain, referral_sources,
-                        min_time_spend, max_time_spend, enable_consent,
-                        enable_interaction, enable_extra_pages, max_pages,
-                        consent_manager, enable_text_highlight, enable_ad_interaction
-                    )
-                    tasks.append(task)
-                
-                # Execute all tasks concurrently
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                
-                # Count successes and log exceptions
-                success_count = 0
-                for i, result in enumerate(results):
-                    if result is True:
-                        success_count += 1
-                    elif isinstance(result, Exception):
-                        visit_num = batch_start + i + 1
-                        self.emit_log(f'Profile {visit_num} exception: {result}', 'ERROR')
-                
-                total_profiles_completed += success_count
-                
-                self.emit_log(f'Batch completed: {success_count}/{batch_size} profiles successful')
-                
-                # Small delay between batches
-                if batch_end < num_visits and self.running:
-                    await asyncio.sleep(random.uniform(1, 3))
+                browser_num = i + 1
+                task = self.execute_browser_with_tabs(
+                    browser_num, url_list, num_tabs, platforms, visit_type,
+                    search_keyword, target_domain, referral_sources,
+                    min_time_spend, max_time_spend, enable_consent,
+                    enable_interaction, enable_extra_pages, max_pages,
+                    consent_manager, enable_text_highlight, enable_ad_interaction
+                )
+                tasks.append(task)
+            
+            # Execute all browser tasks concurrently
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Count successes and log exceptions
+            success_count = 0
+            for i, result in enumerate(results):
+                if result is True:
+                    success_count += 1
+                elif isinstance(result, Exception):
+                    browser_num = i + 1
+                    self.emit_log(f'Browser {browser_num} exception: {result}', 'ERROR')
+            
+            total_browsers_completed = success_count
             
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-            self.emit_log(f'✓ Automation completed: {total_profiles_completed} profiles processed')
+            self.emit_log(f'✓ Automation completed: {total_browsers_completed} browsers processed successfully')
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             
             # Cleanup
@@ -2042,11 +2275,7 @@ class AutomationWorker(QObject):
             self.emit_log('Browser closed, automation finished')
             
         except Exception as e:
-            self.emit_log(f'Automation error: {e}', 'ERROR')
-        
-        finally:
-            self.running = False
-            self.finished_signal.emit()
+            self.emit_log(f'Normal mode error: {e}', 'ERROR')
     
     def run(self):
         """Entry point for thread execution."""
@@ -2375,38 +2604,38 @@ class AppGUI(QMainWindow):
         
         # Time spend settings
         time_layout = QHBoxLayout()
-        time_layout.addWidget(QLabel('Time to Spend per Profile (seconds):'))
+        time_layout.addWidget(QLabel('Random Time to Spend per Profile (seconds):'))
         traffic_layout.addLayout(time_layout)
         
         min_time_layout = QHBoxLayout()
-        min_time_layout.addWidget(QLabel('  Minimum:'))
+        min_time_layout.addWidget(QLabel('  Random Minimum:'))
         self.min_time_input = QSpinBox()
         self.min_time_input.setRange(120, 480)  # 2 to 8 minutes
         self.min_time_input.setValue(120)  # 2 minutes default
         self.min_time_input.setSuffix(' sec')
-        self.min_time_input.setToolTip('Minimum time to spend on each profile with human scrolling (2-8 minutes)')
+        self.min_time_input.setToolTip('Random minimum time to spend on each profile with human scrolling (2-8 minutes)')
         self.min_time_input.valueChanged.connect(self.validate_time_range)
         min_time_layout.addWidget(self.min_time_input)
         min_time_layout.addStretch()
         traffic_layout.addLayout(min_time_layout)
         
         max_time_layout = QHBoxLayout()
-        max_time_layout.addWidget(QLabel('  Maximum:'))
+        max_time_layout.addWidget(QLabel('  Random Maximum:'))
         self.max_time_input = QSpinBox()
         self.max_time_input.setRange(120, 480)  # 2 to 8 minutes
         self.max_time_input.setValue(240)  # 4 minutes default
         self.max_time_input.setSuffix(' sec')
-        self.max_time_input.setToolTip('Maximum time to spend on each profile with human scrolling (2-8 minutes)')
+        self.max_time_input.setToolTip('Random maximum time to spend on each profile with human scrolling (2-8 minutes)')
         self.max_time_input.valueChanged.connect(self.validate_time_range)
         max_time_layout.addWidget(self.max_time_input)
         max_time_layout.addStretch()
         traffic_layout.addLayout(max_time_layout)
         
-        traffic_layout.addWidget(QLabel('Number of Profiles to Visit:'))
+        traffic_layout.addWidget(QLabel('Number of Tabs to Open:'))
         self.num_visits_input = QSpinBox()
         self.num_visits_input.setRange(1, 10000)
         self.num_visits_input.setValue(10)
-        self.num_visits_input.setToolTip('Number of profiles/pages to visit')
+        self.num_visits_input.setToolTip('Number of tabs to open per browser with different URLs')
         traffic_layout.addWidget(self.num_visits_input)
         
         traffic_layout.addWidget(QLabel('Threads (concurrent browsers):'))
@@ -2628,6 +2857,24 @@ class AppGUI(QMainWindow):
         consent_group.setLayout(consent_layout)
         layout.addWidget(consent_group)
         
+        # RPA Mode (NEW FEATURE)
+        rpa_mode_group = QGroupBox('🧩 RPA Mode')
+        rpa_mode_layout = QVBoxLayout()
+        rpa_mode_layout.setSpacing(10)
+        
+        self.enable_rpa_mode = QCheckBox('✅ Enable RPA Mode Only')
+        self.enable_rpa_mode.setChecked(False)
+        self.enable_rpa_mode.stateChanged.connect(self.toggle_rpa_mode)
+        rpa_mode_layout.addWidget(self.enable_rpa_mode)
+        
+        rpa_info = QLabel('ℹ️ When enabled, only RPA script and proxy settings are active. All other features are disabled.')
+        rpa_info.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
+        rpa_info.setWordWrap(True)
+        rpa_mode_layout.addWidget(rpa_info)
+        
+        rpa_mode_group.setLayout(rpa_mode_layout)
+        layout.addWidget(rpa_mode_group)
+        
         layout.addStretch()
         
         scroll_area.setWidget(widget)
@@ -2638,6 +2885,52 @@ class AppGUI(QMainWindow):
         # PySide6 stateChanged emits int (0=unchecked, 2=checked), compare with enum or value
         enabled = state in (Qt.Checked, Qt.Checked.value)
         self.max_pages_input.setEnabled(enabled)
+    
+    def toggle_rpa_mode(self, state):
+        """Enable/disable other features based on RPA mode checkbox state."""
+        # PySide6 stateChanged emits int (0=unchecked, 2=checked), compare with enum or value
+        rpa_mode_enabled = state in (Qt.Checked, Qt.Checked.value)
+        
+        # When RPA mode is enabled, disable all other features except proxy
+        # When disabled, enable all features
+        disable_features = rpa_mode_enabled
+        
+        # Disable/enable all traffic settings except proxy
+        self.min_time_input.setEnabled(not disable_features)
+        self.max_time_input.setEnabled(not disable_features)
+        self.num_visits_input.setEnabled(not disable_features)
+        self.threads_input.setEnabled(not disable_features)
+        self.total_threads_input.setEnabled(not disable_features)
+        self.content_ratio_input.setEnabled(not disable_features)
+        self.sponsored_ratio_input.setEnabled(not disable_features)
+        
+        # Disable/enable platform settings
+        self.platform_desktop_check.setEnabled(not disable_features)
+        self.platform_android_check.setEnabled(not disable_features)
+        
+        # Disable/enable visit type settings
+        self.visit_direct_radio.setEnabled(not disable_features)
+        self.visit_referral_radio.setEnabled(not disable_features)
+        self.visit_search_radio.setEnabled(not disable_features)
+        
+        # Disable/enable URL input
+        self.url_input.setEnabled(not disable_features)
+        self.url_list_widget.setEnabled(not disable_features)
+        
+        # Disable/enable behavior settings
+        self.enable_interaction.setEnabled(not disable_features)
+        self.enable_extra_pages.setEnabled(not disable_features)
+        self.enable_consent.setEnabled(not disable_features)
+        self.enable_popups.setEnabled(not disable_features)
+        self.enable_text_highlight.setEnabled(not disable_features)
+        self.enable_ad_interaction.setEnabled(not disable_features)
+        self.scroll_depth_input.setEnabled(not disable_features)
+        self.enable_mouse_movement.setEnabled(not disable_features)
+        self.enable_idle_pauses.setEnabled(not disable_features)
+        self.max_pages_input.setEnabled(not disable_features)
+        
+        # Proxy settings remain enabled
+        # Script editor remains enabled (needed for RPA mode)
     
     def validate_time_range(self):
         """Ensure minimum time is not greater than maximum time."""
@@ -3070,103 +3363,142 @@ class AppGUI(QMainWindow):
     def start_automation(self):
         """Start the automation process."""
         try:
-            # Validate inputs - collect URLs from list widget
-            url_list = []
-            for i in range(self.url_list_widget.count()):
-                url = self.url_list_widget.item(i).text().strip()
-                if url:
-                    url_list.append(url)
+            # Check if RPA mode is enabled
+            rpa_mode_enabled = self.enable_rpa_mode.isChecked()
             
-            # If no URLs in list, check input field
-            if not url_list:
-                url = self.url_input.text().strip()
-                if url:
-                    if not url.startswith(('http://', 'https://')):
-                        url = 'https://' + url
-                    url_list.append(url)
-            
-            if not url_list:
-                QMessageBox.warning(self, 'Input Error', 'Please enter at least one target URL')
-                return
-            
-            # Get visit type
-            visit_type = 'direct'
-            if self.visit_referral_radio.isChecked():
-                visit_type = 'referral'
-            elif self.visit_search_radio.isChecked():
-                visit_type = 'search'
-            
-            # Validate search keyword and target domain if search type is selected
-            if visit_type == 'search':
-                keyword = self.search_keyword_input.text().strip()
-                target_domain = self.target_domain_input.text().strip()
-                if not keyword:
-                    QMessageBox.warning(self, 'Input Error', 'Please enter a search keyword for Search Visit type')
+            if rpa_mode_enabled:
+                # RPA Mode: Only RPA script and proxy are used
+                rpa_script_text = self.script_editor.toPlainText().strip()
+                if not rpa_script_text:
+                    QMessageBox.warning(self, 'Input Error', 'RPA Mode is enabled but no RPA script is provided. Please enter an RPA script in the RPA Script Creator tab.')
                     return
-                if not target_domain:
-                    QMessageBox.warning(self, 'Input Error', 'Please enter a target domain for Search Visit type')
-                    return
-            
-            # Collect referral sources if referral type is selected
-            referral_sources = []
-            if visit_type == 'referral':
-                if self.referral_facebook.isChecked():
-                    referral_sources.append('facebook')
-                if self.referral_google.isChecked():
-                    referral_sources.append('google')
-                if self.referral_twitter.isChecked():
-                    referral_sources.append('twitter')
-                if self.referral_telegram.isChecked():
-                    referral_sources.append('telegram')
-                if self.referral_instagram.isChecked():
-                    referral_sources.append('instagram')
                 
-                if not referral_sources:
-                    QMessageBox.warning(self, 'Input Error', 'Please select at least one referral source')
+                # Validate RPA script JSON
+                try:
+                    rpa_script = json.loads(rpa_script_text)
+                    if 'steps' not in rpa_script or not isinstance(rpa_script['steps'], list):
+                        QMessageBox.warning(self, 'Invalid Script', 'RPA script must contain a "steps" array')
+                        return
+                except json.JSONDecodeError as e:
+                    QMessageBox.warning(self, 'Invalid JSON', f'RPA script has invalid JSON syntax: {str(e)}')
+                    return
+                
+                # Collect configuration for RPA mode (only proxy settings)
+                config = {
+                    'rpa_mode': True,
+                    'rpa_script': rpa_script,
+                    'proxy_enabled': self.proxy_enabled_check.isChecked(),
+                    'proxy_type': self.proxy_type_combo.currentText(),
+                    'proxy_list': self.proxy_list_input.toPlainText(),
+                    'rotate_proxy': True,
+                    'headless': False,  # Always visible
+                }
+                
+                self.log_manager.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+                self.log_manager.log('RPA Mode Enabled - All other features disabled')
+                self.log_manager.log('Only RPA script and proxy settings are active')
+                self.log_manager.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+                
+            else:
+                # Normal Mode: Standard automation
+                # Validate inputs - collect URLs from list widget
+                url_list = []
+                for i in range(self.url_list_widget.count()):
+                    url = self.url_list_widget.item(i).text().strip()
+                    if url:
+                        url_list.append(url)
+                
+                # If no URLs in list, check input field
+                if not url_list:
+                    url = self.url_input.text().strip()
+                    if url:
+                        if not url.startswith(('http://', 'https://')):
+                            url = 'https://' + url
+                        url_list.append(url)
+                
+                if not url_list:
+                    QMessageBox.warning(self, 'Input Error', 'Please enter at least one target URL')
                     return
             
-            # Get selected platforms
-            selected_platforms = []
-            if self.platform_desktop_check.isChecked():
-                selected_platforms.append('desktop')
-            if self.platform_android_check.isChecked():
-                selected_platforms.append('android')
-            
-            if not selected_platforms:
-                QMessageBox.warning(self, 'Input Error', 'Please select at least one platform (Desktop or Android)')
-                return
-            
-            # Collect configuration
-            config = {
-                'url_list': url_list,
-                'num_visits': self.num_visits_input.value(),
-                'min_time_spend': self.min_time_input.value(),
-                'max_time_spend': self.max_time_input.value(),
-                'threads': self.threads_input.value(),
-                'total_threads': self.total_threads_input.value(),
-                'content_ratio': self.content_ratio_input.value(),
-                'sponsored_ratio': self.sponsored_ratio_input.value(),
-                'platforms': selected_platforms,
-                'headless': False,  # Always False - browser must be visible
-                'proxy_enabled': self.proxy_enabled_check.isChecked(),
-                'proxy_type': self.proxy_type_combo.currentText(),
-                'proxy_list': self.proxy_list_input.toPlainText(),
-                'rotate_proxy': True,  # Always rotate for authenticity
-                'visit_type': visit_type,
-                'search_keyword': self.search_keyword_input.text().strip() if visit_type == 'search' else '',
-                'target_domain': self.target_domain_input.text().strip() if visit_type == 'search' else '',
-                'referral_sources': referral_sources,
-                'enable_interaction': self.enable_interaction.isChecked(),
-                'enable_extra_pages': self.enable_extra_pages.isChecked(),
-                'max_pages': self.max_pages_input.value(),
-                'scroll_depth': self.scroll_depth_input.value(),
-                'enable_mouse_movement': self.enable_mouse_movement.isChecked(),
-                'enable_idle_pauses': self.enable_idle_pauses.isChecked(),
-                'enable_consent': self.enable_consent.isChecked(),
-                'enable_popups': self.enable_popups.isChecked(),
-                'enable_text_highlight': self.enable_text_highlight.isChecked(),
-                'enable_ad_interaction': self.enable_ad_interaction.isChecked(),
-            }
+                # Get visit type
+                visit_type = 'direct'
+                if self.visit_referral_radio.isChecked():
+                    visit_type = 'referral'
+                elif self.visit_search_radio.isChecked():
+                    visit_type = 'search'
+                
+                # Validate search keyword and target domain if search type is selected
+                if visit_type == 'search':
+                    keyword = self.search_keyword_input.text().strip()
+                    target_domain = self.target_domain_input.text().strip()
+                    if not keyword:
+                        QMessageBox.warning(self, 'Input Error', 'Please enter a search keyword for Search Visit type')
+                        return
+                    if not target_domain:
+                        QMessageBox.warning(self, 'Input Error', 'Please enter a target domain for Search Visit type')
+                        return
+                
+                # Collect referral sources if referral type is selected
+                referral_sources = []
+                if visit_type == 'referral':
+                    if self.referral_facebook.isChecked():
+                        referral_sources.append('facebook')
+                    if self.referral_google.isChecked():
+                        referral_sources.append('google')
+                    if self.referral_twitter.isChecked():
+                        referral_sources.append('twitter')
+                    if self.referral_telegram.isChecked():
+                        referral_sources.append('telegram')
+                    if self.referral_instagram.isChecked():
+                        referral_sources.append('instagram')
+                    
+                    if not referral_sources:
+                        QMessageBox.warning(self, 'Input Error', 'Please select at least one referral source')
+                        return
+                
+                # Get selected platforms
+                selected_platforms = []
+                if self.platform_desktop_check.isChecked():
+                    selected_platforms.append('desktop')
+                if self.platform_android_check.isChecked():
+                    selected_platforms.append('android')
+                
+                if not selected_platforms:
+                    QMessageBox.warning(self, 'Input Error', 'Please select at least one platform (Desktop or Android)')
+                    return
+                
+                # Collect configuration
+                config = {
+                    'rpa_mode': False,
+                    'url_list': url_list,
+                    'num_visits': self.num_visits_input.value(),
+                    'min_time_spend': self.min_time_input.value(),
+                    'max_time_spend': self.max_time_input.value(),
+                    'threads': self.threads_input.value(),
+                    'total_threads': self.total_threads_input.value(),
+                    'content_ratio': self.content_ratio_input.value(),
+                    'sponsored_ratio': self.sponsored_ratio_input.value(),
+                    'platforms': selected_platforms,
+                    'headless': False,  # Always False - browser must be visible
+                    'proxy_enabled': self.proxy_enabled_check.isChecked(),
+                    'proxy_type': self.proxy_type_combo.currentText(),
+                    'proxy_list': self.proxy_list_input.toPlainText(),
+                    'rotate_proxy': True,  # Always rotate for authenticity
+                    'visit_type': visit_type,
+                    'search_keyword': self.search_keyword_input.text().strip() if visit_type == 'search' else '',
+                    'target_domain': self.target_domain_input.text().strip() if visit_type == 'search' else '',
+                    'referral_sources': referral_sources,
+                    'enable_interaction': self.enable_interaction.isChecked(),
+                    'enable_extra_pages': self.enable_extra_pages.isChecked(),
+                    'max_pages': self.max_pages_input.value(),
+                    'scroll_depth': self.scroll_depth_input.value(),
+                    'enable_mouse_movement': self.enable_mouse_movement.isChecked(),
+                    'enable_idle_pauses': self.enable_idle_pauses.isChecked(),
+                    'enable_consent': self.enable_consent.isChecked(),
+                    'enable_popups': self.enable_popups.isChecked(),
+                    'enable_text_highlight': self.enable_text_highlight.isChecked(),
+                    'enable_ad_interaction': self.enable_ad_interaction.isChecked(),
+                }
             
             # Update UI
             self.start_btn.setEnabled(False)
