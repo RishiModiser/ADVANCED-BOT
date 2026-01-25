@@ -2830,25 +2830,31 @@ class AppGUI(QMainWindow):
 def check_browser_installation():
     """Check if Playwright browsers are installed."""
     try:
-        import subprocess
         result = subprocess.run(
             ['playwright', 'install', '--dry-run', 'chromium'],
             capture_output=True,
             text=True,
             timeout=5
         )
-        # If dry-run succeeds without errors, browsers are likely installed
-        return True
+        # Check if dry-run succeeded
+        if result.returncode == 0:
+            return True
     except Exception:
-        # If playwright command fails, check if browser exists in cache
-        try:
-            home_dir = Path.home()
-            browser_path = home_dir / '.cache' / 'ms-playwright' / 'chromium-1091'
-            if browser_path.exists():
+        pass
+    
+    # Fallback: check if browser exists in cache (any version)
+    try:
+        home_dir = Path.home()
+        playwright_cache = home_dir / '.cache' / 'ms-playwright'
+        if playwright_cache.exists():
+            # Look for any chromium-* directory
+            chromium_dirs = list(playwright_cache.glob('chromium-*'))
+            if chromium_dirs:
                 return True
-        except Exception:
-            pass
-        return False
+    except Exception:
+        pass
+    
+    return False
 
 
 def main():
