@@ -14,6 +14,7 @@ import time
 import logging
 import asyncio
 import uuid
+import subprocess
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -892,7 +893,17 @@ class BrowserManager:
             return True
             
         except Exception as e:
-            self.log_manager.log(f'Browser initialization error: {e}', 'ERROR')
+            error_msg = str(e)
+            self.log_manager.log(f'Browser initialization error: {error_msg}', 'ERROR')
+            
+            # Check if it's a browser not installed error
+            if 'Executable doesn\'t exist' in error_msg or 'Browser was not found' in error_msg:
+                self.log_manager.log('', 'ERROR')
+                self.log_manager.log('Chromium browser is not installed!', 'ERROR')
+                self.log_manager.log('Please run: playwright install chromium', 'ERROR')
+                self.log_manager.log('Or from terminal: python -m playwright install chromium', 'ERROR')
+                self.log_manager.log('', 'ERROR')
+            
             return False
     
     async def create_context(self, platform: str = 'desktop', use_proxy: bool = True) -> Optional[BrowserContext]:
@@ -2816,9 +2827,49 @@ class AppGUI(QMainWindow):
 # MAIN ENTRY POINT
 # ============================================================================
 
+def check_browser_installation():
+    """Check if Playwright browsers are installed."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ['playwright', 'install', '--dry-run', 'chromium'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        # If dry-run succeeds without errors, browsers are likely installed
+        return True
+    except Exception:
+        # If playwright command fails, check if browser exists in cache
+        try:
+            home_dir = Path.home()
+            browser_path = home_dir / '.cache' / 'ms-playwright' / 'chromium-1091'
+            if browser_path.exists():
+                return True
+        except Exception:
+            pass
+        return False
+
+
 def main():
     """Main application entry point."""
     app = QApplication(sys.argv)
+    
+    # Check browser installation
+    if not check_browser_installation():
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle('Browser Not Installed')
+        msg.setText('Playwright Chromium browser is not installed!')
+        msg.setInformativeText(
+            'Please install it by running one of these commands in your terminal:\n\n'
+            '  playwright install chromium\n'
+            '  python -m playwright install chromium\n\n'
+            'After installation, restart the application.'
+        )
+        msg.setStandardButtons(QMessageBox.Ok)
+        msg.exec()
+        return
     
     # Set application style
     app.setStyle('Fusion')
