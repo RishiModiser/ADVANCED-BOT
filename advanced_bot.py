@@ -1076,7 +1076,10 @@ class BrowserManager:
         """Create a new browser context with fingerprinting and optional proxy."""
         try:
             if not self.browser:
-                await self.initialize()
+                success = await self.initialize()
+                if not success or not self.browser:
+                    self.log_manager.log('Cannot create context: browser initialization failed', 'ERROR')
+                    return None
             
             # Generate fingerprint
             self.fingerprint_manager.platform = platform
