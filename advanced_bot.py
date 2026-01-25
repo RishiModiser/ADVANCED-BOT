@@ -70,6 +70,12 @@ from PySide6.QtGui import QFont, QColor, QPalette
 
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Playwright
 
+# Import aiohttp for geolocation API calls (will be used in ProxyGeolocation class)
+try:
+    import aiohttp
+except ImportError:
+    aiohttp = None  # Will handle gracefully in ProxyGeolocation
+
 
 # ============================================================================
 # CONFIGURATION & CONSTANTS
@@ -1099,30 +1105,30 @@ class ProxyGeolocation:
             if ip in self.cache:
                 return self.cache[ip]
             
-            # Try to fetch real geolocation data from ip-api.com
-            try:
-                import aiohttp
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(
-                        f'http://ip-api.com/json/{ip}',
-                        timeout=aiohttp.ClientTimeout(total=5)
-                    ) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            if data.get('status') == 'success':
-                                location_info = {
-                                    'ip': ip,
-                                    'country': data.get('country', 'Unknown'),
-                                    'city': data.get('city', 'Unknown'),
-                                    'timezone': data.get('timezone', 'UTC')
-                                }
-                                # Cache the result
-                                self.cache[ip] = location_info
-                                return location_info
-            except Exception as api_error:
-                logging.warning(f'Failed to fetch real geolocation, using fallback: {api_error}')
+            # Try to fetch real geolocation data from ip-api.com (using HTTPS)
+            if aiohttp is not None:
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            f'https://ip-api.com/json/{ip}',  # Using HTTPS for secure communication
+                            timeout=aiohttp.ClientTimeout(total=5)
+                        ) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                if data.get('status') == 'success':
+                                    location_info = {
+                                        'ip': ip,
+                                        'country': data.get('country', 'Unknown'),
+                                        'city': data.get('city', 'Unknown'),
+                                        'timezone': data.get('timezone', 'UTC')
+                                    }
+                                    # Cache the result
+                                    self.cache[ip] = location_info
+                                    return location_info
+                except Exception as api_error:
+                    logging.warning(f'Failed to fetch real geolocation, using fallback: {api_error}')
             
-            # Fallback to mock data if API fails
+            # Fallback to mock data if API fails or aiohttp not available
             location_info = {
                 'ip': ip,
                 'country': self._guess_country_from_ip(ip),
@@ -1857,26 +1863,28 @@ class AutomationWorker(QObject):
                     location_text_safe = json.dumps(f"Proxy: {country} | IP: {ip}")
                     
                     self.emit_log(f'[INFO] Proxy: {country} | IP: {ip}')
-                    # Inject location display into page with proper escaping
+                    # Inject location display into page with proper escaping and null check
                     await page.add_init_script(f"""
                         window.addEventListener('load', () => {{
-                            const locationDiv = document.createElement('div');
-                            locationDiv.id = 'proxy-location-display';
-                            locationDiv.style.cssText = `
-                                position: fixed;
-                                top: 10px;
-                                right: 10px;
-                                background: rgba(0, 0, 0, 0.8);
-                                color: #00ff00;
-                                padding: 10px 15px;
-                                border-radius: 5px;
-                                font-family: monospace;
-                                font-size: 12px;
-                                z-index: 999999;
-                                pointer-events: none;
-                            `;
-                            locationDiv.textContent = {location_text_safe};
-                            document.body.appendChild(locationDiv);
+                            if (document.body) {{
+                                const locationDiv = document.createElement('div');
+                                locationDiv.id = 'proxy-location-display';
+                                locationDiv.style.cssText = `
+                                    position: fixed;
+                                    top: 10px;
+                                    right: 10px;
+                                    background: rgba(0, 0, 0, 0.8);
+                                    color: #00ff00;
+                                    padding: 10px 15px;
+                                    border-radius: 5px;
+                                    font-family: monospace;
+                                    font-size: 12px;
+                                    z-index: 999999;
+                                    pointer-events: none;
+                                `;
+                                locationDiv.textContent = {location_text_safe};
+                                document.body.appendChild(locationDiv);
+                            }}
                         }});
                     """)
                 
@@ -2004,31 +2012,32 @@ class AutomationWorker(QObject):
                     
                     # Display proxy location in each tab if available
                     if proxy_location:
-                        import json
                         country = proxy_location.get('country', 'Unknown')
                         ip = proxy_location.get('ip', 'unknown')
                         location_text_safe = json.dumps(f"Proxy: {country} | IP: {ip}")
                         
-                        # Inject location display into page
+                        # Inject location display into page with null check for document.body
                         await page.add_init_script(f"""
                             window.addEventListener('load', () => {{
-                                const locationDiv = document.createElement('div');
-                                locationDiv.id = 'proxy-location-display';
-                                locationDiv.style.cssText = `
-                                    position: fixed;
-                                    top: 10px;
-                                    right: 10px;
-                                    background: rgba(0, 0, 0, 0.8);
-                                    color: #00ff00;
-                                    padding: 10px 15px;
-                                    border-radius: 5px;
-                                    font-family: monospace;
-                                    font-size: 12px;
-                                    z-index: 999999;
-                                    pointer-events: none;
-                                `;
-                                locationDiv.textContent = {location_text_safe};
-                                document.body.appendChild(locationDiv);
+                                if (document.body) {{
+                                    const locationDiv = document.createElement('div');
+                                    locationDiv.id = 'proxy-location-display';
+                                    locationDiv.style.cssText = `
+                                        position: fixed;
+                                        top: 10px;
+                                        right: 10px;
+                                        background: rgba(0, 0, 0, 0.8);
+                                        color: #00ff00;
+                                        padding: 10px 15px;
+                                        border-radius: 5px;
+                                        font-family: monospace;
+                                        font-size: 12px;
+                                        z-index: 999999;
+                                        pointer-events: none;
+                                    `;
+                                    locationDiv.textContent = {location_text_safe};
+                                    document.body.appendChild(locationDiv);
+                                }}
                             }});
                         """)
                     
@@ -2057,8 +2066,8 @@ class AutomationWorker(QObject):
                 for page in pages:
                     try:
                         await page.close()
-                    except:
-                        pass
+                    except Exception:
+                        pass  # Ignore any errors during cleanup
                 
                 return success_count > 0
                 
