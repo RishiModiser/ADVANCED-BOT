@@ -93,6 +93,14 @@ SPONSORED_SELECTORS = [
     '.promotion', '.advertisement-demo'
 ]
 
+# Ad detection selectors for demo/test ads (NOT real ad networks)
+AD_DETECTION_SELECTORS = [
+    '.ad-container', '.advertisement', '.ad-box', '.ad-banner',
+    '.promo-ad', '.demo-ad', '.test-ad', '[data-ad="true"]',
+    '[data-testid*="ad"]', '.sponsored-content', '.ad-placeholder',
+    'div[id*="ad-"]', 'div[class*="ad-"]'
+]
+
 USER_AGENTS = {
     'desktop': [
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -402,7 +410,78 @@ class HumanBehavior:
         await asyncio.sleep(random.uniform(2, 5))
     
     @staticmethod
-    async def time_based_browsing(page: Page, min_time: int, max_time: int):
+    async def highlight_text(page: Page):
+        """
+        Randomly highlight text on page to simulate human reading behavior.
+        Selects random text elements and highlights them briefly.
+        """
+        try:
+            # Find text elements (paragraphs, divs with text)
+            text_elements = await page.query_selector_all('p, div, span, article, section')
+            
+            if not text_elements or len(text_elements) == 0:
+                return
+            
+            # Select random element with text
+            element = random.choice(text_elements[:min(20, len(text_elements))])
+            
+            # Check if element has text content
+            text_content = await element.text_content()
+            if not text_content or len(text_content.strip()) < 10:
+                return
+            
+            # Get element position and scroll to it
+            box = await element.bounding_box()
+            if not box:
+                return
+            
+            # Calculate word positions for selection
+            words = text_content.strip().split()
+            if len(words) < 3:
+                return
+            
+            # Select random portion of text (2-8 words)
+            num_words = random.randint(2, min(8, len(words)))
+            start_word = random.randint(0, len(words) - num_words)
+            
+            # Simulate text selection with mouse
+            # Move to start position
+            start_x = box['x'] + random.uniform(0, box['width'] * 0.3)
+            start_y = box['y'] + random.uniform(box['height'] * 0.2, box['height'] * 0.8)
+            await page.mouse.move(start_x, start_y)
+            
+            # Mouse down to start selection
+            await page.mouse.down()
+            await asyncio.sleep(random.uniform(0.1, 0.2))
+            
+            # Move to end position (simulate dragging)
+            end_x = start_x + random.uniform(50, 150)
+            end_y = start_y + random.uniform(-5, 5)
+            
+            # Move in small steps to simulate human dragging
+            steps = random.randint(3, 6)
+            for i in range(steps):
+                intermediate_x = start_x + (end_x - start_x) * (i + 1) / steps
+                intermediate_y = start_y + (end_y - start_y) * (i + 1) / steps
+                await page.mouse.move(intermediate_x, intermediate_y)
+                await asyncio.sleep(random.uniform(0.05, 0.15))
+            
+            # Mouse up to complete selection
+            await page.mouse.up()
+            
+            # Pause to "view" highlighted text
+            await asyncio.sleep(random.uniform(0.5, 1.5))
+            
+            # Click elsewhere to deselect
+            clear_x = box['x'] + box['width'] + random.uniform(20, 50)
+            clear_y = box['y'] + random.uniform(0, 50)
+            await page.mouse.click(clear_x, clear_y)
+            
+        except Exception as e:
+            logging.error(f'Text highlight error: {e}')
+    
+    @staticmethod
+    async def time_based_browsing(page: Page, min_time: int, max_time: int, enable_highlight: bool = False):
         """
         Simulate advanced human browsing behavior for a specified time period.
         
@@ -410,6 +489,7 @@ class HumanBehavior:
             page: Playwright page object
             min_time: Minimum time to spend in seconds (120-480)
             max_time: Maximum time to spend in seconds (120-480)
+            enable_highlight: Enable random text highlighting
         """
         try:
             # Validate and clamp time range
@@ -435,6 +515,10 @@ class HumanBehavior:
                 
                 # Random reading pause
                 await asyncio.sleep(random.uniform(2.0, 5.0))
+                
+                # Occasionally highlight text if enabled
+                if enable_highlight and random.random() < 0.2:  # 20% chance
+                    await HumanBehavior.highlight_text(page)
                 
                 # Occasionally scroll back up
                 if random.random() < TIME_BROWSING_BACK_SCROLL_CHANCE:
@@ -956,6 +1040,227 @@ class ProxyManager:
 
 
 # ============================================================================
+# PROXY GEOLOCATION
+# ============================================================================
+
+class ProxyGeolocation:
+    """Fetches proxy geolocation information."""
+    
+    def __init__(self):
+        self.cache = {}
+    
+    def extract_ip_from_proxy(self, proxy_config: Dict[str, str]) -> Optional[str]:
+        """Extract IP address from proxy configuration."""
+        try:
+            server = proxy_config.get('server', '')
+            # Remove protocol prefix
+            if '://' in server:
+                server = server.split('://', 1)[1]
+            # Extract IP/host before port
+            if ':' in server:
+                # Handle IPv6 [ip]:port
+                if server.startswith('['):
+                    bracket_end = server.find(']')
+                    if bracket_end != -1:
+                        return server[1:bracket_end]
+                else:
+                    return server.split(':', 1)[0]
+            return server
+        except Exception:
+            return None
+    
+    async def fetch_location(self, proxy_config: Dict[str, str]) -> Dict[str, str]:
+        """
+        Fetch geolocation for a proxy.
+        Returns a dictionary with location info like country, city, timezone.
+        
+        Note: This uses a simple IP extraction and mock data for demo purposes.
+        For production, integrate with ip-api.com, ipinfo.io, or similar services.
+        """
+        try:
+            ip = self.extract_ip_from_proxy(proxy_config)
+            if not ip:
+                return {
+                    'ip': 'unknown',
+                    'country': 'Unknown',
+                    'city': 'Unknown',
+                    'timezone': 'UTC'
+                }
+            
+            # Check cache
+            if ip in self.cache:
+                return self.cache[ip]
+            
+            # For demo: Parse IP and determine mock location
+            # In production, make HTTP request to geolocation API
+            location_info = {
+                'ip': ip,
+                'country': self._guess_country_from_ip(ip),
+                'city': 'Unknown',
+                'timezone': 'UTC'
+            }
+            
+            # Cache the result
+            self.cache[ip] = location_info
+            return location_info
+            
+        except Exception as e:
+            logging.error(f'Proxy geolocation error: {e}')
+            return {
+                'ip': 'error',
+                'country': 'Unknown',
+                'city': 'Unknown',
+                'timezone': 'UTC'
+            }
+    
+    def _guess_country_from_ip(self, ip: str) -> str:
+        """Simple country guessing based on IP pattern (for demo purposes)."""
+        # In production, this should use a real geolocation API
+        if ip.startswith('192.168') or ip.startswith('10.') or ip.startswith('172.'):
+            return 'Local Network'
+        # Mock logic for demo
+        first_octet = ip.split('.')[0] if '.' in ip else '0'
+        try:
+            num = int(first_octet)
+            if num < 50:
+                return 'USA'
+            elif num < 100:
+                return 'Europe'
+            elif num < 150:
+                return 'Asia'
+            else:
+                return 'Other'
+        except:
+            return 'Unknown'
+
+
+# ============================================================================
+# AD DETECTION MANAGER
+# ============================================================================
+
+class AdDetectionManager:
+    """Detects and interacts with ads on web pages (for demo/test purposes only)."""
+    
+    def __init__(self, log_manager: LogManager):
+        self.log_manager = log_manager
+    
+    async def detect_ads(self, page: Page) -> List[Any]:
+        """
+        Detect ad elements on the page using multiple selectors.
+        Returns list of detected ad elements.
+        """
+        try:
+            all_ads = []
+            
+            # Try each selector
+            for selector in AD_DETECTION_SELECTORS:
+                try:
+                    elements = await page.query_selector_all(selector)
+                    if elements:
+                        all_ads.extend(elements)
+                except Exception:
+                    continue
+            
+            # Remove duplicates and filter visible elements
+            visible_ads = []
+            for ad in all_ads:
+                try:
+                    is_visible = await ad.is_visible()
+                    if is_visible:
+                        visible_ads.append(ad)
+                except Exception:
+                    continue
+            
+            return visible_ads
+            
+        except Exception as e:
+            self.log_manager.log(f'Ad detection error: {e}', 'WARNING')
+            return []
+    
+    async def scroll_to_ad(self, page: Page, ad_element: Any):
+        """Scroll to ad element with human-like behavior."""
+        try:
+            # Get ad position
+            box = await ad_element.bounding_box()
+            if not box:
+                return False
+            
+            # Calculate scroll position (center the ad in viewport)
+            viewport = page.viewport_size
+            if not viewport:
+                return False
+            
+            scroll_y = max(0, box['y'] - viewport['height'] / 2)
+            
+            # Smooth scroll to ad
+            await page.evaluate(f'''
+                window.scrollTo({{
+                    top: {scroll_y},
+                    behavior: 'smooth'
+                }})
+            ''')
+            
+            # Wait for scroll animation
+            await asyncio.sleep(random.uniform(0.5, 1.5))
+            
+            return True
+            
+        except Exception as e:
+            self.log_manager.log(f'Scroll to ad error: {e}', 'WARNING')
+            return False
+    
+    async def wait_for_ad_load(self, page: Page, ad_element: Any, max_wait: int = 5):
+        """Wait for ad to fully load with timeout."""
+        try:
+            # Wait for element to be stable
+            await asyncio.sleep(random.uniform(1.0, 2.0))
+            
+            # Additional wait for ad content (images, iframes)
+            start_time = time.time()
+            while time.time() - start_time < max_wait:
+                try:
+                    # Check if ad is still visible
+                    is_visible = await ad_element.is_visible()
+                    if is_visible:
+                        await asyncio.sleep(0.5)
+                        return True
+                except Exception:
+                    break
+            
+            return True
+            
+        except Exception as e:
+            self.log_manager.log(f'Wait for ad load error: {e}', 'WARNING')
+            return False
+    
+    async def view_ad_naturally(self, page: Page, ad_element: Any):
+        """View ad with human-like behavior - pause, slight movements."""
+        try:
+            # Get ad bounding box
+            box = await ad_element.bounding_box()
+            if not box:
+                return
+            
+            # Move mouse over ad area with slight randomness
+            center_x = box['x'] + box['width'] / 2
+            center_y = box['y'] + box['height'] / 2
+            
+            # Random movements within ad area
+            for _ in range(random.randint(2, 4)):
+                x = center_x + random.randint(-30, 30)
+                y = center_y + random.randint(-20, 20)
+                await page.mouse.move(x, y)
+                await asyncio.sleep(random.uniform(0.3, 0.8))
+            
+            # Pause to "view" the ad
+            view_time = random.uniform(2.0, 5.0)
+            await asyncio.sleep(view_time)
+            
+        except Exception as e:
+            self.log_manager.log(f'View ad naturally error: {e}', 'WARNING')
+
+
+# ============================================================================
 # BROWSER MANAGER
 # ============================================================================
 
@@ -1153,12 +1458,18 @@ class BrowserManager:
             
             # Add proxy if enabled and configured
             proxy_config = None
+            proxy_location = None
             if use_proxy:
                 proxy_config = self.proxy_manager.get_proxy_config()
                 if proxy_config:
+                    # Fetch proxy geolocation
+                    geo_manager = ProxyGeolocation()
+                    proxy_location = await geo_manager.fetch_location(proxy_config)
+                    
                     context_options['proxy'] = proxy_config
                     server = proxy_config.get('server', 'unknown')
                     self.log_manager.log(f'✓ Using proxy: {server}')
+                    self.log_manager.log(f'✓ Proxy Location: {proxy_location["country"]}, IP: {proxy_location["ip"]}')
                 else:
                     self.log_manager.log('No proxy configured, using direct connection')
             
@@ -1187,6 +1498,7 @@ class BrowserManager:
                     context_options.pop('proxy', None)
                     self.context = await self.browser.new_context(**context_options)
                     self.log_manager.log('✓ Browser context created with direct connection (proxy bypassed)')
+                    proxy_location = None  # Clear proxy location since not using proxy
                 else:
                     # Re-raise if not a proxy error
                     raise
@@ -1200,6 +1512,9 @@ class BrowserManager:
                     get: () => undefined
                 }});
             """)
+            
+            # Store proxy location for later use (e.g., displaying in browser)
+            self.context._proxy_location = proxy_location
             
             self.log_manager.log('✓ Browser context created successfully')
             self.log_manager.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
@@ -1424,11 +1739,53 @@ class AutomationWorker(QObject):
         except Exception as e:
             self.emit_log(f'Error during interaction: {e}', 'WARNING')
     
+    async def handle_ad_detection_and_interaction(self, page: Page):
+        """Detect ads and interact with them in a human-like manner."""
+        try:
+            self.emit_log('[INFO] Detecting ads on page...')
+            ad_manager = AdDetectionManager(self.log_manager)
+            
+            # Detect ads
+            ads = await ad_manager.detect_ads(page)
+            
+            if not ads or len(ads) == 0:
+                self.emit_log('[INFO] No ads detected on page')
+                return
+            
+            self.emit_log(f'[INFO] ✓ Found {len(ads)} ad(s) on page')
+            
+            # Select random ads to interact with (1-3 ads)
+            num_ads_to_view = min(random.randint(1, 3), len(ads))
+            selected_ads = random.sample(ads, num_ads_to_view)
+            
+            for i, ad in enumerate(selected_ads, 1):
+                self.emit_log(f'[INFO] Interacting with ad {i}/{num_ads_to_view}...')
+                
+                # Scroll to ad
+                scrolled = await ad_manager.scroll_to_ad(page, ad)
+                if not scrolled:
+                    continue
+                
+                self.emit_log('[INFO] Waiting for ad to load...')
+                await ad_manager.wait_for_ad_load(page, ad)
+                
+                self.emit_log('[INFO] Viewing ad naturally...')
+                await ad_manager.view_ad_naturally(page, ad)
+                
+                # Random pause between ads
+                if i < num_ads_to_view:
+                    await asyncio.sleep(random.uniform(2, 4))
+            
+            self.emit_log(f'✓ Completed interaction with {num_ads_to_view} ad(s)')
+            
+        except Exception as e:
+            self.emit_log(f'Ad interaction error: {e}', 'WARNING')
+    
     async def execute_single_visit(self, visit_num, url_list, platforms, visit_type, 
                                    search_keyword, target_domain, referral_sources,
                                    min_time_spend, max_time_spend, enable_consent, 
                                    enable_interaction, enable_extra_pages, max_pages,
-                                   consent_manager):
+                                   consent_manager, enable_highlight=False, enable_ad_interaction=False):
         """Execute a single visit/profile session."""
         try:
             # Select random URL and platform
@@ -1448,6 +1805,34 @@ class AutomationWorker(QObject):
                 # Create new page
                 page = await context.new_page()
                 
+                # Display proxy location in page title if available
+                proxy_location = getattr(context, '_proxy_location', None)
+                if proxy_location:
+                    location_text = f"Proxy: {proxy_location['country']} | IP: {proxy_location['ip']}"
+                    self.emit_log(f'[INFO] {location_text}')
+                    # Inject location display into page
+                    await page.add_init_script(f"""
+                        window.addEventListener('load', () => {{
+                            const locationDiv = document.createElement('div');
+                            locationDiv.id = 'proxy-location-display';
+                            locationDiv.style.cssText = `
+                                position: fixed;
+                                top: 10px;
+                                right: 10px;
+                                background: rgba(0, 0, 0, 0.8);
+                                color: #00ff00;
+                                padding: 10px 15px;
+                                border-radius: 5px;
+                                font-family: monospace;
+                                font-size: 12px;
+                                z-index: 999999;
+                                pointer-events: none;
+                            `;
+                            locationDiv.textContent = '{location_text}';
+                            document.body.appendChild(locationDiv);
+                        }});
+                    """)
+                
                 # Navigate based on visit type
                 if visit_type == 'referral':
                     await self.handle_referral_visit(page, target_url, referral_sources)
@@ -1466,9 +1851,13 @@ class AutomationWorker(QObject):
                 if consent_manager and enable_consent:
                     await consent_manager.handle_consents(page)
                 
-                # Time-based human scrolling behavior
+                # Detect and interact with ads if enabled
+                if enable_ad_interaction:
+                    await self.handle_ad_detection_and_interaction(page)
+                
+                # Time-based human scrolling behavior with highlighting
                 self.emit_log(f'Starting time-based browsing ({min_time_spend}-{max_time_spend} seconds)...')
-                await HumanBehavior.time_based_browsing(page, min_time_spend, max_time_spend)
+                await HumanBehavior.time_based_browsing(page, min_time_spend, max_time_spend, enable_highlight)
                 
                 # Handle interaction if enabled (legacy mode)
                 if enable_interaction:
@@ -1513,9 +1902,15 @@ class AutomationWorker(QObject):
             max_pages = self.config.get('max_pages', 5)
             enable_consent = self.config.get('enable_consent', True)
             enable_popups = self.config.get('enable_popups', True)
+            enable_text_highlight = self.config.get('enable_text_highlight', False)
+            enable_ad_interaction = self.config.get('enable_ad_interaction', False)
             
             self.emit_log(f'Configuration: {len(url_list)} URLs, {num_visits} profiles, {threads} threads')
             self.emit_log(f'Time per profile: {min_time_spend}-{max_time_spend} seconds with human scrolling')
+            if enable_text_highlight:
+                self.emit_log('✓ Text highlighting enabled')
+            if enable_ad_interaction:
+                self.emit_log('✓ Ad detection & interaction enabled')
             if total_threads_limit > 0:
                 self.emit_log(f'Total thread limit: {total_threads_limit}')
             
@@ -1588,7 +1983,7 @@ class AutomationWorker(QObject):
                         search_keyword, target_domain, referral_sources,
                         min_time_spend, max_time_spend, enable_consent,
                         enable_interaction, enable_extra_pages, max_pages,
-                        consent_manager
+                        consent_manager, enable_text_highlight, enable_ad_interaction
                     )
                     tasks.append(task)
                 
@@ -2120,8 +2515,39 @@ class AppGUI(QMainWindow):
         self.enable_idle_pauses.setChecked(True)
         behavior_layout.addWidget(self.enable_idle_pauses)
         
+        self.enable_text_highlight = QCheckBox('✏️ Enable Text Highlighting')
+        self.enable_text_highlight.setChecked(False)
+        behavior_layout.addWidget(self.enable_text_highlight)
+        
+        highlight_info = QLabel('ℹ️ Randomly highlights text like human reading behavior')
+        highlight_info.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
+        highlight_info.setWordWrap(True)
+        behavior_layout.addWidget(highlight_info)
+        
         behavior_group.setLayout(behavior_layout)
         layout.addWidget(behavior_group)
+        
+        # Ad Interaction Settings (NEW)
+        ad_group = QGroupBox('📺 Ad Interaction (Demo/Test Only)')
+        ad_layout = QVBoxLayout()
+        ad_layout.setSpacing(10)
+        
+        self.enable_ad_interaction = QCheckBox('✅ Enable Ad Detection & Interaction')
+        self.enable_ad_interaction.setChecked(False)
+        ad_layout.addWidget(self.enable_ad_interaction)
+        
+        ad_info = QLabel('ℹ️ Detects demo/test ads, scrolls to them, waits for load, and views naturally')
+        ad_info.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
+        ad_info.setWordWrap(True)
+        ad_layout.addWidget(ad_info)
+        
+        ad_warning = QLabel('⚠️ Only for demo ads - NOT real ad networks (blocked)')
+        ad_warning.setStyleSheet('color: #d35400; font-weight: bold; font-size: 10px;')
+        ad_warning.setWordWrap(True)
+        ad_layout.addWidget(ad_warning)
+        
+        ad_group.setLayout(ad_layout)
+        layout.addWidget(ad_group)
         
         # Interaction Settings (Simplified)
         interaction_group = QGroupBox('🔗 Interaction Settings')
@@ -2712,6 +3138,8 @@ class AppGUI(QMainWindow):
                 'enable_idle_pauses': self.enable_idle_pauses.isChecked(),
                 'enable_consent': self.enable_consent.isChecked(),
                 'enable_popups': self.enable_popups.isChecked(),
+                'enable_text_highlight': self.enable_text_highlight.isChecked(),
+                'enable_ad_interaction': self.enable_ad_interaction.isChecked(),
             }
             
             # Update UI
