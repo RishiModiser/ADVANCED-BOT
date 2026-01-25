@@ -13,6 +13,7 @@ import random
 import time
 import logging
 import asyncio
+import uuid
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -23,7 +24,8 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox,
     QComboBox, QCheckBox, QTabWidget, QGroupBox, QListWidget,
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
-    QMessageBox, QFileDialog, QScrollArea
+    QMessageBox, QFileDialog, QScrollArea, QListWidgetItem, QFormLayout,
+    QAbstractItemView
 )
 from PySide6.QtCore import Qt, QThread, Signal, QObject
 from PySide6.QtGui import QFont, QColor
@@ -508,54 +510,108 @@ class ScriptExecutor:
         self.current_page = None
     
     async def execute_script(self, script: Dict[str, Any], context: BrowserContext):
-        """Execute a full RPA script."""
+        """Execute a full RPA script with enhanced error handling and logging."""
         try:
             steps = script.get('steps', [])
             
             for idx, step in enumerate(steps):
                 step_type = step.get('type')
-                self.log_manager.log(f'Executing step {idx + 1}: {step_type}')
+                self.log_manager.log(f'▶ Starting step {idx + 1}/{len(steps)}: {step_type}')
                 
                 try:
                     if step_type == 'newPage':
                         self.current_page = await context.new_page()
+                        self.log_manager.log(f'✓ Step {idx + 1}: New page opened')
                     
                     elif step_type == 'navigate':
                         url = step.get('url', '')
                         if self.current_page:
-                            await self.current_page.goto(url, wait_until='domcontentloaded')
+                            await self.current_page.goto(url, wait_until='domcontentloaded', timeout=30000)
+                            self.log_manager.log(f'✓ Step {idx + 1}: Navigated to {url}')
+                        else:
+                            self.log_manager.log(f'✗ Step {idx + 1}: No page available', 'ERROR')
                     
                     elif step_type == 'wait':
-                        duration = step.get('duration', 1000) / 1000
-                        await asyncio.sleep(duration)
+                        # Support randomized wait ranges
+                        duration = step.get('duration', 1000)
+                        min_duration = step.get('min_duration', duration)
+                        max_duration = step.get('max_duration', duration)
+                        
+                        actual_duration = random.uniform(min_duration, max_duration) / 1000
+                        await asyncio.sleep(actual_duration)
+                        self.log_manager.log(f'✓ Step {idx + 1}: Waited {actual_duration:.2f}s')
                     
                     elif step_type == 'scroll':
                         if self.current_page:
                             depth = step.get('depth', None)
+                            # Human-like scroll with natural behavior
                             await HumanBehavior.scroll_page(self.current_page, depth)
+                            self.log_manager.log(f'✓ Step {idx + 1}: Scrolled to depth {depth}%')
+                        else:
+                            self.log_manager.log(f'✗ Step {idx + 1}: No page available', 'ERROR')
                     
                     elif step_type == 'click':
                         selector = step.get('selector', '')
+                        confidence = step.get('confidence', 0.8)
+                        
                         if self.current_page and selector:
-                            await HumanBehavior.natural_click(self.current_page, selector)
+                            # Click with confidence scoring
+                            try:
+                                await self.current_page.wait_for_selector(selector, timeout=5000)
+                                
+                                # Check if element is visible (confidence check)
+                                is_visible = await self.current_page.is_visible(selector)
+                                
+                                if is_visible:
+                                    # Natural click with human behavior
+                                    await HumanBehavior.natural_click(self.current_page, selector)
+                                    self.log_manager.log(f'✓ Step {idx + 1}: Clicked {selector} (confidence: {confidence})')
+                                else:
+                                    self.log_manager.log(f'✗ Step {idx + 1}: Element not visible: {selector}', 'ERROR')
+                            except Exception as e:
+                                self.log_manager.log(f'✗ Step {idx + 1}: Click failed on {selector}: {e}', 'ERROR')
+                        else:
+                            self.log_manager.log(f'✗ Step {idx + 1}: No page or selector', 'ERROR')
                     
                     elif step_type == 'input':
                         selector = step.get('selector', '')
                         text = step.get('text', '')
+                        typing_delay = step.get('typing_delay', 100)  # ms between keystrokes
+                        
                         if self.current_page and selector:
-                            await self.current_page.fill(selector, text)
+                            try:
+                                await self.current_page.wait_for_selector(selector, timeout=5000)
+                                
+                                # Clear existing text
+                                await self.current_page.fill(selector, '')
+                                
+                                # Type with human-like delay
+                                for char in text:
+                                    await self.current_page.type(selector, char, delay=random.uniform(typing_delay * 0.8, typing_delay * 1.2))
+                                
+                                self.log_manager.log(f'✓ Step {idx + 1}: Typed text into {selector}')
+                            except Exception as e:
+                                self.log_manager.log(f'✗ Step {idx + 1}: Input failed on {selector}: {e}', 'ERROR')
+                        else:
+                            self.log_manager.log(f'✗ Step {idx + 1}: No page or selector', 'ERROR')
                     
                     elif step_type == 'closePage':
                         if self.current_page:
                             await self.current_page.close()
                             self.current_page = None
+                            self.log_manager.log(f'✓ Step {idx + 1}: Page closed')
+                        else:
+                            self.log_manager.log(f'✗ Step {idx + 1}: No page to close', 'ERROR')
                     
-                    self.log_manager.log(f'Step {idx + 1} completed')
+                    else:
+                        self.log_manager.log(f'⚠ Step {idx + 1}: Unknown step type: {step_type}', 'WARNING')
                     
                 except Exception as e:
-                    self.log_manager.log(f'Step {idx + 1} error: {e}', 'ERROR')
+                    self.log_manager.log(f'✗ Step {idx + 1} error: {e}', 'ERROR')
+                    # Continue to next step even on error
                     continue
             
+            self.log_manager.log('Script execution completed')
             return True
             
         except Exception as e:
@@ -572,23 +628,77 @@ class ProxyManager:
     
     def __init__(self):
         self.proxy_enabled = False
-        self.proxy_server = ''
-        self.proxy_username = ''
-        self.proxy_password = ''
+        self.proxy_type = 'HTTP'
+        self.proxy_list = []
+        self.rotate_proxy = True
+        self.current_proxy_index = 0
+        self.failed_proxies = set()
+    
+    def parse_proxy_list(self, proxy_text: str) -> List[Dict[str, str]]:
+        """Parse proxy list from text input."""
+        proxies = []
+        lines = proxy_text.strip().split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            proxy_config = {}
+            
+            # Check for user:pass@ip:port format
+            if '@' in line:
+                auth_part, server_part = line.split('@', 1)
+                if ':' in auth_part:
+                    username, password = auth_part.split(':', 1)
+                    proxy_config['username'] = username
+                    proxy_config['password'] = password
+                
+                # Build server URL
+                if ':' in server_part:
+                    ip, port = server_part.rsplit(':', 1)
+                    proxy_config['server'] = f"{self.proxy_type.lower()}://{ip}:{port}"
+            else:
+                # Simple ip:port format
+                if ':' in line:
+                    ip, port = line.rsplit(':', 1)
+                    proxy_config['server'] = f"{self.proxy_type.lower()}://{ip}:{port}"
+            
+            if proxy_config.get('server'):
+                proxies.append(proxy_config)
+        
+        return proxies
     
     def get_proxy_config(self) -> Optional[Dict[str, str]]:
         """Get proxy configuration for Playwright."""
-        if not self.proxy_enabled or not self.proxy_server:
+        if not self.proxy_enabled or not self.proxy_list:
             return None
         
-        config = {'server': self.proxy_server}
+        # Filter out failed proxies
+        available_proxies = [p for i, p in enumerate(self.proxy_list) if i not in self.failed_proxies]
         
-        if self.proxy_username:
-            config['username'] = self.proxy_username
-        if self.proxy_password:
-            config['password'] = self.proxy_password
+        if not available_proxies:
+            # Reset failed proxies if all failed
+            self.failed_proxies.clear()
+            available_proxies = self.proxy_list
         
-        return config
+        if self.rotate_proxy:
+            # Rotate through proxies
+            proxy = available_proxies[self.current_proxy_index % len(available_proxies)]
+            self.current_proxy_index += 1
+        else:
+            # Use first available proxy
+            proxy = available_proxies[0]
+        
+        return proxy
+    
+    def mark_proxy_failed(self, proxy_config: Dict[str, str]):
+        """Mark a proxy as failed."""
+        try:
+            idx = self.proxy_list.index(proxy_config)
+            self.failed_proxies.add(idx)
+        except ValueError:
+            pass
 
 
 # ============================================================================
@@ -622,10 +732,7 @@ class BrowserManager:
                 ]
             }
             
-            # Add proxy if configured
-            proxy_config = self.proxy_manager.get_proxy_config()
-            if proxy_config:
-                launch_options['proxy'] = proxy_config
+            # Note: Proxy is now set per-context, not per-browser
             
             self.browser = await self.playwright.chromium.launch(**launch_options)
             self.log_manager.log('Browser launched successfully')
@@ -636,8 +743,8 @@ class BrowserManager:
             self.log_manager.log(f'Browser initialization error: {e}', 'ERROR')
             return False
     
-    async def create_context(self, platform: str = 'desktop') -> Optional[BrowserContext]:
-        """Create a new browser context with fingerprinting."""
+    async def create_context(self, platform: str = 'desktop', use_proxy: bool = True) -> Optional[BrowserContext]:
+        """Create a new browser context with fingerprinting and optional proxy."""
         try:
             if not self.browser:
                 await self.initialize()
@@ -654,6 +761,14 @@ class BrowserManager:
                 'locale': fingerprint['locale'],
                 'timezone_id': fingerprint['timezone'],
             }
+            
+            # Add proxy if enabled and configured
+            if use_proxy:
+                proxy_config = self.proxy_manager.get_proxy_config()
+                if proxy_config:
+                    context_options['proxy'] = proxy_config
+                    server = proxy_config.get('server', 'unknown')
+                    self.log_manager.log(f'Using proxy: {server}')
             
             self.context = await self.browser.new_context(**context_options)
             
@@ -718,7 +833,7 @@ class AutomationWorker(QObject):
         self.emit_log('Stopping automation...')
     
     async def run_automation(self):
-        """Main automation loop."""
+        """Main automation loop with session isolation and stability improvements."""
         try:
             self.running = True
             self.emit_log('Starting automation...')
@@ -732,12 +847,6 @@ class AutomationWorker(QObject):
                 self.emit_log('Failed to initialize browser', 'ERROR')
                 return
             
-            # Create context
-            context = await self.browser_manager.create_context(platform)
-            if not context:
-                self.emit_log('Failed to create browser context', 'ERROR')
-                return
-            
             # Create managers
             consent_manager = ConsentManager(self.log_manager)
             sponsored_engine = SponsoredClickEngine(self.log_manager)
@@ -748,14 +857,41 @@ class AutomationWorker(QObject):
             content_ratio = self.config.get('content_ratio', 85) / 100
             sponsored_ratio = self.config.get('sponsored_ratio', 15) / 100
             
-            # Run visits
+            # Failure tracking for browser restart
+            consecutive_failures = 0
+            max_failures_before_restart = 3
+            
+            # Run visits with session isolation
             for visit in range(num_visits):
                 if not self.running:
+                    self.emit_log('Stop requested, exiting gracefully...')
                     break
                 
-                self.emit_log(f'Visit {visit + 1}/{num_visits}')
+                self.emit_log(f'━━━ Visit {visit + 1}/{num_visits} ━━━')
+                
+                context = None
+                page = None
                 
                 try:
+                    # Create new context for this visit (session isolation)
+                    context = await self.browser_manager.create_context(platform)
+                    if not context:
+                        self.emit_log('Failed to create browser context', 'ERROR')
+                        consecutive_failures += 1
+                        
+                        # Restart browser if too many failures
+                        if consecutive_failures >= max_failures_before_restart:
+                            self.emit_log(f'Too many failures ({consecutive_failures}), restarting browser...')
+                            await self.browser_manager.close()
+                            await asyncio.sleep(2)
+                            success = await self.browser_manager.initialize()
+                            if not success:
+                                self.emit_log('Browser restart failed', 'ERROR')
+                                break
+                            consecutive_failures = 0
+                        
+                        continue
+                    
                     # Create new page
                     page = await context.new_page()
                     
@@ -785,18 +921,42 @@ class AutomationWorker(QObject):
                     await asyncio.sleep(random.uniform(1, 3))
                     
                     # Close page
-                    await page.close()
+                    if page:
+                        await page.close()
                     
-                    self.emit_log(f'Visit {visit + 1} completed')
+                    self.emit_log(f'✓ Visit {visit + 1} completed successfully')
+                    
+                    # Reset failure counter on success
+                    consecutive_failures = 0
                     
                     # Delay between visits
-                    if visit < num_visits - 1:
+                    if visit < num_visits - 1 and self.running:
                         delay = random.uniform(2, 5)
                         await asyncio.sleep(delay)
                 
                 except Exception as e:
-                    self.emit_log(f'Visit error: {e}', 'ERROR')
-                    continue
+                    self.emit_log(f'✗ Visit {visit + 1} error: {e}', 'ERROR')
+                    consecutive_failures += 1
+                    
+                    # Restart browser if too many failures
+                    if consecutive_failures >= max_failures_before_restart:
+                        self.emit_log(f'Too many failures ({consecutive_failures}), restarting browser...')
+                        await self.browser_manager.close()
+                        await asyncio.sleep(2)
+                        success = await self.browser_manager.initialize()
+                        if not success:
+                            self.emit_log('Browser restart failed', 'ERROR')
+                            break
+                        consecutive_failures = 0
+                
+                finally:
+                    # Always close context after visit (session isolation)
+                    if context:
+                        try:
+                            await context.close()
+                            self.emit_log(f'Context closed for visit {visit + 1}')
+                        except Exception as e:
+                            self.emit_log(f'Error closing context: {e}', 'ERROR')
             
             # Cleanup
             await self.browser_manager.close()
@@ -875,10 +1035,13 @@ class AppGUI(QMainWindow):
         # Tab 2: Behavior Settings
         tabs.addTab(self.create_behavior_tab(), 'Behavior')
         
-        # Tab 3: Sponsored Content
+        # Tab 3: Proxy Settings
+        tabs.addTab(self.create_proxy_tab(), 'Proxy Settings')
+        
+        # Tab 4: Sponsored Content
         tabs.addTab(self.create_sponsored_tab(), 'Sponsored Content')
         
-        # Tab 4: RPA Script
+        # Tab 5: RPA Script
         tabs.addTab(self.create_script_tab(), 'RPA Script')
         
         layout.addWidget(tabs)
@@ -951,9 +1114,10 @@ class AppGUI(QMainWindow):
         browser_group = QGroupBox('Browser Settings')
         browser_layout = QVBoxLayout()
         
-        self.headless_check = QCheckBox('Headless Mode')
-        self.headless_check.setChecked(False)
-        browser_layout.addWidget(self.headless_check)
+        # Note: Browser always runs in visible mode (headless=False)
+        info_label = QLabel('ℹ️ Browser always runs in visible mode for monitoring')
+        info_label.setStyleSheet('color: #666; font-style: italic;')
+        browser_layout.addWidget(info_label)
         
         browser_group.setLayout(browser_layout)
         layout.addWidget(browser_group)
@@ -997,6 +1161,74 @@ class AppGUI(QMainWindow):
         layout.addStretch()
         
         return widget
+    
+    def create_proxy_tab(self) -> QWidget:
+        """Create proxy settings tab."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        # Enable Proxy
+        proxy_enable_group = QGroupBox('Proxy Configuration')
+        proxy_enable_layout = QVBoxLayout()
+        
+        self.proxy_enabled_check = QCheckBox('Enable Proxy')
+        self.proxy_enabled_check.setChecked(False)
+        self.proxy_enabled_check.stateChanged.connect(self.toggle_proxy_inputs)
+        proxy_enable_layout.addWidget(self.proxy_enabled_check)
+        
+        proxy_enable_group.setLayout(proxy_enable_layout)
+        layout.addWidget(proxy_enable_group)
+        
+        # Proxy Type
+        proxy_type_group = QGroupBox('Proxy Type')
+        proxy_type_layout = QVBoxLayout()
+        
+        self.proxy_type_combo = QComboBox()
+        self.proxy_type_combo.addItems(['HTTP', 'HTTPS', 'SOCKS5'])
+        self.proxy_type_combo.setEnabled(False)
+        proxy_type_layout.addWidget(self.proxy_type_combo)
+        
+        proxy_type_group.setLayout(proxy_type_layout)
+        layout.addWidget(proxy_type_group)
+        
+        # Proxy List
+        proxy_list_group = QGroupBox('Proxy List')
+        proxy_list_layout = QVBoxLayout()
+        
+        proxy_list_layout.addWidget(QLabel('Enter proxies (one per line):'))
+        proxy_list_layout.addWidget(QLabel('Formats: ip:port or user:pass@ip:port'))
+        
+        self.proxy_list_input = QTextEdit()
+        self.proxy_list_input.setPlaceholderText('127.0.0.1:8080\nuser:pass@192.168.1.1:3128\n10.0.0.1:1080')
+        self.proxy_list_input.setMaximumHeight(150)
+        self.proxy_list_input.setEnabled(False)
+        proxy_list_layout.addWidget(self.proxy_list_input)
+        
+        proxy_list_group.setLayout(proxy_list_layout)
+        layout.addWidget(proxy_list_group)
+        
+        # Rotation Settings
+        rotation_group = QGroupBox('Rotation Settings')
+        rotation_layout = QVBoxLayout()
+        
+        self.rotate_proxy_check = QCheckBox('Rotate proxy per session')
+        self.rotate_proxy_check.setChecked(True)
+        self.rotate_proxy_check.setEnabled(False)
+        rotation_layout.addWidget(self.rotate_proxy_check)
+        
+        rotation_group.setLayout(rotation_layout)
+        layout.addWidget(rotation_group)
+        
+        layout.addStretch()
+        
+        return widget
+    
+    def toggle_proxy_inputs(self, state):
+        """Enable/disable proxy inputs based on checkbox state."""
+        enabled = state == Qt.Checked
+        self.proxy_type_combo.setEnabled(enabled)
+        self.proxy_list_input.setEnabled(enabled)
+        self.rotate_proxy_check.setEnabled(enabled)
     
     def create_sponsored_tab(self) -> QWidget:
         """Create sponsored content tab."""
@@ -1044,11 +1276,97 @@ class AppGUI(QMainWindow):
         return widget
     
     def create_script_tab(self) -> QWidget:
-        """Create RPA script tab."""
+        """Create RPA script tab with visual builder and JSON editor."""
         widget = QWidget()
-        layout = QVBoxLayout(widget)
+        main_layout = QVBoxLayout(widget)
         
-        layout.addWidget(QLabel('RPA Script Editor (JSON):'))
+        # Tab widget for Visual Builder and JSON Editor
+        script_tabs = QTabWidget()
+        
+        # Visual Builder Tab
+        visual_widget = QWidget()
+        visual_layout = QHBoxLayout(visual_widget)
+        
+        # Left: Action Toolbox
+        toolbox_panel = QWidget()
+        toolbox_layout = QVBoxLayout(toolbox_panel)
+        toolbox_layout.addWidget(QLabel('Action Toolbox'))
+        
+        self.action_toolbox = QListWidget()
+        self.action_toolbox.setDragEnabled(True)
+        self.action_toolbox.setMaximumWidth(200)
+        
+        # Add action items
+        actions = [
+            'Open Page',
+            'Navigate',
+            'Wait',
+            'Scroll',
+            'Click Element',
+            'Input Text',
+            'Close Page'
+        ]
+        for action in actions:
+            item = QListWidgetItem(action)
+            self.action_toolbox.addItem(item)
+        
+        toolbox_layout.addWidget(self.action_toolbox)
+        visual_layout.addWidget(toolbox_panel)
+        
+        # Center: Workflow List
+        workflow_panel = QWidget()
+        workflow_layout = QVBoxLayout(workflow_panel)
+        workflow_layout.addWidget(QLabel('Workflow Steps'))
+        
+        self.workflow_list = QListWidget()
+        self.workflow_list.setAcceptDrops(True)
+        self.workflow_list.setDragDropMode(QAbstractItemView.InternalMove)
+        self.workflow_list.itemClicked.connect(self.on_workflow_item_clicked)
+        self.workflow_list.model().rowsMoved.connect(self.sync_visual_to_json)
+        
+        workflow_layout.addWidget(self.workflow_list)
+        
+        # Workflow buttons
+        workflow_btn_layout = QHBoxLayout()
+        
+        add_step_btn = QPushButton('Add Step')
+        add_step_btn.clicked.connect(self.add_workflow_step)
+        workflow_btn_layout.addWidget(add_step_btn)
+        
+        remove_step_btn = QPushButton('Remove Step')
+        remove_step_btn.clicked.connect(self.remove_workflow_step)
+        workflow_btn_layout.addWidget(remove_step_btn)
+        
+        clear_workflow_btn = QPushButton('Clear All')
+        clear_workflow_btn.clicked.connect(self.clear_workflow)
+        workflow_btn_layout.addWidget(clear_workflow_btn)
+        
+        workflow_layout.addLayout(workflow_btn_layout)
+        visual_layout.addWidget(workflow_panel)
+        
+        # Right: Step Configuration
+        config_panel = QWidget()
+        config_layout = QVBoxLayout(config_panel)
+        config_layout.addWidget(QLabel('Step Configuration'))
+        
+        self.step_config_widget = QWidget()
+        self.step_config_layout = QFormLayout(self.step_config_widget)
+        
+        config_scroll = QScrollArea()
+        config_scroll.setWidget(self.step_config_widget)
+        config_scroll.setWidgetResizable(True)
+        config_scroll.setMaximumWidth(300)
+        
+        config_layout.addWidget(config_scroll)
+        visual_layout.addWidget(config_panel)
+        
+        script_tabs.addTab(visual_widget, 'Visual Builder')
+        
+        # JSON Editor Tab
+        json_widget = QWidget()
+        json_layout = QVBoxLayout(json_widget)
+        
+        json_layout.addWidget(QLabel('RPA Script Editor (JSON):'))
         
         self.script_editor = QTextEdit()
         self.script_editor.setPlaceholderText('''Example script:
@@ -1063,7 +1381,12 @@ class AppGUI(QMainWindow):
     {"type": "closePage"}
   ]
 }''')
-        layout.addWidget(self.script_editor)
+        self.script_editor.textChanged.connect(self.sync_json_to_visual)
+        json_layout.addWidget(self.script_editor)
+        
+        script_tabs.addTab(json_widget, 'JSON Editor')
+        
+        main_layout.addWidget(script_tabs)
         
         # Script buttons
         btn_layout = QHBoxLayout()
@@ -1076,7 +1399,15 @@ class AppGUI(QMainWindow):
         load_btn.clicked.connect(self.load_script)
         btn_layout.addWidget(load_btn)
         
-        layout.addLayout(btn_layout)
+        sync_btn = QPushButton('Sync Visual ↔ JSON')
+        sync_btn.clicked.connect(self.force_sync)
+        btn_layout.addWidget(sync_btn)
+        
+        main_layout.addLayout(btn_layout)
+        
+        # Initialize workflow data storage
+        self.workflow_steps = []
+        self.syncing = False  # Prevent recursive syncing
         
         return widget
     
@@ -1142,7 +1473,11 @@ class AppGUI(QMainWindow):
                 'content_ratio': self.content_ratio_input.value(),
                 'sponsored_ratio': self.sponsored_ratio_input.value(),
                 'platform': self.platform_combo.currentText(),
-                'headless': self.headless_check.isChecked(),
+                'headless': False,  # Always False - browser must be visible
+                'proxy_enabled': self.proxy_enabled_check.isChecked(),
+                'proxy_type': self.proxy_type_combo.currentText(),
+                'proxy_list': self.proxy_list_input.toPlainText(),
+                'rotate_proxy': self.rotate_proxy_check.isChecked(),
             }
             
             # Update UI
@@ -1154,6 +1489,15 @@ class AppGUI(QMainWindow):
             # Create and start worker thread
             self.automation_thread = QThread()
             self.automation_worker = AutomationWorker(config, self.log_manager)
+            
+            # Configure proxy manager
+            if config['proxy_enabled'] and config['proxy_list'].strip():
+                self.automation_worker.browser_manager.proxy_manager.proxy_enabled = True
+                self.automation_worker.browser_manager.proxy_manager.proxy_type = config['proxy_type']
+                self.automation_worker.browser_manager.proxy_manager.rotate_proxy = config['rotate_proxy']
+                self.automation_worker.browser_manager.proxy_manager.proxy_list = \
+                    self.automation_worker.browser_manager.proxy_manager.parse_proxy_list(config['proxy_list'])
+            
             self.automation_worker.moveToThread(self.automation_thread)
             
             # Connect signals
@@ -1248,6 +1592,253 @@ class AppGUI(QMainWindow):
             QMessageBox.critical(self, 'Error', f'Invalid JSON: {e}')
         except Exception as e:
             QMessageBox.critical(self, 'Error', f'Failed to load script: {e}')
+    
+    # ========================================================================
+    # VISUAL BUILDER METHODS
+    # ========================================================================
+    
+    def add_workflow_step(self):
+        """Add a step from toolbox to workflow."""
+        current_item = self.action_toolbox.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, 'Warning', 'Please select an action from the toolbox')
+            return
+        
+        action_name = current_item.text()
+        step_type = self.action_to_step_type(action_name)
+        
+        # Create step with UUID
+        step = {
+            'id': str(uuid.uuid4()),
+            'type': step_type,
+            'config': self.get_default_config(step_type)
+        }
+        
+        self.workflow_steps.append(step)
+        
+        # Add to visual list
+        display_text = f"{action_name}"
+        list_item = QListWidgetItem(display_text)
+        list_item.setData(Qt.UserRole, step['id'])
+        self.workflow_list.addItem(list_item)
+        
+        # Sync to JSON
+        self.sync_visual_to_json()
+    
+    def remove_workflow_step(self):
+        """Remove selected step from workflow."""
+        current_row = self.workflow_list.currentRow()
+        if current_row < 0:
+            QMessageBox.warning(self, 'Warning', 'Please select a step to remove')
+            return
+        
+        # Remove from list and data
+        item = self.workflow_list.takeItem(current_row)
+        step_id = item.data(Qt.UserRole)
+        
+        self.workflow_steps = [s for s in self.workflow_steps if s['id'] != step_id]
+        
+        # Clear configuration panel
+        self.clear_step_config()
+        
+        # Sync to JSON
+        self.sync_visual_to_json()
+    
+    def clear_workflow(self):
+        """Clear all workflow steps."""
+        reply = QMessageBox.question(
+            self, 'Confirm Clear',
+            'Are you sure you want to clear all workflow steps?',
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            self.workflow_list.clear()
+            self.workflow_steps = []
+            self.clear_step_config()
+            self.sync_visual_to_json()
+    
+    def on_workflow_item_clicked(self, item):
+        """Handle workflow item click to show configuration."""
+        step_id = item.data(Qt.UserRole)
+        step = next((s for s in self.workflow_steps if s['id'] == step_id), None)
+        
+        if step:
+            self.show_step_config(step)
+    
+    def show_step_config(self, step: Dict[str, Any]):
+        """Show configuration panel for selected step."""
+        self.clear_step_config()
+        
+        step_type = step['type']
+        config = step.get('config', {})
+        
+        # Add configuration fields based on step type
+        if step_type == 'navigate':
+            url_input = QLineEdit(config.get('url', ''))
+            url_input.textChanged.connect(lambda text: self.update_step_config(step, 'url', text))
+            self.step_config_layout.addRow('URL:', url_input)
+        
+        elif step_type == 'wait':
+            duration_input = QSpinBox()
+            duration_input.setRange(100, 60000)
+            duration_input.setValue(config.get('duration', 2000))
+            duration_input.valueChanged.connect(lambda val: self.update_step_config(step, 'duration', val))
+            self.step_config_layout.addRow('Duration (ms):', duration_input)
+        
+        elif step_type == 'scroll':
+            depth_input = QSpinBox()
+            depth_input.setRange(0, 100)
+            depth_input.setValue(config.get('depth', 50))
+            depth_input.valueChanged.connect(lambda val: self.update_step_config(step, 'depth', val))
+            self.step_config_layout.addRow('Depth (%):', depth_input)
+        
+        elif step_type == 'click':
+            selector_input = QLineEdit(config.get('selector', ''))
+            selector_input.textChanged.connect(lambda text: self.update_step_config(step, 'selector', text))
+            self.step_config_layout.addRow('Selector:', selector_input)
+        
+        elif step_type == 'input':
+            selector_input = QLineEdit(config.get('selector', ''))
+            selector_input.textChanged.connect(lambda text: self.update_step_config(step, 'selector', text))
+            self.step_config_layout.addRow('Selector:', selector_input)
+            
+            text_input = QLineEdit(config.get('text', ''))
+            text_input.textChanged.connect(lambda text: self.update_step_config(step, 'text', text))
+            self.step_config_layout.addRow('Text:', text_input)
+    
+    def update_step_config(self, step: Dict[str, Any], key: str, value: Any):
+        """Update step configuration."""
+        if 'config' not in step:
+            step['config'] = {}
+        step['config'][key] = value
+        
+        # Sync to JSON
+        self.sync_visual_to_json()
+    
+    def clear_step_config(self):
+        """Clear step configuration panel."""
+        while self.step_config_layout.count():
+            child = self.step_config_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+    
+    def sync_visual_to_json(self):
+        """Sync visual builder to JSON editor."""
+        if self.syncing:
+            return
+        
+        self.syncing = True
+        
+        try:
+            # Build JSON from workflow steps
+            script = {
+                'name': 'Visual Builder Script',
+                'description': 'Generated from visual builder',
+                'steps': []
+            }
+            
+            for step in self.workflow_steps:
+                step_json = {'type': step['type']}
+                step_json.update(step.get('config', {}))
+                script['steps'].append(step_json)
+            
+            # Update JSON editor
+            json_text = json.dumps(script, indent=2)
+            self.script_editor.setPlainText(json_text)
+        
+        finally:
+            self.syncing = False
+    
+    def sync_json_to_visual(self):
+        """Sync JSON editor to visual builder."""
+        if self.syncing:
+            return
+        
+        self.syncing = True
+        
+        try:
+            json_text = self.script_editor.toPlainText().strip()
+            if not json_text:
+                return
+            
+            script = json.loads(json_text)
+            steps = script.get('steps', [])
+            
+            # Clear and rebuild workflow
+            self.workflow_list.clear()
+            self.workflow_steps = []
+            
+            for step_data in steps:
+                step_type = step_data.get('type', '')
+                
+                # Create step with UUID
+                step = {
+                    'id': str(uuid.uuid4()),
+                    'type': step_type,
+                    'config': {k: v for k, v in step_data.items() if k != 'type'}
+                }
+                
+                self.workflow_steps.append(step)
+                
+                # Add to visual list
+                action_name = self.step_type_to_action(step_type)
+                display_text = f"{action_name}"
+                list_item = QListWidgetItem(display_text)
+                list_item.setData(Qt.UserRole, step['id'])
+                self.workflow_list.addItem(list_item)
+        
+        except json.JSONDecodeError:
+            pass  # Invalid JSON, don't update visual
+        except Exception as e:
+            pass  # Other errors, don't update visual
+        
+        finally:
+            self.syncing = False
+    
+    def force_sync(self):
+        """Force synchronization between visual and JSON."""
+        self.sync_visual_to_json()
+        QMessageBox.information(self, 'Sync', 'Visual builder synced to JSON')
+    
+    def action_to_step_type(self, action_name: str) -> str:
+        """Convert action name to step type."""
+        mapping = {
+            'Open Page': 'newPage',
+            'Navigate': 'navigate',
+            'Wait': 'wait',
+            'Scroll': 'scroll',
+            'Click Element': 'click',
+            'Input Text': 'input',
+            'Close Page': 'closePage'
+        }
+        return mapping.get(action_name, 'unknown')
+    
+    def step_type_to_action(self, step_type: str) -> str:
+        """Convert step type to action name."""
+        mapping = {
+            'newPage': 'Open Page',
+            'navigate': 'Navigate',
+            'wait': 'Wait',
+            'scroll': 'Scroll',
+            'click': 'Click Element',
+            'input': 'Input Text',
+            'closePage': 'Close Page'
+        }
+        return mapping.get(step_type, step_type)
+    
+    def get_default_config(self, step_type: str) -> Dict[str, Any]:
+        """Get default configuration for step type."""
+        defaults = {
+            'navigate': {'url': 'https://example.com'},
+            'wait': {'duration': 2000},
+            'scroll': {'depth': 50},
+            'click': {'selector': ''},
+            'input': {'selector': '', 'text': ''}
+        }
+        return defaults.get(step_type, {})
+    
+    # ========================================================================
     
     def closeEvent(self, event):
         """Handle application close."""
