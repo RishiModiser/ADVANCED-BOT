@@ -1229,8 +1229,6 @@ class AppGUI(QMainWindow):
         self.proxy_type_combo.setEnabled(enabled)
         self.proxy_list_input.setEnabled(enabled)
         self.rotate_proxy_check.setEnabled(enabled)
-        
-        return widget
     
     def create_sponsored_tab(self) -> QWidget:
         """Create sponsored content tab."""
