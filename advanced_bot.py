@@ -1305,12 +1305,14 @@ class AppGUI(QMainWindow):
         main_layout.setSpacing(0)
         main_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Create sidebar navigation
+        # Content panel - Create first to initialize stacked_widget
+        self.content_panel = self.create_content_panel()
+        
+        # Create sidebar navigation after content panel (so stacked_widget exists)
         sidebar = self.create_sidebar()
         main_layout.addWidget(sidebar)
         
-        # Content panel - Now takes full width (no right panel)
-        self.content_panel = self.create_content_panel()
+        # Add content panel to layout
         main_layout.addWidget(self.content_panel)
     
     def create_sidebar(self) -> QWidget:
