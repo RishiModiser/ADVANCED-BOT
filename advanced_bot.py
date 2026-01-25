@@ -198,13 +198,19 @@ class HumanBehavior:
             page_height = await page.evaluate('document.documentElement.scrollHeight')
             target_scroll = int(page_height * (depth_percent / 100))
             
-            # Scroll in steps with variable speed
+            # Scroll in steps with variable speed using smooth scrolling
             current_position = 0
             while current_position < target_scroll:
                 step = random.randint(100, 300)
-                current_position += step
+                current_position = min(current_position + step, target_scroll)
                 
-                await page.evaluate(f'window.scrollTo(0, {min(current_position, target_scroll)})')
+                # Use smooth scrolling behavior
+                await page.evaluate(f'''
+                    window.scrollTo({{
+                        top: {current_position},
+                        behavior: 'smooth'
+                    }})
+                ''')
                 await asyncio.sleep(random.uniform(0.1, 0.4))
             
             # Random idle pause
@@ -356,6 +362,8 @@ class SponsoredClickEngine:
     def __init__(self, log_manager: LogManager, confidence_threshold: float = 0.7):
         self.log_manager = log_manager
         self.confidence_threshold = confidence_threshold
+        # Pre-compile blocklist check for better performance
+        self._blocklist_lower = [item.lower() for item in AD_NETWORK_BLOCKLIST]
     
     async def is_safe_element(self, element, page: Page) -> bool:
         """Check if element is safe to click (not a real ad network)."""
@@ -364,12 +372,15 @@ class SponsoredClickEngine:
             href = await element.get_attribute('href')
             onclick = await element.get_attribute('onclick')
             
-            # Check blocklist
-            for blocked in AD_NETWORK_BLOCKLIST:
-                if href and blocked in href.lower():
+            # Check blocklist with optimized search
+            href_lower = href.lower() if href else None
+            onclick_lower = onclick.lower() if onclick else None
+            
+            for blocked in self._blocklist_lower:
+                if href_lower and blocked in href_lower:
                     self.log_manager.log(f'BLOCKED: Element contains ad network URL: {blocked}', 'WARNING')
                     return False
-                if onclick and blocked in onclick.lower():
+                if onclick_lower and blocked in onclick_lower:
                     self.log_manager.log(f'BLOCKED: Element has ad network onclick: {blocked}', 'WARNING')
                     return False
             
@@ -377,8 +388,9 @@ class SponsoredClickEngine:
             try:
                 iframe_src = await element.get_attribute('src')
                 if iframe_src:
-                    for blocked in AD_NETWORK_BLOCKLIST:
-                        if blocked in iframe_src.lower():
+                    iframe_src_lower = iframe_src.lower()
+                    for blocked in self._blocklist_lower:
+                        if blocked in iframe_src_lower:
                             self.log_manager.log(f'BLOCKED: Iframe from ad network: {blocked}', 'WARNING')
                             return False
             except Exception:
