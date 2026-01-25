@@ -1,13 +1,14 @@
-# Windows Desktop Automation System
+# Humanex Version 5 - Advanced Simulation Traffic
 
 ## 🎯 Overview
 
-Enterprise-grade RPA (Robotic Process Automation) software for:
-- UX testing
+Humanex Version 5 is an enterprise-grade RPA (Robotic Process Automation) system designed for advanced traffic simulation and behavioral analysis. It provides sophisticated tools for:
+- UX testing and user behavior simulation
 - Sponsored content simulation
 - Internal promotion testing
 - Consent & popup automation
 - Traffic behavior research
+- Custom RPA script execution
 
 ## ⚠️ Important Safety Notice
 
@@ -57,9 +58,11 @@ python advanced_bot.py
 
 ### GUI Features
 
-The application provides a fully responsive GUI with the following sections:
+The application provides a modern, fully responsive GUI with improved navigation. All features are accessible from the left sidebar:
 
-1. **Website & Traffic Tab**
+#### Navigation Sections
+
+1. **🔧 Website Traffic**
    - **Multiple Target URLs** - Add and manage multiple URLs in a list
    - **Visit Type Selection** - Direct, Referral, or Search visits
    - **Search Settings** - Keyword and target domain for Google search visits
@@ -67,7 +70,7 @@ The application provides a fully responsive GUI with the following sections:
    - **Content vs Sponsored interaction ratios**
    - **Platform Mix** - Select Desktop, Android, or both for mixed traffic
 
-2. **Traffic Behaviour Tab** (formerly "Behavior")
+2. **🧠 Traffic Behaviour**
    - Browser settings (Always visible mode)
    - Human behavior simulation with advanced interactions
    - Scroll depth configuration
@@ -76,7 +79,7 @@ The application provides a fully responsive GUI with the following sections:
    - **Page Visit Settings** - Enable extra pages and set maximum pages to visit
    - Consent & popup auto-handler
 
-3. **Proxy Settings Tab**
+3. **🌐 Proxy Settings**
    - Enable/disable proxy
    - Proxy type selection (HTTP, HTTPS, SOCKS5)
    - Proxy list management (manual entry or import from file)
@@ -84,7 +87,7 @@ The application provides a fully responsive GUI with the following sections:
    - Rotation settings (rotate per session/profile)
    - Automatic timezone/location handling based on proxy
 
-4. **RPA Script Tab**
+4. **🧩 RPA Script Creator**
    - **Visual Builder** - Drag and drop interface for creating workflows
    - **Action Toolbox** - New Tab, Access Website, Time, Scroll, Click, Input, Close Page
    - **Enhanced Actions:**
@@ -95,10 +98,18 @@ The application provides a fully responsive GUI with the following sections:
    - Save/Load scripts
    - Custom automation workflows
 
-5. **Control & Logs Panel**
-   - Start/Stop automation
-   - Real-time logging with thread tracking
-   - Status monitoring
+5. **🎮 Control** (NEW in v5)
+   - Start/Stop automation buttons
+   - Real-time status display
+   - Step-by-step usage instructions
+   - Centralized control panel
+
+6. **📋 Logs** (NEW in v5)
+   - Dedicated full-screen log viewer
+   - Real-time activity tracking
+   - Thread-specific logging
+   - Dark theme for better readability
+   - Clear logs functionality
 
 ### Example RPA Script
 
