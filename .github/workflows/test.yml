@@ -26,10 +26,14 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
     
-    - name: Install Playwright browsers
+    - name: Install Playwright browsers and dependencies
       run: |
         playwright install chromium
         playwright install-deps chromium
+    
+    - name: Test error detection patterns
+      run: |
+        python test_auto_install.py
     
     - name: Test browser installation check
       run: |

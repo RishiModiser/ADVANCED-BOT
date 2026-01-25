@@ -16,6 +16,7 @@ import asyncio
 import uuid
 import subprocess
 import shutil
+import platform
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -910,10 +911,39 @@ class BrowserManager:
             error_msg = str(e)
             self.log_manager.log(f'Browser initialization error: {error_msg}', 'ERROR')
             
-            # Check if it's a browser not installed error
-            if 'Executable doesn\'t exist' in error_msg or 'Browser was not found' in error_msg:
-                self.log_manager.log('', 'ERROR')
-                self.log_manager.log('Chromium browser is not installed!', 'ERROR')
+            # Expanded error detection for browser installation issues
+            browser_not_found_patterns = [
+                'Executable doesn\'t exist',
+                'Browser was not found',
+                'Failed to launch',
+                'Could not find browser',
+                'No such file or directory',
+                'playwright.chromium.launch'
+            ]
+            
+            # Check for system dependency issues (common on Linux)
+            missing_deps_patterns = [
+                'libgobject',
+                'libnss',
+                'libatk',
+                'libdrm',
+                'libgbm',
+                'libasound',
+                'error while loading shared libraries'
+            ]
+            
+            is_browser_missing = any(pattern in error_msg for pattern in browser_not_found_patterns)
+            is_deps_missing = any(pattern in error_msg for pattern in missing_deps_patterns)
+            
+            # Check if it's a browser not installed error or missing dependencies
+            if is_browser_missing or is_deps_missing:
+                if is_browser_missing:
+                    self.log_manager.log('', 'ERROR')
+                    self.log_manager.log('Chromium browser is not installed!', 'ERROR')
+                elif is_deps_missing:
+                    self.log_manager.log('', 'ERROR')
+                    self.log_manager.log('System dependencies are missing!', 'ERROR')
+                
                 self.log_manager.log('Attempting automatic installation...', 'WARNING')
                 
                 # Attempt to install the browser automatically
@@ -924,37 +954,73 @@ class BrowserManager:
                         self.log_manager.log('✗ Playwright executable not found in PATH', 'ERROR')
                         self.log_manager.log('Please ensure playwright is installed: pip install playwright', 'ERROR')
                     else:
-                        result = subprocess.run(
-                            [playwright_path, 'install', 'chromium'],
-                            capture_output=True,
-                            text=True,
-                            timeout=300  # 5 minute timeout
-                        )
-                        
-                        if result.returncode == 0:
-                            self.log_manager.log('✓ Browser installed successfully!', 'INFO')
-                            self.log_manager.log('Retrying browser initialization...', 'INFO')
+                        # Install browser
+                        if is_browser_missing:
+                            self.log_manager.log('Installing Chromium browser...', 'INFO')
+                            result = subprocess.run(
+                                [playwright_path, 'install', 'chromium'],
+                                capture_output=True,
+                                text=True,
+                                timeout=300  # 5 minute timeout
+                            )
                             
-                            # Retry initialization
-                            try:
-                                self.browser = await self.playwright.chromium.launch(**launch_options)
-                                self.log_manager.log('✓ Browser launched successfully after auto-install')
-                                self.log_manager.log('━━━ Browser Initialization Complete ━━━')
-                                return True
-                            except Exception as retry_error:
-                                self.log_manager.log(f'Failed to launch browser after install: {retry_error}', 'ERROR')
-                        else:
-                            self.log_manager.log('✗ Automatic installation failed', 'ERROR')
-                            self.log_manager.log('Please run manually: playwright install chromium', 'ERROR')
+                            if result.returncode != 0:
+                                self.log_manager.log('✗ Browser installation failed', 'ERROR')
+                                if result.stderr:
+                                    self.log_manager.log(f'Error: {result.stderr}', 'ERROR')
+                                self.log_manager.log('Please run manually: playwright install chromium', 'ERROR')
+                                return False
+                            
+                            self.log_manager.log('✓ Browser installed successfully!', 'INFO')
+                        
+                        # Install system dependencies on Linux (if needed)
+                        if platform.system() == 'Linux' and (is_deps_missing or is_browser_missing):
+                            self.log_manager.log('Installing system dependencies (Linux)...', 'INFO')
+                            deps_result = subprocess.run(
+                                [playwright_path, 'install-deps', 'chromium'],
+                                capture_output=True,
+                                text=True,
+                                timeout=300  # 5 minute timeout
+                            )
+                            
+                            if deps_result.returncode != 0:
+                                self.log_manager.log('⚠ System dependencies installation failed', 'WARNING')
+                                self.log_manager.log('This may require sudo privileges', 'WARNING')
+                                self.log_manager.log('Try manually: sudo playwright install-deps chromium', 'WARNING')
+                                # Don't return False - try to launch anyway
+                            else:
+                                self.log_manager.log('✓ System dependencies installed successfully!', 'INFO')
+                        
+                        # Retry initialization
+                        self.log_manager.log('Retrying browser initialization...', 'INFO')
+                        try:
+                            self.browser = await self.playwright.chromium.launch(**launch_options)
+                            self.log_manager.log('✓ Browser launched successfully after auto-install')
+                            self.log_manager.log('━━━ Browser Initialization Complete ━━━')
+                            return True
+                        except Exception as retry_error:
+                            retry_msg = str(retry_error)
+                            self.log_manager.log(f'Failed to launch browser after install: {retry_msg}', 'ERROR')
+                            
+                            # Check if still missing dependencies
+                            if any(pattern in retry_msg for pattern in missing_deps_patterns):
+                                self.log_manager.log('', 'ERROR')
+                                self.log_manager.log('System dependencies are still missing.', 'ERROR')
+                                self.log_manager.log('Please run: sudo playwright install-deps chromium', 'ERROR')
+                                self.log_manager.log('Or install dependencies manually for your distribution', 'ERROR')
                         
                 except subprocess.TimeoutExpired:
-                    self.log_manager.log('✗ Installation timed out', 'ERROR')
+                    self.log_manager.log('✗ Installation timed out (>5 minutes)', 'ERROR')
+                    self.log_manager.log('Check your internet connection and try again', 'ERROR')
                 except Exception as install_error:
                     self.log_manager.log(f'✗ Installation error: {install_error}', 'ERROR')
                 
                 self.log_manager.log('', 'ERROR')
-                self.log_manager.log('Please run: playwright install chromium', 'ERROR')
-                self.log_manager.log('Or from terminal: python -m playwright install chromium', 'ERROR')
+                self.log_manager.log('Manual installation steps:', 'ERROR')
+                self.log_manager.log('  1. playwright install chromium', 'ERROR')
+                if platform.system() == 'Linux':
+                    self.log_manager.log('  2. sudo playwright install-deps chromium  (Linux only)', 'ERROR')
+                self.log_manager.log('Or: python -m playwright install chromium', 'ERROR')
                 self.log_manager.log('', 'ERROR')
             
             return False
