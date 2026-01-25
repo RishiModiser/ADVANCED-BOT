@@ -12,7 +12,7 @@ def test_error_patterns():
     
     # Test error patterns (must match those in advanced_bot.py)
     browser_not_found_patterns = [
-        "Executable doesn't exist",
+        "Executable doesn't exist",  # Use double quotes to avoid escaping
         'Browser was not found',
         'Failed to launch',
         'Could not find browser',

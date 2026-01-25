@@ -913,7 +913,7 @@ class BrowserManager:
             
             # Expanded error detection for browser installation issues
             browser_not_found_patterns = [
-                "Executable doesn't exist",
+                "Executable doesn't exist",  # Use double quotes to avoid escaping
                 'Browser was not found',
                 'Failed to launch',
                 'Could not find browser',
@@ -975,7 +975,11 @@ class BrowserManager:
                         
                         self.log_manager.log('✓ Browser installed successfully!', 'INFO')
                     
-                    # Install system dependencies on Linux (if needed)
+                    # Install system dependencies on Linux
+                    # Note: We install deps proactively when browser is missing because:
+                    # 1. If deps were the issue, this fixes it
+                    # 2. If browser was missing, deps are often also needed (fresh Linux systems)
+                    # 3. Better to install now than fail on retry
                     if platform.system() == 'Linux' and (is_deps_missing or is_browser_missing):
                         self.log_manager.log('Installing system dependencies (Linux)...', 'INFO')
                         deps_result = subprocess.run(
