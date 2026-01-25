@@ -122,6 +122,7 @@ LINK_SKIP_PATTERNS = ['logout', 'login', 'signin', 'signup', 'facebook', 'twitte
 # Human behavior constants
 BACK_SCROLL_CHANCE = 0.15  # 15% chance to scroll back up
 READING_PAUSE_CHANCE = 0.3  # 30% chance to pause for reading
+TIME_BROWSING_BACK_SCROLL_CHANCE = 0.3  # 30% chance to scroll back during time-based browsing
 
 
 # ============================================================================
@@ -399,6 +400,60 @@ class HumanBehavior:
     async def idle_pause():
         """Random idle pause to simulate reading/thinking."""
         await asyncio.sleep(random.uniform(2, 5))
+    
+    @staticmethod
+    async def time_based_browsing(page: Page, min_time: int, max_time: int):
+        """
+        Simulate advanced human browsing behavior for a specified time period.
+        
+        Args:
+            page: Playwright page object
+            min_time: Minimum time to spend in seconds (120-480)
+            max_time: Maximum time to spend in seconds (120-480)
+        """
+        try:
+            # Validate and clamp time range
+            min_time = max(120, min(480, min_time))
+            max_time = max(120, min(480, max_time))
+            
+            # Ensure min <= max
+            if min_time > max_time:
+                min_time, max_time = max_time, min_time
+            
+            # Calculate actual time to spend (between min and max)
+            time_to_spend = random.uniform(min_time, max_time)
+            start_time = time.time()
+            
+            logging.info(f'Starting time-based browsing for {time_to_spend:.1f} seconds')
+            
+            while time.time() - start_time < time_to_spend:
+                # Random scroll depth
+                scroll_depth = random.randint(30, 100)
+                
+                # Scroll down with human-like behavior
+                await HumanBehavior.scroll_page(page, scroll_depth)
+                
+                # Random reading pause
+                await asyncio.sleep(random.uniform(2.0, 5.0))
+                
+                # Occasionally scroll back up
+                if random.random() < TIME_BROWSING_BACK_SCROLL_CHANCE:
+                    back_scroll_depth = random.randint(10, 40)
+                    await HumanBehavior.scroll_page(page, back_scroll_depth)
+                    await asyncio.sleep(random.uniform(1.0, 3.0))
+                
+                # Check if we should continue
+                elapsed = time.time() - start_time
+                if elapsed >= time_to_spend:
+                    break
+                
+                # Random idle pause
+                await asyncio.sleep(random.uniform(1.0, 4.0))
+            
+            logging.info(f'Completed time-based browsing ({time.time() - start_time:.1f} seconds)')
+            
+        except Exception as e:
+            logging.error(f'Time-based browsing error: {e}')
 
 
 # ============================================================================
@@ -1097,6 +1152,7 @@ class BrowserManager:
             }
             
             # Add proxy if enabled and configured
+            proxy_config = None
             if use_proxy:
                 proxy_config = self.proxy_manager.get_proxy_config()
                 if proxy_config:
@@ -1106,7 +1162,34 @@ class BrowserManager:
                 else:
                     self.log_manager.log('No proxy configured, using direct connection')
             
-            self.context = await self.browser.new_context(**context_options)
+            # Try to create context with proxy
+            try:
+                self.context = await self.browser.new_context(**context_options)
+            except Exception as proxy_error:
+                # Check if error is proxy-related
+                error_str = str(proxy_error).lower()
+                proxy_error_indicators = [
+                    'proxy', 'econnrefused', 'etimedout', 'enotfound',
+                    'connection refused', 'timeout', 'unreachable'
+                ]
+                is_proxy_error = any(indicator in error_str for indicator in proxy_error_indicators)
+                
+                if is_proxy_error and proxy_config:
+                    # Log proxy-specific error
+                    self.log_manager.log(f'⚠ Proxy connection failed: {proxy_error}', 'WARNING')
+                    self.log_manager.log(f'⚠ Proxy server: {proxy_config.get("server", "unknown")}', 'WARNING')
+                    self.log_manager.log('⚠ Retrying without proxy...', 'WARNING')
+                    
+                    # Mark proxy as failed
+                    self.proxy_manager.mark_proxy_failed(proxy_config)
+                    
+                    # Retry without proxy (remove proxy from options)
+                    context_options.pop('proxy', None)
+                    self.context = await self.browser.new_context(**context_options)
+                    self.log_manager.log('✓ Browser context created with direct connection (proxy bypassed)')
+                else:
+                    # Re-raise if not a proxy error
+                    raise
             
             # Inject navigator properties
             await self.context.add_init_script(f"""
@@ -1124,6 +1207,10 @@ class BrowserManager:
             
         except Exception as e:
             self.log_manager.log(f'Context creation error: {e}', 'ERROR')
+            self.log_manager.log('This may be due to:', 'ERROR')
+            self.log_manager.log('  - Invalid proxy configuration', 'ERROR')
+            self.log_manager.log('  - Network connectivity issues', 'ERROR')
+            self.log_manager.log('  - Browser crash or resource exhaustion', 'ERROR')
             return None
     
     async def close(self):
@@ -1337,6 +1424,70 @@ class AutomationWorker(QObject):
         except Exception as e:
             self.emit_log(f'Error during interaction: {e}', 'WARNING')
     
+    async def execute_single_visit(self, visit_num, url_list, platforms, visit_type, 
+                                   search_keyword, target_domain, referral_sources,
+                                   min_time_spend, max_time_spend, enable_consent, 
+                                   enable_interaction, enable_extra_pages, max_pages,
+                                   consent_manager):
+        """Execute a single visit/profile session."""
+        try:
+            # Select random URL and platform
+            target_url = random.choice(url_list)
+            platform = random.choice(platforms)
+            
+            self.emit_log(f'━━━ Profile {visit_num} | Platform: {platform} | URL: {target_url[:50]}... ━━━')
+            
+            # Create new context for this visit (session isolation)
+            self.emit_log(f'Creating browser context for profile {visit_num}...')
+            context = await self.browser_manager.create_context(platform)
+            if not context:
+                self.emit_log(f'Failed to create browser context for profile {visit_num}', 'ERROR')
+                return False
+            
+            try:
+                # Create new page
+                page = await context.new_page()
+                
+                # Navigate based on visit type
+                if visit_type == 'referral':
+                    await self.handle_referral_visit(page, target_url, referral_sources)
+                elif visit_type == 'search':
+                    # Search visit - find target domain in Google results
+                    found = await self.handle_search_visit(page, target_domain, search_keyword)
+                    if not found:
+                        self.emit_log(f'Target domain not found in search for profile {visit_num}', 'WARNING')
+                        return False
+                else:
+                    # Direct visit
+                    self.emit_log(f'[INFO] Direct visit to {target_url}')
+                    await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
+                
+                # Handle consents if enabled
+                if consent_manager and enable_consent:
+                    await consent_manager.handle_consents(page)
+                
+                # Time-based human scrolling behavior
+                self.emit_log(f'Starting time-based browsing ({min_time_spend}-{max_time_spend} seconds)...')
+                await HumanBehavior.time_based_browsing(page, min_time_spend, max_time_spend)
+                
+                # Handle interaction if enabled (legacy mode)
+                if enable_interaction:
+                    await self.handle_interaction(page, max_pages, enable_extra_pages)
+                
+                # Close page
+                await page.close()
+                
+                self.emit_log(f'✓ Profile {visit_num} completed successfully')
+                return True
+                
+            finally:
+                # Always close context after visit (session isolation)
+                await context.close()
+                
+        except Exception as e:
+            self.emit_log(f'✗ Profile {visit_num} error: {e}', 'ERROR')
+            return False
+    
     async def run_automation(self):
         """Main automation loop with multi-threading, multiple URLs, and platform mixing support."""
         try:
@@ -1346,6 +1497,8 @@ class AutomationWorker(QObject):
             # Get configuration
             url_list = self.config.get('url_list', [])
             num_visits = self.config.get('num_visits', 1)
+            min_time_spend = self.config.get('min_time_spend', 120)  # 2 minutes default
+            max_time_spend = self.config.get('max_time_spend', 240)  # 4 minutes default
             threads = self.config.get('threads', 1)
             total_threads_limit = self.config.get('total_threads', 0)
             platforms = self.config.get('platforms', ['desktop'])
@@ -1361,7 +1514,8 @@ class AutomationWorker(QObject):
             enable_consent = self.config.get('enable_consent', True)
             enable_popups = self.config.get('enable_popups', True)
             
-            self.emit_log(f'Configuration: {len(url_list)} URLs, {num_visits} visits, {threads} threads')
+            self.emit_log(f'Configuration: {len(url_list)} URLs, {num_visits} profiles, {threads} threads')
+            self.emit_log(f'Time per profile: {min_time_spend}-{max_time_spend} seconds with human scrolling')
             if total_threads_limit > 0:
                 self.emit_log(f'Total thread limit: {total_threads_limit}')
             
@@ -1394,153 +1548,77 @@ class AutomationWorker(QObject):
                 self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'ERROR')
                 return
             
-            # Create managers
+            # Create consent manager
             consent_manager = ConsentManager(self.log_manager) if enable_consent else None
-            sponsored_engine = SponsoredClickEngine(self.log_manager)
             
-            # Failure tracking for browser restart
-            consecutive_failures = 0
-            max_failures_before_restart = 3
+            # Track completed profiles
+            total_profiles_completed = 0
             
-            # Thread counter
-            total_threads_executed = 0
+            self.emit_log(f'Starting concurrent execution: {threads} browsers at a time')
             
-            # Run visits with session isolation
-            for visit in range(num_visits):
+            # Run visits in batches based on thread count
+            for batch_start in range(0, num_visits, threads):
                 if not self.running:
                     self.emit_log('Stop requested, exiting gracefully...')
                     break
                 
                 # Check total thread limit
-                if total_threads_limit > 0 and total_threads_executed >= total_threads_limit:
+                if total_threads_limit > 0 and total_profiles_completed >= total_threads_limit:
                     self.emit_log(f'✓ Total thread limit reached ({total_threads_limit}), stopping...')
                     break
                 
-                # Select random URL from list
-                target_url = random.choice(url_list)
+                # Calculate how many visits in this batch
+                batch_end = min(batch_start + threads, num_visits)
+                batch_size = batch_end - batch_start
                 
-                # Select random platform from selected platforms
-                platform = random.choice(platforms)
+                if total_threads_limit > 0:
+                    remaining = total_threads_limit - total_profiles_completed
+                    batch_size = min(batch_size, remaining)
                 
-                self.emit_log(f'━━━ Visit {visit + 1}/{num_visits} | Platform: {platform} | URL: {target_url[:50]}... ━━━')
+                self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+                self.emit_log(f'Starting batch: {batch_size} browsers running simultaneously')
+                self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
                 
-                context = None
-                page = None
+                # Create tasks for concurrent execution
+                tasks = []
+                for i in range(batch_size):
+                    visit_num = batch_start + i + 1
+                    task = self.execute_single_visit(
+                        visit_num, url_list, platforms, visit_type,
+                        search_keyword, target_domain, referral_sources,
+                        min_time_spend, max_time_spend, enable_consent,
+                        enable_interaction, enable_extra_pages, max_pages,
+                        consent_manager
+                    )
+                    tasks.append(task)
                 
-                try:
-                    # Create new context for this visit (session isolation)
-                    self.emit_log(f'Creating browser context for visit {visit + 1}...')
-                    context = await self.browser_manager.create_context(platform)
-                    if not context:
-                        self.emit_log('Failed to create browser context', 'ERROR')
-                        self.emit_log('This may be due to:', 'ERROR')
-                        self.emit_log('  - Invalid proxy configuration', 'ERROR')
-                        self.emit_log('  - Network connectivity issues', 'ERROR')
-                        self.emit_log('  - Browser crash or resource exhaustion', 'ERROR')
-                        consecutive_failures += 1
-                        
-                        # Restart browser if too many failures
-                        if consecutive_failures >= max_failures_before_restart:
-                            self.emit_log(f'Too many failures ({consecutive_failures}), restarting browser...')
-                            await self.browser_manager.close()
-                            await asyncio.sleep(2)
-                            success = await self.browser_manager.initialize()
-                            if not success:
-                                self.emit_log('Browser restart failed', 'ERROR')
-                                break
-                            consecutive_failures = 0
-                        
-                        continue
-                    
-                    # Create new page
-                    page = await context.new_page()
-                    total_threads_executed += 1
-                    
-                    # Navigate based on visit type
-                    if visit_type == 'referral':
-                        await self.handle_referral_visit(page, target_url, referral_sources)
-                    elif visit_type == 'search':
-                        # Search visit - find target domain in Google results
-                        found = await self.handle_search_visit(page, target_domain, search_keyword)
-                        if not found:
-                            # If domain not found, close page and count as failed attempt
-                            self.emit_log('Target domain not found in search, counting as failed visit', 'WARNING')
-                            if page:
-                                await page.close()
-                            consecutive_failures += 1
-                            continue
-                    else:
-                        # Direct visit
-                        self.emit_log(f'[INFO] Direct visit to {target_url}')
-                        await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
-                    
-                    # Handle consents if enabled
-                    if consent_manager and enable_consent:
-                        await consent_manager.handle_consents(page)
-                    
-                    # Random scroll
-                    await HumanBehavior.scroll_page(page)
-                    
-                    # Idle pause
-                    await HumanBehavior.idle_pause()
-                    
-                    # Handle interaction if enabled
-                    if enable_interaction:
-                        await self.handle_interaction(page, max_pages, enable_extra_pages)
-                    else:
-                        # Decide on interaction type based on ratio
-                        if random.random() < sponsored_ratio:
-                            # Try sponsored click
-                            await sponsored_engine.click_sponsored_content(page, 1.0)
-                        else:
-                            # Regular content interaction
-                            self.emit_log('Performing content interaction')
-                            await HumanBehavior.scroll_page(page, random.randint(50, 100))
-                        
-                        # Idle before closing
-                        await asyncio.sleep(random.uniform(1, 3))
-                    
-                    # Close page
-                    if page:
-                        await page.close()
-                    
-                    self.emit_log(f'✓ Visit {visit + 1} completed successfully (Thread {total_threads_executed})')
-                    
-                    # Reset failure counter on success
-                    consecutive_failures = 0
-                    
-                    # Delay between visits
-                    if visit < num_visits - 1 and self.running:
-                        delay = random.uniform(2, 5)
-                        await asyncio.sleep(delay)
+                # Execute all tasks concurrently
+                results = await asyncio.gather(*tasks, return_exceptions=True)
                 
-                except Exception as e:
-                    self.emit_log(f'✗ Visit {visit + 1} error: {e}', 'ERROR')
-                    consecutive_failures += 1
-                    
-                    # Restart browser if too many failures
-                    if consecutive_failures >= max_failures_before_restart:
-                        self.emit_log(f'Too many failures ({consecutive_failures}), restarting browser...')
-                        await self.browser_manager.close()
-                        await asyncio.sleep(2)
-                        success = await self.browser_manager.initialize()
-                        if not success:
-                            self.emit_log('Browser restart failed', 'ERROR')
-                            break
-                        consecutive_failures = 0
+                # Count successes and log exceptions
+                success_count = 0
+                for i, result in enumerate(results):
+                    if result is True:
+                        success_count += 1
+                    elif isinstance(result, Exception):
+                        visit_num = batch_start + i + 1
+                        self.emit_log(f'Profile {visit_num} exception: {result}', 'ERROR')
                 
-                finally:
-                    # Always close context after visit (session isolation)
-                    if context:
-                        try:
-                            await context.close()
-                            self.emit_log(f'Context closed for visit {visit + 1}')
-                        except Exception as e:
-                            self.emit_log(f'Error closing context: {e}', 'ERROR')
+                total_profiles_completed += success_count
+                
+                self.emit_log(f'Batch completed: {success_count}/{batch_size} profiles successful')
+                
+                # Small delay between batches
+                if batch_end < num_visits and self.running:
+                    await asyncio.sleep(random.uniform(1, 3))
+            
+            self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+            self.emit_log(f'✓ Automation completed: {total_profiles_completed} profiles processed')
+            self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             
             # Cleanup
             await self.browser_manager.close()
-            self.emit_log(f'Automation completed - Total threads executed: {total_threads_executed}')
+            self.emit_log('Browser closed, automation finished')
             
         except Exception as e:
             self.emit_log(f'Automation error: {e}', 'ERROR')
@@ -1874,11 +1952,40 @@ class AppGUI(QMainWindow):
         traffic_layout = QVBoxLayout()
         traffic_layout.setSpacing(10)
         
-        traffic_layout.addWidget(QLabel('Number of Visits:'))
+        # Time spend settings
+        time_layout = QHBoxLayout()
+        time_layout.addWidget(QLabel('Time to Spend per Profile (seconds):'))
+        traffic_layout.addLayout(time_layout)
+        
+        min_time_layout = QHBoxLayout()
+        min_time_layout.addWidget(QLabel('  Minimum:'))
+        self.min_time_input = QSpinBox()
+        self.min_time_input.setRange(120, 480)  # 2 to 8 minutes
+        self.min_time_input.setValue(120)  # 2 minutes default
+        self.min_time_input.setSuffix(' sec')
+        self.min_time_input.setToolTip('Minimum time to spend on each profile with human scrolling (2-8 minutes)')
+        self.min_time_input.valueChanged.connect(self.validate_time_range)
+        min_time_layout.addWidget(self.min_time_input)
+        min_time_layout.addStretch()
+        traffic_layout.addLayout(min_time_layout)
+        
+        max_time_layout = QHBoxLayout()
+        max_time_layout.addWidget(QLabel('  Maximum:'))
+        self.max_time_input = QSpinBox()
+        self.max_time_input.setRange(120, 480)  # 2 to 8 minutes
+        self.max_time_input.setValue(240)  # 4 minutes default
+        self.max_time_input.setSuffix(' sec')
+        self.max_time_input.setToolTip('Maximum time to spend on each profile with human scrolling (2-8 minutes)')
+        self.max_time_input.valueChanged.connect(self.validate_time_range)
+        max_time_layout.addWidget(self.max_time_input)
+        max_time_layout.addStretch()
+        traffic_layout.addLayout(max_time_layout)
+        
+        traffic_layout.addWidget(QLabel('Number of Profiles to Visit:'))
         self.num_visits_input = QSpinBox()
         self.num_visits_input.setRange(1, 10000)
         self.num_visits_input.setValue(10)
-        self.num_visits_input.setToolTip('High values with concurrent threads may consume significant resources')
+        self.num_visits_input.setToolTip('Number of profiles/pages to visit')
         traffic_layout.addWidget(self.num_visits_input)
         
         traffic_layout.addWidget(QLabel('Threads (concurrent browsers):'))
@@ -2080,6 +2187,15 @@ class AppGUI(QMainWindow):
         enabled = state in (Qt.Checked, Qt.Checked.value)
         self.max_pages_input.setEnabled(enabled)
     
+    def validate_time_range(self):
+        """Ensure minimum time is not greater than maximum time."""
+        min_time = self.min_time_input.value()
+        max_time = self.max_time_input.value()
+        
+        if min_time > max_time:
+            # Auto-adjust max to match min if min becomes greater
+            self.max_time_input.setValue(min_time)
+    
     def create_proxy_tab(self) -> QWidget:
         """Create proxy settings tab."""
         # Create scroll area wrapper
@@ -2119,6 +2235,26 @@ class AppGUI(QMainWindow):
         self.proxy_type_combo = QComboBox()
         self.proxy_type_combo.addItems(['HTTP', 'HTTPS', 'SOCKS5'])
         self.proxy_type_combo.setEnabled(False)
+        # Fix color issue - ensure text is readable when enabled
+        self.proxy_type_combo.setStyleSheet("""
+            QComboBox {
+                color: #000000;
+                background-color: #ffffff;
+            }
+            QComboBox:disabled {
+                color: #999999;
+                background-color: #f0f0f0;
+            }
+            QComboBox::drop-down {
+                border: 0px;
+            }
+            QComboBox QAbstractItemView {
+                color: #000000;
+                background-color: #ffffff;
+                selection-background-color: #3498db;
+                selection-color: #ffffff;
+            }
+        """)
         proxy_type_layout.addWidget(self.proxy_type_combo)
         
         proxy_type_group.setLayout(proxy_type_layout)
@@ -2155,23 +2291,18 @@ class AppGUI(QMainWindow):
         proxy_list_group.setLayout(proxy_list_layout)
         layout.addWidget(proxy_list_group)
         
-        # Rotation Settings
-        rotation_group = QGroupBox('🔄 Rotation Settings')
-        rotation_layout = QVBoxLayout()
-        rotation_layout.setSpacing(10)
+        # Info about timezone/location matching
+        info_group = QGroupBox('ℹ️ Proxy Information')
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(5)
         
-        self.rotate_proxy_check = QCheckBox('✅ Rotate proxy per session/profile')
-        self.rotate_proxy_check.setChecked(True)
-        self.rotate_proxy_check.setEnabled(False)
-        rotation_layout.addWidget(self.rotate_proxy_check)
-        
-        info_label = QLabel('ℹ️ Timezone and fingerprints will be set according to proxy location')
+        info_label = QLabel('• Timezone and fingerprints will be set according to proxy location\n• Each profile uses a unique proxy for maximum authenticity\n• Failed proxies are automatically skipped')
         info_label.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
         info_label.setWordWrap(True)
-        rotation_layout.addWidget(info_label)
+        info_layout.addWidget(info_label)
         
-        rotation_group.setLayout(rotation_layout)
-        layout.addWidget(rotation_group)
+        info_group.setLayout(info_layout)
+        layout.addWidget(info_group)
         
         layout.addStretch()
         
@@ -2185,7 +2316,6 @@ class AppGUI(QMainWindow):
         self.proxy_type_combo.setEnabled(enabled)
         self.proxy_list_input.setEnabled(enabled)
         self.proxy_import_btn.setEnabled(enabled)
-        self.rotate_proxy_check.setEnabled(enabled)
     
     def update_proxy_count(self):
         """Update proxy count label based on current input."""
@@ -2558,6 +2688,8 @@ class AppGUI(QMainWindow):
             config = {
                 'url_list': url_list,
                 'num_visits': self.num_visits_input.value(),
+                'min_time_spend': self.min_time_input.value(),
+                'max_time_spend': self.max_time_input.value(),
                 'threads': self.threads_input.value(),
                 'total_threads': self.total_threads_input.value(),
                 'content_ratio': self.content_ratio_input.value(),
@@ -2567,7 +2699,7 @@ class AppGUI(QMainWindow):
                 'proxy_enabled': self.proxy_enabled_check.isChecked(),
                 'proxy_type': self.proxy_type_combo.currentText(),
                 'proxy_list': self.proxy_list_input.toPlainText(),
-                'rotate_proxy': self.rotate_proxy_check.isChecked(),
+                'rotate_proxy': True,  # Always rotate for authenticity
                 'visit_type': visit_type,
                 'search_keyword': self.search_keyword_input.text().strip() if visit_type == 'search' else '',
                 'target_domain': self.target_domain_input.text().strip() if visit_type == 'search' else '',
