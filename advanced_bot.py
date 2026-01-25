@@ -572,23 +572,77 @@ class ProxyManager:
     
     def __init__(self):
         self.proxy_enabled = False
-        self.proxy_server = ''
-        self.proxy_username = ''
-        self.proxy_password = ''
+        self.proxy_type = 'HTTP'
+        self.proxy_list = []
+        self.rotate_proxy = True
+        self.current_proxy_index = 0
+        self.failed_proxies = set()
+    
+    def parse_proxy_list(self, proxy_text: str) -> List[Dict[str, str]]:
+        """Parse proxy list from text input."""
+        proxies = []
+        lines = proxy_text.strip().split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            proxy_config = {}
+            
+            # Check for user:pass@ip:port format
+            if '@' in line:
+                auth_part, server_part = line.split('@', 1)
+                if ':' in auth_part:
+                    username, password = auth_part.split(':', 1)
+                    proxy_config['username'] = username
+                    proxy_config['password'] = password
+                
+                # Build server URL
+                if ':' in server_part:
+                    ip, port = server_part.rsplit(':', 1)
+                    proxy_config['server'] = f"{self.proxy_type.lower()}://{ip}:{port}"
+            else:
+                # Simple ip:port format
+                if ':' in line:
+                    ip, port = line.rsplit(':', 1)
+                    proxy_config['server'] = f"{self.proxy_type.lower()}://{ip}:{port}"
+            
+            if proxy_config.get('server'):
+                proxies.append(proxy_config)
+        
+        return proxies
     
     def get_proxy_config(self) -> Optional[Dict[str, str]]:
         """Get proxy configuration for Playwright."""
-        if not self.proxy_enabled or not self.proxy_server:
+        if not self.proxy_enabled or not self.proxy_list:
             return None
         
-        config = {'server': self.proxy_server}
+        # Filter out failed proxies
+        available_proxies = [p for i, p in enumerate(self.proxy_list) if i not in self.failed_proxies]
         
-        if self.proxy_username:
-            config['username'] = self.proxy_username
-        if self.proxy_password:
-            config['password'] = self.proxy_password
+        if not available_proxies:
+            # Reset failed proxies if all failed
+            self.failed_proxies.clear()
+            available_proxies = self.proxy_list
         
-        return config
+        if self.rotate_proxy:
+            # Rotate through proxies
+            proxy = available_proxies[self.current_proxy_index % len(available_proxies)]
+            self.current_proxy_index += 1
+        else:
+            # Use first available proxy
+            proxy = available_proxies[0]
+        
+        return proxy
+    
+    def mark_proxy_failed(self, proxy_config: Dict[str, str]):
+        """Mark a proxy as failed."""
+        try:
+            idx = self.proxy_list.index(proxy_config)
+            self.failed_proxies.add(idx)
+        except ValueError:
+            pass
 
 
 # ============================================================================
@@ -622,10 +676,7 @@ class BrowserManager:
                 ]
             }
             
-            # Add proxy if configured
-            proxy_config = self.proxy_manager.get_proxy_config()
-            if proxy_config:
-                launch_options['proxy'] = proxy_config
+            # Note: Proxy is now set per-context, not per-browser
             
             self.browser = await self.playwright.chromium.launch(**launch_options)
             self.log_manager.log('Browser launched successfully')
@@ -636,8 +687,8 @@ class BrowserManager:
             self.log_manager.log(f'Browser initialization error: {e}', 'ERROR')
             return False
     
-    async def create_context(self, platform: str = 'desktop') -> Optional[BrowserContext]:
-        """Create a new browser context with fingerprinting."""
+    async def create_context(self, platform: str = 'desktop', use_proxy: bool = True) -> Optional[BrowserContext]:
+        """Create a new browser context with fingerprinting and optional proxy."""
         try:
             if not self.browser:
                 await self.initialize()
@@ -654,6 +705,14 @@ class BrowserManager:
                 'locale': fingerprint['locale'],
                 'timezone_id': fingerprint['timezone'],
             }
+            
+            # Add proxy if enabled and configured
+            if use_proxy:
+                proxy_config = self.proxy_manager.get_proxy_config()
+                if proxy_config:
+                    context_options['proxy'] = proxy_config
+                    server = proxy_config.get('server', 'unknown')
+                    self.log_manager.log(f'Using proxy: {server}')
             
             self.context = await self.browser.new_context(**context_options)
             
@@ -875,10 +934,13 @@ class AppGUI(QMainWindow):
         # Tab 2: Behavior Settings
         tabs.addTab(self.create_behavior_tab(), 'Behavior')
         
-        # Tab 3: Sponsored Content
+        # Tab 3: Proxy Settings
+        tabs.addTab(self.create_proxy_tab(), 'Proxy Settings')
+        
+        # Tab 4: Sponsored Content
         tabs.addTab(self.create_sponsored_tab(), 'Sponsored Content')
         
-        # Tab 4: RPA Script
+        # Tab 5: RPA Script
         tabs.addTab(self.create_script_tab(), 'RPA Script')
         
         layout.addWidget(tabs)
@@ -951,9 +1013,10 @@ class AppGUI(QMainWindow):
         browser_group = QGroupBox('Browser Settings')
         browser_layout = QVBoxLayout()
         
-        self.headless_check = QCheckBox('Headless Mode')
-        self.headless_check.setChecked(False)
-        browser_layout.addWidget(self.headless_check)
+        # Note: Browser always runs in visible mode (headless=False)
+        info_label = QLabel('ℹ️ Browser always runs in visible mode for monitoring')
+        info_label.setStyleSheet('color: #666; font-style: italic;')
+        browser_layout.addWidget(info_label)
         
         browser_group.setLayout(browser_layout)
         layout.addWidget(browser_group)
@@ -995,6 +1058,76 @@ class AppGUI(QMainWindow):
         layout.addWidget(consent_group)
         
         layout.addStretch()
+        
+        return widget
+    
+    def create_proxy_tab(self) -> QWidget:
+        """Create proxy settings tab."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        # Enable Proxy
+        proxy_enable_group = QGroupBox('Proxy Configuration')
+        proxy_enable_layout = QVBoxLayout()
+        
+        self.proxy_enabled_check = QCheckBox('Enable Proxy')
+        self.proxy_enabled_check.setChecked(False)
+        self.proxy_enabled_check.stateChanged.connect(self.toggle_proxy_inputs)
+        proxy_enable_layout.addWidget(self.proxy_enabled_check)
+        
+        proxy_enable_group.setLayout(proxy_enable_layout)
+        layout.addWidget(proxy_enable_group)
+        
+        # Proxy Type
+        proxy_type_group = QGroupBox('Proxy Type')
+        proxy_type_layout = QVBoxLayout()
+        
+        self.proxy_type_combo = QComboBox()
+        self.proxy_type_combo.addItems(['HTTP', 'HTTPS', 'SOCKS5'])
+        self.proxy_type_combo.setEnabled(False)
+        proxy_type_layout.addWidget(self.proxy_type_combo)
+        
+        proxy_type_group.setLayout(proxy_type_layout)
+        layout.addWidget(proxy_type_group)
+        
+        # Proxy List
+        proxy_list_group = QGroupBox('Proxy List')
+        proxy_list_layout = QVBoxLayout()
+        
+        proxy_list_layout.addWidget(QLabel('Enter proxies (one per line):'))
+        proxy_list_layout.addWidget(QLabel('Formats: ip:port or user:pass@ip:port'))
+        
+        self.proxy_list_input = QTextEdit()
+        self.proxy_list_input.setPlaceholderText('127.0.0.1:8080\nuser:pass@192.168.1.1:3128\n10.0.0.1:1080')
+        self.proxy_list_input.setMaximumHeight(150)
+        self.proxy_list_input.setEnabled(False)
+        proxy_list_layout.addWidget(self.proxy_list_input)
+        
+        proxy_list_group.setLayout(proxy_list_layout)
+        layout.addWidget(proxy_list_group)
+        
+        # Rotation Settings
+        rotation_group = QGroupBox('Rotation Settings')
+        rotation_layout = QVBoxLayout()
+        
+        self.rotate_proxy_check = QCheckBox('Rotate proxy per session')
+        self.rotate_proxy_check.setChecked(True)
+        self.rotate_proxy_check.setEnabled(False)
+        rotation_layout.addWidget(self.rotate_proxy_check)
+        
+        rotation_group.setLayout(rotation_layout)
+        layout.addWidget(rotation_group)
+        
+        layout.addStretch()
+        
+        return widget
+    
+    def toggle_proxy_inputs(self, state):
+        """Enable/disable proxy inputs based on checkbox state."""
+        enabled = state == Qt.Checked
+        self.proxy_type_combo.setEnabled(enabled)
+        self.proxy_list_input.setEnabled(enabled)
+        self.rotate_proxy_check.setEnabled(enabled)
         
         return widget
     
@@ -1142,7 +1275,11 @@ class AppGUI(QMainWindow):
                 'content_ratio': self.content_ratio_input.value(),
                 'sponsored_ratio': self.sponsored_ratio_input.value(),
                 'platform': self.platform_combo.currentText(),
-                'headless': self.headless_check.isChecked(),
+                'headless': False,  # Always False - browser must be visible
+                'proxy_enabled': self.proxy_enabled_check.isChecked(),
+                'proxy_type': self.proxy_type_combo.currentText(),
+                'proxy_list': self.proxy_list_input.toPlainText(),
+                'rotate_proxy': self.rotate_proxy_check.isChecked(),
             }
             
             # Update UI
@@ -1154,6 +1291,15 @@ class AppGUI(QMainWindow):
             # Create and start worker thread
             self.automation_thread = QThread()
             self.automation_worker = AutomationWorker(config, self.log_manager)
+            
+            # Configure proxy manager
+            if config['proxy_enabled'] and config['proxy_list'].strip():
+                self.automation_worker.browser_manager.proxy_manager.proxy_enabled = True
+                self.automation_worker.browser_manager.proxy_manager.proxy_type = config['proxy_type']
+                self.automation_worker.browser_manager.proxy_manager.rotate_proxy = config['rotate_proxy']
+                self.automation_worker.browser_manager.proxy_manager.proxy_list = \
+                    self.automation_worker.browser_manager.proxy_manager.parse_proxy_list(config['proxy_list'])
+            
             self.automation_worker.moveToThread(self.automation_thread)
             
             # Connect signals
