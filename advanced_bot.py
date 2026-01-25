@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QComboBox, QCheckBox, QTabWidget, QGroupBox, QListWidget,
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
     QMessageBox, QFileDialog, QScrollArea, QListWidgetItem, QFormLayout,
-    QAbstractItemView
+    QAbstractItemView, QRadioButton, QButtonGroup, QGridLayout
 )
 from PySide6.QtCore import Qt, QThread, Signal, QObject
 from PySide6.QtGui import QFont, QColor
@@ -191,31 +191,58 @@ class HumanBehavior:
     
     @staticmethod
     async def scroll_page(page: Page, depth_percent: int = None):
-        """Scroll page with human-like behavior."""
+        """Scroll page with enhanced human-like behavior - viewport-based, random direction, pauses."""
         try:
             if depth_percent is None:
                 depth_percent = random.randint(30, 100)
             
-            # Get page height
+            # Get page and viewport info
             page_height = await page.evaluate('document.documentElement.scrollHeight')
+            viewport_height = await page.evaluate('window.innerHeight')
             target_scroll = int(page_height * (depth_percent / 100))
             
-            # Scroll in steps with variable speed using smooth scrolling
+            # Scroll in steps based on viewport height with variable speed
             current_position = 0
+            scroll_direction = 1  # 1 for down, -1 for up
+            
             while current_position < target_scroll:
-                step = random.randint(100, 300)
-                current_position = min(current_position + step, target_scroll)
+                # Random step size based on viewport (more realistic)
+                step = int(viewport_height * random.uniform(0.3, 0.8)) * scroll_direction
+                next_position = current_position + step
+                
+                # Clamp to valid range
+                next_position = max(0, min(next_position, target_scroll))
                 
                 # Use smooth scrolling behavior
                 await page.evaluate(f'''
                     window.scrollTo({{
-                        top: {current_position},
+                        top: {next_position},
                         behavior: 'smooth'
                     }})
                 ''')
-                await asyncio.sleep(random.uniform(0.1, 0.4))
+                
+                current_position = next_position
+                
+                # Variable pause between scrolls
+                await asyncio.sleep(random.uniform(0.2, 0.6))
+                
+                # Occasionally scroll back up a bit (human-like behavior)
+                if random.random() < 0.15 and current_position > viewport_height:
+                    back_scroll = int(viewport_height * random.uniform(0.1, 0.3))
+                    current_position = max(0, current_position - back_scroll)
+                    await page.evaluate(f'''
+                        window.scrollTo({{
+                            top: {current_position},
+                            behavior: 'smooth'
+                        }})
+                    ''')
+                    await asyncio.sleep(random.uniform(0.3, 0.7))
+                
+                # Random pause to simulate reading
+                if random.random() < 0.3:
+                    await asyncio.sleep(random.uniform(1.0, 3.0))
             
-            # Random idle pause
+            # Final idle pause
             await asyncio.sleep(random.uniform(0.5, 2.0))
             
         except Exception as e:
@@ -832,6 +859,145 @@ class AutomationWorker(QObject):
         self.running = False
         self.emit_log('Stopping automation...')
     
+    async def handle_referral_visit(self, page: Page, target_url: str, referral_sources: List[str]):
+        """Handle referral visit - navigate from referrer to target."""
+        # Randomly select one referral source
+        referrer = random.choice(referral_sources)
+        
+        # Map referral sources to URLs
+        referrer_urls = {
+            'facebook': 'https://facebook.com',
+            'google': 'https://google.com',
+            'twitter': 'https://twitter.com',
+            'telegram': 'https://t.me',
+            'instagram': 'https://instagram.com'
+        }
+        
+        referrer_url = referrer_urls.get(referrer, 'https://google.com')
+        
+        self.emit_log(f'[INFO] Referral source selected: {referrer.capitalize()}')
+        self.emit_log(f'Opening referrer: {referrer_url}')
+        
+        try:
+            # Navigate to referrer
+            await page.goto(referrer_url, wait_until='domcontentloaded', timeout=30000)
+            await asyncio.sleep(random.uniform(2, 4))
+            
+            # Human-like idle and scroll on referrer
+            await HumanBehavior.scroll_page(page, random.randint(20, 40))
+            await asyncio.sleep(random.uniform(1, 3))
+            
+            # Navigate to target URL (simulate typing URL or clicking)
+            self.emit_log(f'Navigating to target from {referrer.capitalize()}...')
+            await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
+            
+        except Exception as e:
+            self.emit_log(f'Error during referral visit: {e}', 'ERROR')
+            raise
+    
+    async def handle_search_visit(self, page: Page, target_url: str, keyword: str):
+        """Handle search visit - search on Google and click result."""
+        self.emit_log(f'[INFO] Search visit with keyword: "{keyword}"')
+        
+        try:
+            # Navigate to Google
+            self.emit_log('Opening Google...')
+            await page.goto('https://www.google.com', wait_until='domcontentloaded', timeout=30000)
+            await asyncio.sleep(random.uniform(1, 2))
+            
+            # Focus search box
+            search_selectors = ['input[name="q"]', 'textarea[name="q"]', '#APjFqb']
+            search_box = None
+            
+            for selector in search_selectors:
+                try:
+                    search_box = await page.query_selector(selector)
+                    if search_box:
+                        break
+                except:
+                    continue
+            
+            if not search_box:
+                self.emit_log('Could not find Google search box, using direct navigation', 'WARNING')
+                await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
+                return
+            
+            # Type keyword character by character with delays
+            self.emit_log('Typing search keyword...')
+            await search_box.click()
+            await asyncio.sleep(random.uniform(0.3, 0.6))
+            
+            for char in keyword:
+                await search_box.type(char)
+                await asyncio.sleep(random.uniform(0.1, 0.3))
+            
+            # Press Enter
+            await asyncio.sleep(random.uniform(0.5, 1.0))
+            await search_box.press('Enter')
+            
+            # Wait for results
+            await asyncio.sleep(random.uniform(2, 4))
+            
+            # Scroll results page
+            await HumanBehavior.scroll_page(page, random.randint(30, 60))
+            await asyncio.sleep(random.uniform(1, 2))
+            
+            # Try to find and click target domain in results
+            # For now, navigate directly (in production, would search for matching link)
+            self.emit_log(f'Navigating to target from search results...')
+            await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
+            
+        except Exception as e:
+            self.emit_log(f'Error during search visit: {e}', 'ERROR')
+            raise
+    
+    async def handle_interaction(self, page: Page, min_stay_minutes: int, max_stay_minutes: int, 
+                                  max_pages: int, enable_extra_pages: bool):
+        """Handle page interaction - click links, navigate pages, extended stay."""
+        stay_time = random.randint(min_stay_minutes * 60, max_stay_minutes * 60)
+        self.emit_log(f'[INFO] Interaction enabled - staying for {stay_time // 60} minutes')
+        
+        start_time = asyncio.get_event_loop().time()
+        pages_visited = 1
+        
+        try:
+            while (asyncio.get_event_loop().time() - start_time) < stay_time and self.running:
+                # Scroll and pause
+                await HumanBehavior.scroll_page(page, random.randint(40, 90))
+                await asyncio.sleep(random.uniform(5, 15))
+                
+                # Try to click a link if extra pages enabled
+                if enable_extra_pages and pages_visited < max_pages:
+                    try:
+                        # Find clickable article/content links
+                        links = await page.query_selector_all('a[href^="http"], a[href^="/"]')
+                        
+                        if links and len(links) > 0:
+                            # Filter out navigation/social links
+                            content_link = random.choice(links[:min(20, len(links))])
+                            
+                            href = await content_link.get_attribute('href')
+                            if href and not any(skip in href.lower() for skip in 
+                                ['logout', 'login', 'signin', 'signup', 'facebook', 'twitter', 'instagram']):
+                                
+                                self.emit_log(f'[INFO] Clicking link to new page (page {pages_visited + 1}/{max_pages})')
+                                await content_link.click()
+                                await asyncio.sleep(random.uniform(3, 6))
+                                pages_visited += 1
+                                
+                                # Handle consents on new page
+                                consent_manager = ConsentManager(self.log_manager)
+                                await consent_manager.handle_consents(page)
+                                
+                    except Exception as e:
+                        self.emit_log(f'Could not click link: {e}', 'WARNING')
+                
+                # Random idle pause
+                await asyncio.sleep(random.uniform(10, 30))
+                
+        except Exception as e:
+            self.emit_log(f'Error during interaction: {e}', 'WARNING')
+    
     async def run_automation(self):
         """Main automation loop with session isolation and stability improvements."""
         try:
@@ -856,6 +1022,14 @@ class AutomationWorker(QObject):
             num_visits = self.config.get('num_visits', 1)
             content_ratio = self.config.get('content_ratio', 85) / 100
             sponsored_ratio = self.config.get('sponsored_ratio', 15) / 100
+            visit_type = self.config.get('visit_type', 'direct')
+            search_keyword = self.config.get('search_keyword', '')
+            referral_sources = self.config.get('referral_sources', [])
+            enable_interaction = self.config.get('enable_interaction', False)
+            min_stay_time = self.config.get('min_stay_time', 3)
+            max_stay_time = self.config.get('max_stay_time', 10)
+            enable_extra_pages = self.config.get('enable_extra_pages', False)
+            max_pages = self.config.get('max_pages', 5)
             
             # Failure tracking for browser restart
             consecutive_failures = 0
@@ -895,9 +1069,15 @@ class AutomationWorker(QObject):
                     # Create new page
                     page = await context.new_page()
                     
-                    # Navigate
-                    self.emit_log(f'Navigating to {target_url}')
-                    await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
+                    # Navigate based on visit type
+                    if visit_type == 'referral':
+                        await self.handle_referral_visit(page, target_url, referral_sources)
+                    elif visit_type == 'search':
+                        await self.handle_search_visit(page, target_url, search_keyword)
+                    else:
+                        # Direct visit
+                        self.emit_log(f'[INFO] Direct visit to {target_url}')
+                        await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
                     
                     # Handle consents
                     await consent_manager.handle_consents(page)
@@ -908,17 +1088,22 @@ class AutomationWorker(QObject):
                     # Idle pause
                     await HumanBehavior.idle_pause()
                     
-                    # Decide on interaction type based on ratio
-                    if random.random() < sponsored_ratio:
-                        # Try sponsored click
-                        await sponsored_engine.click_sponsored_content(page, 1.0)
+                    # Handle interaction if enabled
+                    if enable_interaction:
+                        await self.handle_interaction(page, min_stay_time, max_stay_time, 
+                                                     max_pages, enable_extra_pages)
                     else:
-                        # Regular content interaction
-                        self.emit_log('Performing content interaction')
-                        await HumanBehavior.scroll_page(page, random.randint(50, 100))
-                    
-                    # Idle before closing
-                    await asyncio.sleep(random.uniform(1, 3))
+                        # Decide on interaction type based on ratio
+                        if random.random() < sponsored_ratio:
+                            # Try sponsored click
+                            await sponsored_engine.click_sponsored_content(page, 1.0)
+                        else:
+                            # Regular content interaction
+                            self.emit_log('Performing content interaction')
+                            await HumanBehavior.scroll_page(page, random.randint(50, 100))
+                        
+                        # Idle before closing
+                        await asyncio.sleep(random.uniform(1, 3))
                     
                     # Close page
                     if page:
@@ -1030,19 +1215,19 @@ class AppGUI(QMainWindow):
         tabs = QTabWidget()
         
         # Tab 1: Website & Traffic
-        tabs.addTab(self.create_website_tab(), 'Website & Traffic')
+        tabs.addTab(self.create_website_tab(), '🔧 Website Traffic')
         
         # Tab 2: Behavior Settings
-        tabs.addTab(self.create_behavior_tab(), 'Behavior')
+        tabs.addTab(self.create_behavior_tab(), '🧠 Behavior')
         
         # Tab 3: Proxy Settings
-        tabs.addTab(self.create_proxy_tab(), 'Proxy Settings')
+        tabs.addTab(self.create_proxy_tab(), '🌐 Proxy Settings')
         
         # Tab 4: Sponsored Content
-        tabs.addTab(self.create_sponsored_tab(), 'Sponsored Content')
+        tabs.addTab(self.create_sponsored_tab(), '📱 Sponsored Content')
         
         # Tab 5: RPA Script
-        tabs.addTab(self.create_script_tab(), 'RPA Script')
+        tabs.addTab(self.create_script_tab(), '🧩 RPA Script')
         
         layout.addWidget(tabs)
         
@@ -1052,10 +1237,12 @@ class AppGUI(QMainWindow):
         """Create website configuration tab."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        layout.setSpacing(15)
         
         # Website URL
-        url_group = QGroupBox('Website Configuration')
+        url_group = QGroupBox('🌍 Website Configuration')
         url_layout = QVBoxLayout()
+        url_layout.setSpacing(10)
         
         url_layout.addWidget(QLabel('Target URL:'))
         self.url_input = QLineEdit()
@@ -1065,9 +1252,81 @@ class AppGUI(QMainWindow):
         url_group.setLayout(url_layout)
         layout.addWidget(url_group)
         
+        # Visit Type Section (NEW FEATURE)
+        visit_type_group = QGroupBox('🔍 Visit Type')
+        visit_type_layout = QVBoxLayout()
+        visit_type_layout.setSpacing(10)
+        
+        # Radio buttons for visit type
+        self.visit_type_group = QButtonGroup()
+        self.visit_direct_radio = QRadioButton('Direct Visit')
+        self.visit_referral_radio = QRadioButton('Referral Visit')
+        self.visit_search_radio = QRadioButton('Search Visit')
+        self.visit_direct_radio.setChecked(True)
+        
+        self.visit_type_group.addButton(self.visit_direct_radio, 0)
+        self.visit_type_group.addButton(self.visit_referral_radio, 1)
+        self.visit_type_group.addButton(self.visit_search_radio, 2)
+        
+        visit_type_layout.addWidget(self.visit_direct_radio)
+        visit_type_layout.addWidget(self.visit_referral_radio)
+        visit_type_layout.addWidget(self.visit_search_radio)
+        
+        # Connect signals to toggle visibility of sub-sections
+        self.visit_referral_radio.toggled.connect(self.toggle_referral_section)
+        self.visit_search_radio.toggled.connect(self.toggle_search_section)
+        
+        visit_type_group.setLayout(visit_type_layout)
+        layout.addWidget(visit_type_group)
+        
+        # Referral Source Selector (NEW FEATURE)
+        self.referral_group = QGroupBox('🔗 Referral Source Selector')
+        referral_layout = QGridLayout()
+        referral_layout.setSpacing(10)
+        
+        referral_label = QLabel('Select referral sources (multi-select allowed):')
+        referral_layout.addWidget(referral_label, 0, 0, 1, 2)
+        
+        # Checkboxes in 2 columns
+        self.referral_facebook = QCheckBox('✅ Facebook')
+        self.referral_google = QCheckBox('✅ Google')
+        self.referral_twitter = QCheckBox('✅ Twitter (X)')
+        self.referral_telegram = QCheckBox('✅ Telegram')
+        self.referral_instagram = QCheckBox('✅ Instagram')
+        
+        # Set default checked
+        self.referral_facebook.setChecked(True)
+        self.referral_google.setChecked(True)
+        
+        # Add to grid (2 columns)
+        referral_layout.addWidget(self.referral_facebook, 1, 0)
+        referral_layout.addWidget(self.referral_google, 1, 1)
+        referral_layout.addWidget(self.referral_twitter, 2, 0)
+        referral_layout.addWidget(self.referral_telegram, 2, 1)
+        referral_layout.addWidget(self.referral_instagram, 3, 0)
+        
+        self.referral_group.setLayout(referral_layout)
+        self.referral_group.setVisible(False)  # Hidden by default
+        layout.addWidget(self.referral_group)
+        
+        # Search Settings (NEW FEATURE)
+        self.search_group = QGroupBox('🔎 Search Settings')
+        search_layout = QVBoxLayout()
+        search_layout.setSpacing(10)
+        
+        search_layout.addWidget(QLabel('Search Keyword:'))
+        self.search_keyword_input = QLineEdit()
+        self.search_keyword_input.setPlaceholderText('Enter keyword to search...')
+        search_layout.addWidget(self.search_keyword_input)
+        
+        self.search_group.setLayout(search_layout)
+        self.search_group.setVisible(False)  # Hidden by default
+        layout.addWidget(self.search_group)
+        
         # Traffic Settings
-        traffic_group = QGroupBox('Traffic Settings')
+        traffic_group = QGroupBox('📊 Traffic Settings')
         traffic_layout = QVBoxLayout()
+        traffic_layout.setSpacing(10)
         
         traffic_layout.addWidget(QLabel('Number of Visits:'))
         self.num_visits_input = QSpinBox()
@@ -1091,8 +1350,9 @@ class AppGUI(QMainWindow):
         layout.addWidget(traffic_group)
         
         # Platform Selection
-        platform_group = QGroupBox('Platform')
+        platform_group = QGroupBox('💻 Platform')
         platform_layout = QVBoxLayout()
+        platform_layout.setSpacing(10)
         
         self.platform_combo = QComboBox()
         self.platform_combo.addItems(['desktop', 'android'])
@@ -1105,14 +1365,24 @@ class AppGUI(QMainWindow):
         
         return widget
     
+    def toggle_referral_section(self, checked):
+        """Toggle visibility of referral source selector."""
+        self.referral_group.setVisible(checked)
+    
+    def toggle_search_section(self, checked):
+        """Toggle visibility of search settings."""
+        self.search_group.setVisible(checked)
+    
     def create_behavior_tab(self) -> QWidget:
         """Create behavior settings tab."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        layout.setSpacing(15)
         
         # Browser Settings
-        browser_group = QGroupBox('Browser Settings')
+        browser_group = QGroupBox('🌐 Browser Settings')
         browser_layout = QVBoxLayout()
+        browser_layout.setSpacing(10)
         
         # Note: Browser always runs in visible mode (headless=False)
         info_label = QLabel('ℹ️ Browser always runs in visible mode for monitoring')
@@ -1123,8 +1393,9 @@ class AppGUI(QMainWindow):
         layout.addWidget(browser_group)
         
         # Human Behavior
-        behavior_group = QGroupBox('Human Behavior')
+        behavior_group = QGroupBox('🧠 Human Behavior')
         behavior_layout = QVBoxLayout()
+        behavior_layout.setSpacing(10)
         
         behavior_layout.addWidget(QLabel('Scroll Depth % (30-100):'))
         self.scroll_depth_input = QSpinBox()
@@ -1132,26 +1403,74 @@ class AppGUI(QMainWindow):
         self.scroll_depth_input.setValue(70)
         behavior_layout.addWidget(self.scroll_depth_input)
         
-        self.enable_mouse_movement = QCheckBox('Enable Mouse Movement Simulation')
+        self.enable_mouse_movement = QCheckBox('🖱 Enable Mouse Movement Simulation')
         self.enable_mouse_movement.setChecked(True)
         behavior_layout.addWidget(self.enable_mouse_movement)
         
-        self.enable_idle_pauses = QCheckBox('Enable Idle Pauses')
+        self.enable_idle_pauses = QCheckBox('⏸ Enable Idle Pauses')
         self.enable_idle_pauses.setChecked(True)
         behavior_layout.addWidget(self.enable_idle_pauses)
         
         behavior_group.setLayout(behavior_layout)
         layout.addWidget(behavior_group)
         
-        # Consent Manager
-        consent_group = QGroupBox('Consent & Popup Handler')
-        consent_layout = QVBoxLayout()
+        # Interaction Settings (NEW FEATURE)
+        interaction_group = QGroupBox('🔗 Interaction Settings')
+        interaction_layout = QVBoxLayout()
+        interaction_layout.setSpacing(10)
         
-        self.enable_consent = QCheckBox('Auto-handle Cookie Banners')
+        self.enable_interaction = QCheckBox('✅ Enable Interaction (click links, explore pages)')
+        self.enable_interaction.setChecked(False)
+        self.enable_interaction.stateChanged.connect(self.toggle_interaction_settings)
+        interaction_layout.addWidget(self.enable_interaction)
+        
+        interaction_layout.addWidget(QLabel('⏱ Minimum Stay Time (minutes):'))
+        self.min_stay_time_input = QSpinBox()
+        self.min_stay_time_input.setRange(1, 60)
+        self.min_stay_time_input.setValue(3)
+        self.min_stay_time_input.setEnabled(False)
+        interaction_layout.addWidget(self.min_stay_time_input)
+        
+        interaction_layout.addWidget(QLabel('⏱ Maximum Stay Time (minutes):'))
+        self.max_stay_time_input = QSpinBox()
+        self.max_stay_time_input.setRange(1, 120)
+        self.max_stay_time_input.setValue(10)
+        self.max_stay_time_input.setEnabled(False)
+        interaction_layout.addWidget(self.max_stay_time_input)
+        
+        interaction_group.setLayout(interaction_layout)
+        layout.addWidget(interaction_group)
+        
+        # Page Visit Settings (NEW FEATURE)
+        page_visit_group = QGroupBox('📄 Page Visit Settings')
+        page_visit_layout = QVBoxLayout()
+        page_visit_layout.setSpacing(10)
+        
+        self.enable_extra_pages = QCheckBox('✅ Enable Extra Pages (navigate to other pages)')
+        self.enable_extra_pages.setChecked(False)
+        self.enable_extra_pages.stateChanged.connect(self.toggle_page_visit_settings)
+        page_visit_layout.addWidget(self.enable_extra_pages)
+        
+        page_visit_layout.addWidget(QLabel('🔢 Maximum Pages:'))
+        self.max_pages_input = QSpinBox()
+        self.max_pages_input.setRange(1, 50)
+        self.max_pages_input.setValue(5)
+        self.max_pages_input.setEnabled(False)
+        page_visit_layout.addWidget(self.max_pages_input)
+        
+        page_visit_group.setLayout(page_visit_layout)
+        layout.addWidget(page_visit_group)
+        
+        # Consent Manager
+        consent_group = QGroupBox('🍪 Consent & Popup Handler')
+        consent_layout = QVBoxLayout()
+        consent_layout.setSpacing(10)
+        
+        self.enable_consent = QCheckBox('✅ Auto-handle Cookie Banners')
         self.enable_consent.setChecked(True)
         consent_layout.addWidget(self.enable_consent)
         
-        self.enable_popups = QCheckBox('Auto-handle Popups')
+        self.enable_popups = QCheckBox('✅ Auto-handle Popups')
         self.enable_popups.setChecked(True)
         consent_layout.addWidget(self.enable_popups)
         
@@ -1162,16 +1481,31 @@ class AppGUI(QMainWindow):
         
         return widget
     
+    def toggle_interaction_settings(self, state):
+        """Enable/disable interaction time inputs based on checkbox state."""
+        enabled = state == Qt.Checked
+        self.min_stay_time_input.setEnabled(enabled)
+        self.max_stay_time_input.setEnabled(enabled)
+    
+    def toggle_page_visit_settings(self, state):
+        """Enable/disable page visit inputs based on checkbox state."""
+        enabled = state == Qt.Checked
+        self.max_pages_input.setEnabled(enabled)
+        
+        return widget
+    
     def create_proxy_tab(self) -> QWidget:
         """Create proxy settings tab."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        layout.setSpacing(15)
         
         # Enable Proxy
-        proxy_enable_group = QGroupBox('Proxy Configuration')
+        proxy_enable_group = QGroupBox('🔧 Proxy Configuration')
         proxy_enable_layout = QVBoxLayout()
+        proxy_enable_layout.setSpacing(10)
         
-        self.proxy_enabled_check = QCheckBox('Enable Proxy')
+        self.proxy_enabled_check = QCheckBox('✅ Enable Proxy')
         self.proxy_enabled_check.setChecked(False)
         self.proxy_enabled_check.stateChanged.connect(self.toggle_proxy_inputs)
         proxy_enable_layout.addWidget(self.proxy_enabled_check)
@@ -1180,8 +1514,9 @@ class AppGUI(QMainWindow):
         layout.addWidget(proxy_enable_group)
         
         # Proxy Type
-        proxy_type_group = QGroupBox('Proxy Type')
+        proxy_type_group = QGroupBox('⚙️ Proxy Type')
         proxy_type_layout = QVBoxLayout()
+        proxy_type_layout.setSpacing(10)
         
         self.proxy_type_combo = QComboBox()
         self.proxy_type_combo.addItems(['HTTP', 'HTTPS', 'SOCKS5'])
@@ -1192,8 +1527,9 @@ class AppGUI(QMainWindow):
         layout.addWidget(proxy_type_group)
         
         # Proxy List
-        proxy_list_group = QGroupBox('Proxy List')
+        proxy_list_group = QGroupBox('📋 Proxy List')
         proxy_list_layout = QVBoxLayout()
+        proxy_list_layout.setSpacing(10)
         
         proxy_list_layout.addWidget(QLabel('Enter proxies (one per line):'))
         proxy_list_layout.addWidget(QLabel('Formats: ip:port or user:pass@ip:port'))
@@ -1208,10 +1544,11 @@ class AppGUI(QMainWindow):
         layout.addWidget(proxy_list_group)
         
         # Rotation Settings
-        rotation_group = QGroupBox('Rotation Settings')
+        rotation_group = QGroupBox('🔄 Rotation Settings')
         rotation_layout = QVBoxLayout()
+        rotation_layout.setSpacing(10)
         
-        self.rotate_proxy_check = QCheckBox('Rotate proxy per session')
+        self.rotate_proxy_check = QCheckBox('✅ Rotate proxy per session')
         self.rotate_proxy_check.setChecked(True)
         self.rotate_proxy_check.setEnabled(False)
         rotation_layout.addWidget(self.rotate_proxy_check)
@@ -1234,10 +1571,12 @@ class AppGUI(QMainWindow):
         """Create sponsored content tab."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        layout.setSpacing(15)
         
         # Safety Rules
-        safety_group = QGroupBox('Safety Rules')
+        safety_group = QGroupBox('🛡️ Safety Rules')
         safety_layout = QVBoxLayout()
+        safety_layout.setSpacing(10)
         
         safety_layout.addWidget(QLabel('⚠️ Ad Network Blocklist:'))
         
@@ -1251,17 +1590,18 @@ class AppGUI(QMainWindow):
         layout.addWidget(safety_group)
         
         # Detection Rules
-        detection_group = QGroupBox('Sponsored Element Detection')
+        detection_group = QGroupBox('🔍 Sponsored Element Detection')
         detection_layout = QVBoxLayout()
+        detection_layout.setSpacing(10)
         
-        detection_layout.addWidget(QLabel('Safe Selectors:'))
+        detection_layout.addWidget(QLabel('✅ Safe Selectors:'))
         self.selectors_display = QTextEdit()
         self.selectors_display.setReadOnly(True)
         self.selectors_display.setMaximumHeight(150)
         self.selectors_display.setText('\n'.join(SPONSORED_SELECTORS))
         detection_layout.addWidget(self.selectors_display)
         
-        detection_layout.addWidget(QLabel('Confidence Threshold (0.0-1.0):'))
+        detection_layout.addWidget(QLabel('📊 Confidence Threshold (0.0-1.0):'))
         self.confidence_input = QDoubleSpinBox()
         self.confidence_input.setRange(0.0, 1.0)
         self.confidence_input.setSingleStep(0.1)
@@ -1296,15 +1636,15 @@ class AppGUI(QMainWindow):
         self.action_toolbox.setDragEnabled(True)
         self.action_toolbox.setMaximumWidth(200)
         
-        # Add action items
+        # Add action items with emojis
         actions = [
-            'Open Page',
-            'Navigate',
-            'Wait',
-            'Scroll',
-            'Click Element',
-            'Input Text',
-            'Close Page'
+            '➕ New Page',
+            '🌐 Navigate',
+            '⏱ Wait',
+            '📜 Scroll',
+            '🖱 Click Element',
+            '⌨ Input Text',
+            '❌ Close Page'
         ]
         for action in actions:
             item = QListWidgetItem(action)
@@ -1329,15 +1669,15 @@ class AppGUI(QMainWindow):
         # Workflow buttons
         workflow_btn_layout = QHBoxLayout()
         
-        add_step_btn = QPushButton('Add Step')
+        add_step_btn = QPushButton('➕ Add Step')
         add_step_btn.clicked.connect(self.add_workflow_step)
         workflow_btn_layout.addWidget(add_step_btn)
         
-        remove_step_btn = QPushButton('Remove Step')
+        remove_step_btn = QPushButton('🗑 Remove Step')
         remove_step_btn.clicked.connect(self.remove_workflow_step)
         workflow_btn_layout.addWidget(remove_step_btn)
         
-        clear_workflow_btn = QPushButton('Clear All')
+        clear_workflow_btn = QPushButton('🧹 Clear All')
         clear_workflow_btn.clicked.connect(self.clear_workflow)
         workflow_btn_layout.addWidget(clear_workflow_btn)
         
@@ -1391,15 +1731,15 @@ class AppGUI(QMainWindow):
         # Script buttons
         btn_layout = QHBoxLayout()
         
-        save_btn = QPushButton('Save Script')
+        save_btn = QPushButton('💾 Save Script')
         save_btn.clicked.connect(self.save_script)
         btn_layout.addWidget(save_btn)
         
-        load_btn = QPushButton('Load Script')
+        load_btn = QPushButton('📂 Load Script')
         load_btn.clicked.connect(self.load_script)
         btn_layout.addWidget(load_btn)
         
-        sync_btn = QPushButton('Sync Visual ↔ JSON')
+        sync_btn = QPushButton('🔄 Sync Visual ↔ JSON')
         sync_btn.clicked.connect(self.force_sync)
         btn_layout.addWidget(sync_btn)
         
@@ -1415,43 +1755,44 @@ class AppGUI(QMainWindow):
         """Create right control panel."""
         panel = QWidget()
         layout = QVBoxLayout(panel)
+        layout.setSpacing(15)
         
         # Title
-        title = QLabel('Control & Logs')
+        title = QLabel('📜 Control & Logs')
         title.setFont(QFont('Arial', 16, QFont.Bold))
         layout.addWidget(title)
         
         # Control buttons
         control_layout = QHBoxLayout()
         
-        self.start_btn = QPushButton('Start Automation')
+        self.start_btn = QPushButton('▶️ Start Automation')
         self.start_btn.clicked.connect(self.start_automation)
-        self.start_btn.setStyleSheet('background-color: #4CAF50; color: white; padding: 10px;')
+        self.start_btn.setStyleSheet('background-color: #4CAF50; color: white; padding: 10px; font-weight: bold;')
         control_layout.addWidget(self.start_btn)
         
-        self.stop_btn = QPushButton('Stop')
+        self.stop_btn = QPushButton('⛔ Stop')
         self.stop_btn.clicked.connect(self.stop_automation)
         self.stop_btn.setEnabled(False)
-        self.stop_btn.setStyleSheet('background-color: #f44336; color: white; padding: 10px;')
+        self.stop_btn.setStyleSheet('background-color: #f44336; color: white; padding: 10px; font-weight: bold;')
         control_layout.addWidget(self.stop_btn)
         
         layout.addLayout(control_layout)
         
         # Status
-        self.status_label = QLabel('Status: Ready')
-        self.status_label.setStyleSheet('padding: 5px; background-color: #e0e0e0;')
+        self.status_label = QLabel('📊 Status: Ready')
+        self.status_label.setStyleSheet('padding: 10px; background-color: #e0e0e0; border-radius: 5px; font-weight: bold;')
         layout.addWidget(self.status_label)
         
         # Logs
-        layout.addWidget(QLabel('Live Logs:'))
+        layout.addWidget(QLabel('📋 Live Logs:'))
         
         self.log_display = QTextEdit()
         self.log_display.setReadOnly(True)
-        self.log_display.setStyleSheet('background-color: #1e1e1e; color: #00ff00; font-family: monospace;')
+        self.log_display.setStyleSheet('background-color: #1e1e1e; color: white; font-family: monospace;')
         layout.addWidget(self.log_display)
         
         # Clear logs button
-        clear_btn = QPushButton('Clear Logs')
+        clear_btn = QPushButton('🧹 Clear Logs')
         clear_btn.clicked.connect(self.clear_logs)
         layout.addWidget(clear_btn)
         
@@ -1466,6 +1807,38 @@ class AppGUI(QMainWindow):
                 QMessageBox.warning(self, 'Input Error', 'Please enter a target URL')
                 return
             
+            # Get visit type
+            visit_type = 'direct'
+            if self.visit_referral_radio.isChecked():
+                visit_type = 'referral'
+            elif self.visit_search_radio.isChecked():
+                visit_type = 'search'
+            
+            # Validate search keyword if search type is selected
+            if visit_type == 'search':
+                keyword = self.search_keyword_input.text().strip()
+                if not keyword:
+                    QMessageBox.warning(self, 'Input Error', 'Please enter a search keyword for Search Visit type')
+                    return
+            
+            # Collect referral sources if referral type is selected
+            referral_sources = []
+            if visit_type == 'referral':
+                if self.referral_facebook.isChecked():
+                    referral_sources.append('facebook')
+                if self.referral_google.isChecked():
+                    referral_sources.append('google')
+                if self.referral_twitter.isChecked():
+                    referral_sources.append('twitter')
+                if self.referral_telegram.isChecked():
+                    referral_sources.append('telegram')
+                if self.referral_instagram.isChecked():
+                    referral_sources.append('instagram')
+                
+                if not referral_sources:
+                    QMessageBox.warning(self, 'Input Error', 'Please select at least one referral source')
+                    return
+            
             # Collect configuration
             config = {
                 'url': url,
@@ -1478,13 +1851,21 @@ class AppGUI(QMainWindow):
                 'proxy_type': self.proxy_type_combo.currentText(),
                 'proxy_list': self.proxy_list_input.toPlainText(),
                 'rotate_proxy': self.rotate_proxy_check.isChecked(),
+                'visit_type': visit_type,
+                'search_keyword': self.search_keyword_input.text().strip() if visit_type == 'search' else '',
+                'referral_sources': referral_sources,
+                'enable_interaction': self.enable_interaction.isChecked(),
+                'min_stay_time': self.min_stay_time_input.value(),
+                'max_stay_time': self.max_stay_time_input.value(),
+                'enable_extra_pages': self.enable_extra_pages.isChecked(),
+                'max_pages': self.max_pages_input.value(),
             }
             
             # Update UI
             self.start_btn.setEnabled(False)
             self.stop_btn.setEnabled(True)
-            self.status_label.setText('Status: Running...')
-            self.status_label.setStyleSheet('padding: 5px; background-color: #4CAF50; color: white;')
+            self.status_label.setText('📊 Status: Running...')
+            self.status_label.setStyleSheet('padding: 10px; background-color: #4CAF50; color: white; border-radius: 5px; font-weight: bold;')
             
             # Create and start worker thread
             self.automation_thread = QThread()
@@ -1524,8 +1905,8 @@ class AppGUI(QMainWindow):
         """Handle automation completion."""
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        self.status_label.setText('Status: Ready')
-        self.status_label.setStyleSheet('padding: 5px; background-color: #e0e0e0;')
+        self.status_label.setText('📊 Status: Ready')
+        self.status_label.setStyleSheet('padding: 10px; background-color: #e0e0e0; border-radius: 5px; font-weight: bold;')
         
         if self.automation_thread:
             self.automation_thread.quit()
@@ -1535,8 +1916,19 @@ class AppGUI(QMainWindow):
         self.automation_worker = None
     
     def append_log(self, log_entry: str):
-        """Append log to display."""
-        self.log_display.append(log_entry)
+        """Append log to display with color coding."""
+        # Color code based on log level
+        if '[ERROR]' in log_entry:
+            color = '#ff6b6b'  # Red
+        elif '[WARNING]' in log_entry:
+            color = '#ffd93d'  # Yellow
+        else:
+            color = 'white'  # White for INFO
+        
+        # Add colored HTML
+        colored_log = f'<span style="color: {color};">{log_entry}</span>'
+        self.log_display.append(colored_log)
+        
         # Auto-scroll to bottom
         scrollbar = self.log_display.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
