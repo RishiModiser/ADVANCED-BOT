@@ -36,7 +36,7 @@ async def test_playwright_initialization_in_retry():
     
     try:
         # This is the key fix - ensure playwright is initialized
-        if not playwright:
+        if not playwright:  # This matches the actual code: if not self.playwright:
             print("   - playwright is None, initializing...")
             # In the real code, this would be: await async_playwright().start()
             # Here we simulate it
