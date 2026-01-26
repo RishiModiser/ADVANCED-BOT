@@ -123,8 +123,9 @@ USER_AGENTS = {
 
 # Referrer URLs for different sources
 REFERRER_URLS = {
-    'facebook': 'https://lm.facebook.com/l.php',  # Facebook referral URL pattern
-    'google': 'https://www.google.com/url',  # Google redirect URL
+    # Using base referral URLs - actual target URLs will be appended in the referral logic
+    'facebook': 'https://lm.facebook.com/l.php',  # Facebook link manager (referral pattern)
+    'google': 'https://www.google.com/url',  # Google redirect URL (query params added at runtime)
     'twitter': 'https://t.co',  # Twitter link shortener (referral pattern)
     'telegram': 'https://t.me/s',  # Telegram share URL
     'instagram': 'https://l.instagram.com',  # Instagram link redirect
@@ -1101,8 +1102,11 @@ class ProxyManager:
         """Get proxy configuration for Playwright.
         
         NOTE: Proxy rotation has been REMOVED as per requirements.
-        Each browser gets ONE proxy and sticks with it for the entire session.
-        Proxy is selected sequentially from the list (no rotation during session).
+        Each call returns the next proxy in sequence. Each browser context
+        gets ONE proxy and uses it for the entire session (no mid-session rotation).
+        
+        This sequential selection ensures different browsers use different proxies,
+        but each browser sticks with its assigned proxy.
         """
         if not self.proxy_enabled or not self.proxy_list:
             return None
@@ -1115,8 +1119,8 @@ class ProxyManager:
             self.failed_proxies.clear()
             available_proxies = self.proxy_list
         
-        # Select next proxy from list (no rotation - just sequential selection)
-        # Each browser will get ONE proxy and keep it for the entire session
+        # Select next proxy sequentially (different browser gets different proxy)
+        # But each browser keeps its proxy for the entire session
         proxy = available_proxies[self.current_proxy_index % len(available_proxies)]
         self.current_proxy_index += 1
         
@@ -1609,9 +1613,15 @@ class BrowserManager:
                     geo_manager = ProxyGeolocation()
                     proxy_location = await geo_manager.fetch_location(proxy_config)
                     
-                    server = proxy_config.get('server', 'unknown')
-                    self.log_manager.log(f'✓ Proxy selected: {server}')
-                    self.log_manager.log(f'✓ Proxy Location: {proxy_location["country"]} ({proxy_location.get("countryCode", "?")}), IP: {proxy_location["ip"]}')
+                    # Validate proxy_location has required keys
+                    if proxy_location and 'country' in proxy_location and 'ip' in proxy_location:
+                        server = proxy_config.get('server', 'unknown')
+                        self.log_manager.log(f'✓ Proxy selected: {server}')
+                        self.log_manager.log(f'✓ Proxy Location: {proxy_location["country"]} ({proxy_location.get("countryCode", "?")}), IP: {proxy_location["ip"]}')
+                    else:
+                        # Invalid proxy location data
+                        self.log_manager.log('⚠ Proxy location data incomplete, using without geo-matching', 'WARNING')
+                        proxy_location = None
             
             # Generate fingerprint AFTER getting proxy location
             # Pass proxy_location so fingerprint matches proxy country
@@ -2785,7 +2795,7 @@ class AppGUI(QMainWindow):
         self.num_visits_input = QSpinBox()
         self.num_visits_input.setRange(1, 10000)
         self.num_visits_input.setValue(10)
-        self.num_visits_input.setToolTip('TOTAL number of tabs to open across ALL browsers (will be distributed)')
+        self.num_visits_input.setToolTip('TOTAL tabs across ALL browsers (distributed evenly). Example: 10 tabs, 3 browsers = 4, 3, 3 tabs per browser')
         traffic_layout.addWidget(self.num_visits_input)
         
         traffic_layout.addWidget(QLabel('Threads (concurrent browsers):'))
