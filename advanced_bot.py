@@ -123,11 +123,16 @@ USER_AGENTS = {
 
 # Referrer URLs for different sources
 REFERRER_URLS = {
-    'facebook': 'https://facebook.com',
-    'google': 'https://google.com',
-    'twitter': 'https://twitter.com',
-    'telegram': 'https://t.me',
-    'instagram': 'https://instagram.com'
+    # Using base referral URLs - actual target URLs will be appended in the referral logic
+    'facebook': 'https://lm.facebook.com/l.php',  # Facebook link manager (referral pattern)
+    'google': 'https://www.google.com/url',  # Google redirect URL (query params added at runtime)
+    'twitter': 'https://t.co',  # Twitter link shortener (referral pattern)
+    'telegram': 'https://t.me/s',  # Telegram share URL
+    'instagram': 'https://l.instagram.com',  # Instagram link redirect
+    'reddit': 'https://out.reddit.com',  # Reddit outbound link tracker
+    'linkedin': 'https://www.linkedin.com/redir',  # LinkedIn redirect
+    'pinterest': 'https://www.pinterest.com/pin/create/button',  # Pinterest sharing
+    'youtube': 'https://www.youtube.com/redirect'  # YouTube redirect
 }
 
 # Link filtering - URLs to skip when clicking content links
@@ -258,8 +263,15 @@ class FingerprintManager:
         self.locale = None
         self.hardware_concurrency = None
     
-    def generate_fingerprint(self) -> Dict[str, Any]:
-        """Generate a realistic browser fingerprint."""
+    def generate_fingerprint(self, proxy_location: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Generate a realistic browser fingerprint.
+        
+        If proxy_location is provided, generates fingerprint matching proxy's country.
+        This ensures browser location matches proxy location (USA proxy → USA fingerprint).
+        
+        Args:
+            proxy_location: Optional dict with 'country' and 'timezone' from proxy geolocation
+        """
         self.user_agent = random.choice(USER_AGENTS.get(self.platform, USER_AGENTS['desktop']))
         
         if self.platform == 'android':
@@ -273,12 +285,28 @@ class FingerprintManager:
                 'height': random.choice([720, 768, 900, 1080])
             }
         
-        timezones = ['America/New_York', 'America/Los_Angeles', 'Europe/London', 
-                     'Europe/Paris', 'Asia/Tokyo', 'Australia/Sydney']
-        self.timezone = random.choice(timezones)
-        
-        locales = ['en-US', 'en-GB', 'de-DE', 'fr-FR', 'ja-JP', 'es-ES']
-        self.locale = random.choice(locales)
+        # CRITICAL FIX: Match timezone and locale to proxy location if available
+        if proxy_location:
+            # Use timezone from proxy location if available
+            proxy_timezone = proxy_location.get('timezone')
+            if proxy_timezone:
+                self.timezone = proxy_timezone
+            else:
+                # Fallback: Map country to common timezone
+                country_code = proxy_location.get('countryCode', '')
+                self.timezone = self._get_timezone_for_country(country_code)
+            
+            # Set locale based on country
+            country_code = proxy_location.get('countryCode', '')
+            self.locale = self._get_locale_for_country(country_code)
+        else:
+            # No proxy - use random timezone/locale
+            timezones = ['America/New_York', 'America/Los_Angeles', 'Europe/London', 
+                         'Europe/Paris', 'Asia/Tokyo', 'Australia/Sydney']
+            self.timezone = random.choice(timezones)
+            
+            locales = ['en-US', 'en-GB', 'de-DE', 'fr-FR', 'ja-JP', 'es-ES']
+            self.locale = random.choice(locales)
         
         self.hardware_concurrency = random.choice([4, 8, 12, 16])
         
@@ -289,6 +317,67 @@ class FingerprintManager:
             'locale': self.locale,
             'hardware_concurrency': self.hardware_concurrency
         }
+    
+    def _get_timezone_for_country(self, country_code: str) -> str:
+        """Map country code to common timezone."""
+        timezone_map = {
+            'US': 'America/New_York',
+            'CA': 'America/Toronto',
+            'GB': 'Europe/London',
+            'DE': 'Europe/Berlin',
+            'FR': 'Europe/Paris',
+            'IT': 'Europe/Rome',
+            'ES': 'Europe/Madrid',
+            'NL': 'Europe/Amsterdam',
+            'SE': 'Europe/Stockholm',
+            'NO': 'Europe/Oslo',
+            'DK': 'Europe/Copenhagen',
+            'FI': 'Europe/Helsinki',
+            'PL': 'Europe/Warsaw',
+            'RU': 'Europe/Moscow',
+            'JP': 'Asia/Tokyo',
+            'CN': 'Asia/Shanghai',
+            'IN': 'Asia/Kolkata',
+            'SG': 'Asia/Singapore',
+            'AU': 'Australia/Sydney',
+            'NZ': 'Pacific/Auckland',
+            'BR': 'America/Sao_Paulo',
+            'MX': 'America/Mexico_City',
+            'AR': 'America/Argentina/Buenos_Aires',
+        }
+        return timezone_map.get(country_code, 'America/New_York')  # Default to US EST
+    
+    def _get_locale_for_country(self, country_code: str) -> str:
+        """Map country code to appropriate locale."""
+        locale_map = {
+            'US': 'en-US',
+            'CA': 'en-CA',
+            'GB': 'en-GB',
+            'AU': 'en-AU',
+            'NZ': 'en-NZ',
+            'DE': 'de-DE',
+            'AT': 'de-AT',
+            'CH': 'de-CH',
+            'FR': 'fr-FR',
+            'BE': 'fr-BE',
+            'IT': 'it-IT',
+            'ES': 'es-ES',
+            'MX': 'es-MX',
+            'AR': 'es-AR',
+            'NL': 'nl-NL',
+            'SE': 'sv-SE',
+            'NO': 'no-NO',
+            'DK': 'da-DK',
+            'FI': 'fi-FI',
+            'PL': 'pl-PL',
+            'RU': 'ru-RU',
+            'JP': 'ja-JP',
+            'CN': 'zh-CN',
+            'IN': 'en-IN',
+            'SG': 'en-SG',
+            'BR': 'pt-BR',
+        }
+        return locale_map.get(country_code, 'en-US')  # Default to US English
 
 
 # ============================================================================
@@ -1010,7 +1099,15 @@ class ProxyManager:
         return proxies
     
     def get_proxy_config(self) -> Optional[Dict[str, str]]:
-        """Get proxy configuration for Playwright."""
+        """Get proxy configuration for Playwright.
+        
+        NOTE: Proxy rotation has been REMOVED as per requirements.
+        Each call returns the next proxy in sequence. Each browser context
+        gets ONE proxy and uses it for the entire session (no mid-session rotation).
+        
+        This sequential selection ensures different browsers use different proxies,
+        but each browser sticks with its assigned proxy.
+        """
         if not self.proxy_enabled or not self.proxy_list:
             return None
         
@@ -1022,13 +1119,10 @@ class ProxyManager:
             self.failed_proxies.clear()
             available_proxies = self.proxy_list
         
-        if self.rotate_proxy:
-            # Rotate through proxies
-            proxy = available_proxies[self.current_proxy_index % len(available_proxies)]
-            self.current_proxy_index += 1
-        else:
-            # Use first available proxy
-            proxy = available_proxies[0]
+        # Select next proxy sequentially (different browser gets different proxy)
+        # But each browser keeps its proxy for the entire session
+        proxy = available_proxies[self.current_proxy_index % len(available_proxies)]
+        self.current_proxy_index += 1
         
         return proxy
     
@@ -1119,6 +1213,7 @@ class ProxyGeolocation:
                                     location_info = {
                                         'ip': ip,
                                         'country': data.get('country', 'Unknown'),
+                                        'countryCode': data.get('countryCode', 'US'),  # 2-letter country code
                                         'city': data.get('city', 'Unknown'),
                                         'timezone': data.get('timezone', 'UTC')
                                     }
@@ -1129,9 +1224,11 @@ class ProxyGeolocation:
                     logging.warning(f'Failed to fetch real geolocation, using fallback: {api_error}')
             
             # Fallback to mock data if API fails or aiohttp not available
+            country = self._guess_country_from_ip(ip)
             location_info = {
                 'ip': ip,
-                'country': self._guess_country_from_ip(ip),
+                'country': country,
+                'countryCode': self._get_country_code(country),
                 'city': 'Unknown',
                 'timezone': 'UTC'
             }
@@ -1145,6 +1242,7 @@ class ProxyGeolocation:
             return {
                 'ip': 'error',
                 'country': 'Unknown',
+                'countryCode': 'US',
                 'city': 'Unknown',
                 'timezone': 'UTC'
             }
@@ -1178,6 +1276,19 @@ class ProxyGeolocation:
                 return 'Other'
         except:
             return 'Unknown'
+    
+    def _get_country_code(self, country: str) -> str:
+        """Map country name to 2-letter country code."""
+        country_codes = {
+            'USA': 'US',
+            'United States': 'US',
+            'Europe': 'GB',  # Default to UK for generic Europe
+            'Asia': 'JP',  # Default to Japan for generic Asia
+            'Local Network': 'US',
+            'Unknown': 'US',
+            'Other': 'US'
+        }
+        return country_codes.get(country, 'US')
 
 
 # ============================================================================
@@ -1479,7 +1590,11 @@ class BrowserManager:
             return False
     
     async def create_context(self, platform: str = 'desktop', use_proxy: bool = True) -> Optional[BrowserContext]:
-        """Create a new browser context with fingerprinting and optional proxy."""
+        """Create a new browser context with fingerprinting and optional proxy.
+        
+        CRITICAL: Fetches proxy location FIRST, then generates fingerprint matching proxy country.
+        This ensures browser location matches proxy location (USA proxy → USA fingerprint).
+        """
         try:
             if not self.browser:
                 success = await self.initialize()
@@ -1487,13 +1602,38 @@ class BrowserManager:
                     self.log_manager.log('Cannot create context: browser initialization failed', 'ERROR')
                     return None
             
-            # Generate fingerprint
+            # CRITICAL FIX: Fetch proxy BEFORE generating fingerprint
+            # This allows fingerprint to match proxy location
+            proxy_config = None
+            proxy_location = None
+            if use_proxy:
+                proxy_config = self.proxy_manager.get_proxy_config()
+                if proxy_config:
+                    # Fetch proxy geolocation FIRST
+                    geo_manager = ProxyGeolocation()
+                    proxy_location = await geo_manager.fetch_location(proxy_config)
+                    
+                    # Validate proxy_location has required keys
+                    if proxy_location and 'country' in proxy_location and 'ip' in proxy_location:
+                        server = proxy_config.get('server', 'unknown')
+                        self.log_manager.log(f'✓ Proxy selected: {server}')
+                        self.log_manager.log(f'✓ Proxy Location: {proxy_location["country"]} ({proxy_location.get("countryCode", "?")}), IP: {proxy_location["ip"]}')
+                    else:
+                        # Invalid proxy location data
+                        self.log_manager.log('⚠ Proxy location data incomplete, using without geo-matching', 'WARNING')
+                        proxy_location = None
+            
+            # Generate fingerprint AFTER getting proxy location
+            # Pass proxy_location so fingerprint matches proxy country
             self.fingerprint_manager.platform = platform
-            fingerprint = self.fingerprint_manager.generate_fingerprint()
+            fingerprint = self.fingerprint_manager.generate_fingerprint(proxy_location)
             
             self.log_manager.log(f'━━━ Creating Browser Context ━━━')
             self.log_manager.log(f'Platform: {platform}')
             self.log_manager.log(f'User Agent: {fingerprint["user_agent"][:60]}...')
+            self.log_manager.log(f'Timezone: {fingerprint["timezone"]}, Locale: {fingerprint["locale"]}')
+            if proxy_location:
+                self.log_manager.log(f'✓ Fingerprint MATCHED to proxy location: {proxy_location["country"]}')
             
             context_options = {
                 'user_agent': fingerprint['user_agent'],
@@ -1502,22 +1642,11 @@ class BrowserManager:
                 'timezone_id': fingerprint['timezone'],
             }
             
-            # Add proxy if enabled and configured
-            proxy_config = None
-            proxy_location = None
-            if use_proxy:
-                proxy_config = self.proxy_manager.get_proxy_config()
-                if proxy_config:
-                    # Fetch proxy geolocation
-                    geo_manager = ProxyGeolocation()
-                    proxy_location = await geo_manager.fetch_location(proxy_config)
-                    
-                    context_options['proxy'] = proxy_config
-                    server = proxy_config.get('server', 'unknown')
-                    self.log_manager.log(f'✓ Using proxy: {server}')
-                    self.log_manager.log(f'✓ Proxy Location: {proxy_location["country"]}, IP: {proxy_location["ip"]}')
-                else:
-                    self.log_manager.log('No proxy configured, using direct connection')
+            # Add proxy if configured
+            if proxy_config:
+                context_options['proxy'] = proxy_config
+            else:
+                self.log_manager.log('No proxy configured, using direct connection')
             
             # Try to create context with proxy
             try:
@@ -1618,18 +1747,23 @@ class AutomationWorker(QObject):
         self.emit_log('Stopping automation...')
     
     async def handle_referral_visit(self, page: Page, target_url: str, referral_sources: List[str]):
-        """Handle referral visit - navigate from referrer to target."""
+        """Handle referral visit - simulate traffic from social media referral URLs.
+        
+        Creates realistic referral patterns using platform-specific referral URLs
+        (e.g., Facebook's katana/lm subdomain, Twitter's t.co, etc.)
+        """
         # Randomly select one referral source
         referrer = random.choice(referral_sources)
         
-        # Get referrer URL from constants
-        referrer_url = REFERRER_URLS.get(referrer, 'https://google.com')
+        # Get referrer URL from constants (now uses referral-style URLs)
+        referrer_url = REFERRER_URLS.get(referrer, 'https://www.google.com/url')
         
         self.emit_log(f'[INFO] Referral source selected: {referrer.capitalize()}')
-        self.emit_log(f'Opening referrer: {referrer_url}')
+        self.emit_log(f'Using referral URL pattern: {referrer_url}')
         
         try:
-            # Navigate to referrer
+            # First, briefly visit the referrer page to establish referrer chain
+            self.emit_log(f'Opening referrer: {referrer_url}')
             await page.goto(referrer_url, wait_until='domcontentloaded', timeout=30000)
             await asyncio.sleep(random.uniform(2, 4))
             
@@ -1637,9 +1771,10 @@ class AutomationWorker(QObject):
             await HumanBehavior.scroll_page(page, random.randint(20, 40))
             await asyncio.sleep(random.uniform(1, 3))
             
-            # Navigate to target URL (simulate typing URL or clicking)
-            self.emit_log(f'Navigating to target from {referrer.capitalize()}...')
-            await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
+            # Navigate to target URL with referer header set
+            # This simulates clicking a link from the referral source
+            self.emit_log(f'Navigating to target from {referrer.capitalize()} referral...')
+            await page.goto(target_url, wait_until='domcontentloaded', timeout=30000, referer=referrer_url)
             
         except Exception as e:
             self.emit_log(f'Error during referral visit: {e}', 'ERROR')
@@ -2161,10 +2296,10 @@ class AutomationWorker(QObject):
         try:
             # Get configuration
             url_list = self.config.get('url_list', [])
-            num_tabs = self.config.get('num_visits', 1)  # Now represents number of tabs per browser
+            total_tabs = self.config.get('num_visits', 1)  # TOTAL tabs across all browsers
             min_time_spend = self.config.get('min_time_spend', 120)  # 2 minutes default
             max_time_spend = self.config.get('max_time_spend', 240)  # 4 minutes default
-            threads = self.config.get('threads', 1)  # Number of concurrent browsers
+            num_browsers = self.config.get('threads', 1)  # Number of concurrent browser windows
             total_threads_limit = self.config.get('total_threads', 0)
             platforms = self.config.get('platforms', ['desktop'])
             content_ratio = self.config.get('content_ratio', 85) / 100
@@ -2181,7 +2316,18 @@ class AutomationWorker(QObject):
             enable_text_highlight = self.config.get('enable_text_highlight', False)
             enable_ad_interaction = self.config.get('enable_ad_interaction', False)
             
-            self.emit_log(f'Configuration: {len(url_list)} URLs, {num_tabs} tabs per browser, {threads} concurrent browsers')
+            # CRITICAL FIX: Distribute tabs across browsers
+            # If total_tabs=2 and num_browsers=2, each browser gets 1 tab (total 2 tabs)
+            # If total_tabs=10 and num_browsers=3, browsers get 4, 3, 3 tabs (total 10 tabs)
+            # If total_tabs=1 and num_browsers=5, only 1 browser is used with 1 tab
+            
+            # Only create as many browsers as we have tabs
+            actual_browsers = min(num_browsers, total_tabs)
+            tabs_per_browser = total_tabs // actual_browsers
+            remaining_tabs = total_tabs % actual_browsers
+            
+            self.emit_log(f'Configuration: {len(url_list)} URLs, {total_tabs} TOTAL tabs, {num_browsers} browser windows requested')
+            self.emit_log(f'Will use {actual_browsers} browsers (distributing {total_tabs} tabs)')
             self.emit_log(f'Time per tab: {min_time_spend}-{max_time_spend} seconds with human scrolling')
             if enable_text_highlight:
                 self.emit_log('✓ Text highlighting enabled')
@@ -2196,8 +2342,7 @@ class AutomationWorker(QObject):
                 proxy_count = proxy_manager.get_proxy_count()
                 if proxy_count > 0:
                     self.emit_log(f'✓ Proxy configuration loaded: {proxy_count} proxies available')
-                    if proxy_manager.rotate_proxy:
-                        self.emit_log('✓ Proxy rotation enabled')
+                    # NOTE: Proxy rotation removed - each browser uses ONE fixed proxy
                 else:
                     self.emit_log('⚠ Proxy enabled but no proxies loaded', 'WARNING')
             else:
@@ -2225,26 +2370,33 @@ class AutomationWorker(QObject):
             # Track completed browsers
             total_browsers_completed = 0
             
-            self.emit_log(f'Starting concurrent execution: {threads} browsers at a time, {num_tabs} tabs per browser')
-            
             # Determine how many browser iterations to run
+            # Use the ACTUAL number of browsers needed (not more than tabs available)
             # If total_threads_limit is set, it limits the total number of browser instances
-            num_browser_iterations = threads if total_threads_limit == 0 else min(threads, total_threads_limit)
+            if total_threads_limit > 0:
+                num_browser_iterations = min(actual_browsers, total_threads_limit)
+            else:
+                num_browser_iterations = actual_browsers
+            
+            self.emit_log(f'Starting concurrent execution: {num_browser_iterations} browser windows')
             
             # Execute browsers concurrently
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             self.emit_log(f'Starting execution: {num_browser_iterations} browsers running simultaneously')
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             
-            # Create tasks for concurrent browser execution
+            # Create tasks for concurrent browser execution with distributed tabs
             tasks = []
             for i in range(num_browser_iterations):
                 if not self.running:
                     break
                 
                 browser_num = i + 1
+                # Calculate tabs for this browser (distribute remaining tabs to first browsers)
+                num_tabs_for_browser = tabs_per_browser + (1 if i < remaining_tabs else 0)
+                
                 task = self.execute_browser_with_tabs(
-                    browser_num, url_list, num_tabs, platforms, visit_type,
+                    browser_num, url_list, num_tabs_for_browser, platforms, visit_type,
                     search_keyword, target_domain, referral_sources,
                     min_time_spend, max_time_spend, enable_consent,
                     enable_interaction, enable_extra_pages, max_pages,
@@ -2551,12 +2703,16 @@ class AppGUI(QMainWindow):
         referral_label = QLabel('Select referral sources (multi-select allowed):')
         referral_layout.addWidget(referral_label, 0, 0, 1, 2)
         
-        # Checkboxes in 2 columns
+        # Checkboxes in 2 columns - expanded to include more social platforms
         self.referral_facebook = QCheckBox('✅ Facebook')
         self.referral_google = QCheckBox('✅ Google')
         self.referral_twitter = QCheckBox('✅ Twitter (X)')
         self.referral_telegram = QCheckBox('✅ Telegram')
         self.referral_instagram = QCheckBox('✅ Instagram')
+        self.referral_reddit = QCheckBox('✅ Reddit')
+        self.referral_linkedin = QCheckBox('✅ LinkedIn')
+        self.referral_pinterest = QCheckBox('✅ Pinterest')
+        self.referral_youtube = QCheckBox('✅ YouTube')
         
         # Set default checked
         self.referral_facebook.setChecked(True)
@@ -2568,6 +2724,10 @@ class AppGUI(QMainWindow):
         referral_layout.addWidget(self.referral_twitter, 2, 0)
         referral_layout.addWidget(self.referral_telegram, 2, 1)
         referral_layout.addWidget(self.referral_instagram, 3, 0)
+        referral_layout.addWidget(self.referral_reddit, 3, 1)
+        referral_layout.addWidget(self.referral_linkedin, 4, 0)
+        referral_layout.addWidget(self.referral_pinterest, 4, 1)
+        referral_layout.addWidget(self.referral_youtube, 5, 0)
         
         self.referral_group.setLayout(referral_layout)
         self.referral_group.setVisible(False)  # Hidden by default
@@ -2635,13 +2795,14 @@ class AppGUI(QMainWindow):
         self.num_visits_input = QSpinBox()
         self.num_visits_input.setRange(1, 10000)
         self.num_visits_input.setValue(10)
-        self.num_visits_input.setToolTip('Number of tabs to open per browser with different URLs')
+        self.num_visits_input.setToolTip('TOTAL tabs across ALL browsers (distributed evenly). Example: 10 tabs, 3 browsers = 4, 3, 3 tabs per browser')
         traffic_layout.addWidget(self.num_visits_input)
         
         traffic_layout.addWidget(QLabel('Threads (concurrent browsers):'))
         self.threads_input = QSpinBox()
         self.threads_input.setRange(1, 100)
         self.threads_input.setValue(1)
+        self.threads_input.setToolTip('Number of browser WINDOWS to open simultaneously - each is a separate visible browser')
         traffic_layout.addWidget(self.threads_input)
         
         traffic_layout.addWidget(QLabel('Total Threads to Run (0 = unlimited):'))
@@ -3390,7 +3551,6 @@ class AppGUI(QMainWindow):
                     'proxy_enabled': self.proxy_enabled_check.isChecked(),
                     'proxy_type': self.proxy_type_combo.currentText(),
                     'proxy_list': self.proxy_list_input.toPlainText(),
-                    'rotate_proxy': True,
                     'headless': False,  # Always visible
                 }
                 
@@ -3451,6 +3611,14 @@ class AppGUI(QMainWindow):
                         referral_sources.append('telegram')
                     if self.referral_instagram.isChecked():
                         referral_sources.append('instagram')
+                    if self.referral_reddit.isChecked():
+                        referral_sources.append('reddit')
+                    if self.referral_linkedin.isChecked():
+                        referral_sources.append('linkedin')
+                    if self.referral_pinterest.isChecked():
+                        referral_sources.append('pinterest')
+                    if self.referral_youtube.isChecked():
+                        referral_sources.append('youtube')
                     
                     if not referral_sources:
                         QMessageBox.warning(self, 'Input Error', 'Please select at least one referral source')
@@ -3483,7 +3651,7 @@ class AppGUI(QMainWindow):
                     'proxy_enabled': self.proxy_enabled_check.isChecked(),
                     'proxy_type': self.proxy_type_combo.currentText(),
                     'proxy_list': self.proxy_list_input.toPlainText(),
-                    'rotate_proxy': True,  # Always rotate for authenticity
+                    # Proxy rotation removed - each browser uses fixed proxy
                     'visit_type': visit_type,
                     'search_keyword': self.search_keyword_input.text().strip() if visit_type == 'search' else '',
                     'target_domain': self.target_domain_input.text().strip() if visit_type == 'search' else '',
@@ -3515,7 +3683,7 @@ class AppGUI(QMainWindow):
                 self.log_manager.log('Configuring proxy settings...')
                 self.automation_worker.browser_manager.proxy_manager.proxy_enabled = True
                 self.automation_worker.browser_manager.proxy_manager.proxy_type = config['proxy_type']
-                self.automation_worker.browser_manager.proxy_manager.rotate_proxy = config['rotate_proxy']
+                # Proxy rotation removed - each browser uses fixed proxy
                 self.automation_worker.browser_manager.proxy_manager.proxy_list = \
                     self.automation_worker.browser_manager.proxy_manager.parse_proxy_list(config['proxy_list'])
                 
