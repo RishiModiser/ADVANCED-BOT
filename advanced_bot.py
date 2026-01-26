@@ -2309,11 +2309,15 @@ class AutomationWorker(QObject):
             # CRITICAL FIX: Distribute tabs across browsers
             # If total_tabs=2 and num_browsers=2, each browser gets 1 tab (total 2 tabs)
             # If total_tabs=10 and num_browsers=3, browsers get 4, 3, 3 tabs (total 10 tabs)
-            tabs_per_browser = max(1, total_tabs // num_browsers)
-            remaining_tabs = total_tabs % num_browsers
+            # If total_tabs=1 and num_browsers=5, only 1 browser is used with 1 tab
             
-            self.emit_log(f'Configuration: {len(url_list)} URLs, {total_tabs} TOTAL tabs, {num_browsers} browser windows')
-            self.emit_log(f'Each browser will open ~{tabs_per_browser} tabs (distributing {total_tabs} tabs across {num_browsers} browsers)')
+            # Only create as many browsers as we have tabs
+            actual_browsers = min(num_browsers, total_tabs)
+            tabs_per_browser = total_tabs // actual_browsers
+            remaining_tabs = total_tabs % actual_browsers
+            
+            self.emit_log(f'Configuration: {len(url_list)} URLs, {total_tabs} TOTAL tabs, {num_browsers} browser windows requested')
+            self.emit_log(f'Will use {actual_browsers} browsers (distributing {total_tabs} tabs)')
             self.emit_log(f'Time per tab: {min_time_spend}-{max_time_spend} seconds with human scrolling')
             if enable_text_highlight:
                 self.emit_log('✓ Text highlighting enabled')
@@ -2357,8 +2361,12 @@ class AutomationWorker(QObject):
             total_browsers_completed = 0
             
             # Determine how many browser iterations to run
+            # Use the ACTUAL number of browsers needed (not more than tabs available)
             # If total_threads_limit is set, it limits the total number of browser instances
-            num_browser_iterations = num_browsers if total_threads_limit == 0 else min(num_browsers, total_threads_limit)
+            if total_threads_limit > 0:
+                num_browser_iterations = min(actual_browsers, total_threads_limit)
+            else:
+                num_browser_iterations = actual_browsers
             
             self.emit_log(f'Starting concurrent execution: {num_browser_iterations} browser windows')
             
