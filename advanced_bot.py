@@ -262,8 +262,15 @@ class FingerprintManager:
         self.locale = None
         self.hardware_concurrency = None
     
-    def generate_fingerprint(self) -> Dict[str, Any]:
-        """Generate a realistic browser fingerprint."""
+    def generate_fingerprint(self, proxy_location: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Generate a realistic browser fingerprint.
+        
+        If proxy_location is provided, generates fingerprint matching proxy's country.
+        This ensures browser location matches proxy location (USA proxy → USA fingerprint).
+        
+        Args:
+            proxy_location: Optional dict with 'country' and 'timezone' from proxy geolocation
+        """
         self.user_agent = random.choice(USER_AGENTS.get(self.platform, USER_AGENTS['desktop']))
         
         if self.platform == 'android':
@@ -277,12 +284,28 @@ class FingerprintManager:
                 'height': random.choice([720, 768, 900, 1080])
             }
         
-        timezones = ['America/New_York', 'America/Los_Angeles', 'Europe/London', 
-                     'Europe/Paris', 'Asia/Tokyo', 'Australia/Sydney']
-        self.timezone = random.choice(timezones)
-        
-        locales = ['en-US', 'en-GB', 'de-DE', 'fr-FR', 'ja-JP', 'es-ES']
-        self.locale = random.choice(locales)
+        # CRITICAL FIX: Match timezone and locale to proxy location if available
+        if proxy_location:
+            # Use timezone from proxy location if available
+            proxy_timezone = proxy_location.get('timezone')
+            if proxy_timezone:
+                self.timezone = proxy_timezone
+            else:
+                # Fallback: Map country to common timezone
+                country_code = proxy_location.get('countryCode', '')
+                self.timezone = self._get_timezone_for_country(country_code)
+            
+            # Set locale based on country
+            country_code = proxy_location.get('countryCode', '')
+            self.locale = self._get_locale_for_country(country_code)
+        else:
+            # No proxy - use random timezone/locale
+            timezones = ['America/New_York', 'America/Los_Angeles', 'Europe/London', 
+                         'Europe/Paris', 'Asia/Tokyo', 'Australia/Sydney']
+            self.timezone = random.choice(timezones)
+            
+            locales = ['en-US', 'en-GB', 'de-DE', 'fr-FR', 'ja-JP', 'es-ES']
+            self.locale = random.choice(locales)
         
         self.hardware_concurrency = random.choice([4, 8, 12, 16])
         
@@ -293,6 +316,67 @@ class FingerprintManager:
             'locale': self.locale,
             'hardware_concurrency': self.hardware_concurrency
         }
+    
+    def _get_timezone_for_country(self, country_code: str) -> str:
+        """Map country code to common timezone."""
+        timezone_map = {
+            'US': 'America/New_York',
+            'CA': 'America/Toronto',
+            'GB': 'Europe/London',
+            'DE': 'Europe/Berlin',
+            'FR': 'Europe/Paris',
+            'IT': 'Europe/Rome',
+            'ES': 'Europe/Madrid',
+            'NL': 'Europe/Amsterdam',
+            'SE': 'Europe/Stockholm',
+            'NO': 'Europe/Oslo',
+            'DK': 'Europe/Copenhagen',
+            'FI': 'Europe/Helsinki',
+            'PL': 'Europe/Warsaw',
+            'RU': 'Europe/Moscow',
+            'JP': 'Asia/Tokyo',
+            'CN': 'Asia/Shanghai',
+            'IN': 'Asia/Kolkata',
+            'SG': 'Asia/Singapore',
+            'AU': 'Australia/Sydney',
+            'NZ': 'Pacific/Auckland',
+            'BR': 'America/Sao_Paulo',
+            'MX': 'America/Mexico_City',
+            'AR': 'America/Argentina/Buenos_Aires',
+        }
+        return timezone_map.get(country_code, 'America/New_York')  # Default to US EST
+    
+    def _get_locale_for_country(self, country_code: str) -> str:
+        """Map country code to appropriate locale."""
+        locale_map = {
+            'US': 'en-US',
+            'CA': 'en-CA',
+            'GB': 'en-GB',
+            'AU': 'en-AU',
+            'NZ': 'en-NZ',
+            'DE': 'de-DE',
+            'AT': 'de-AT',
+            'CH': 'de-CH',
+            'FR': 'fr-FR',
+            'BE': 'fr-BE',
+            'IT': 'it-IT',
+            'ES': 'es-ES',
+            'MX': 'es-MX',
+            'AR': 'es-AR',
+            'NL': 'nl-NL',
+            'SE': 'sv-SE',
+            'NO': 'no-NO',
+            'DK': 'da-DK',
+            'FI': 'fi-FI',
+            'PL': 'pl-PL',
+            'RU': 'ru-RU',
+            'JP': 'ja-JP',
+            'CN': 'zh-CN',
+            'IN': 'en-IN',
+            'SG': 'en-SG',
+            'BR': 'pt-BR',
+        }
+        return locale_map.get(country_code, 'en-US')  # Default to US English
 
 
 # ============================================================================
@@ -1125,6 +1209,7 @@ class ProxyGeolocation:
                                     location_info = {
                                         'ip': ip,
                                         'country': data.get('country', 'Unknown'),
+                                        'countryCode': data.get('countryCode', 'US'),  # 2-letter country code
                                         'city': data.get('city', 'Unknown'),
                                         'timezone': data.get('timezone', 'UTC')
                                     }
@@ -1135,9 +1220,11 @@ class ProxyGeolocation:
                     logging.warning(f'Failed to fetch real geolocation, using fallback: {api_error}')
             
             # Fallback to mock data if API fails or aiohttp not available
+            country = self._guess_country_from_ip(ip)
             location_info = {
                 'ip': ip,
-                'country': self._guess_country_from_ip(ip),
+                'country': country,
+                'countryCode': self._get_country_code(country),
                 'city': 'Unknown',
                 'timezone': 'UTC'
             }
@@ -1151,6 +1238,7 @@ class ProxyGeolocation:
             return {
                 'ip': 'error',
                 'country': 'Unknown',
+                'countryCode': 'US',
                 'city': 'Unknown',
                 'timezone': 'UTC'
             }
@@ -1184,6 +1272,19 @@ class ProxyGeolocation:
                 return 'Other'
         except:
             return 'Unknown'
+    
+    def _get_country_code(self, country: str) -> str:
+        """Map country name to 2-letter country code."""
+        country_codes = {
+            'USA': 'US',
+            'United States': 'US',
+            'Europe': 'GB',  # Default to UK for generic Europe
+            'Asia': 'JP',  # Default to Japan for generic Asia
+            'Local Network': 'US',
+            'Unknown': 'US',
+            'Other': 'US'
+        }
+        return country_codes.get(country, 'US')
 
 
 # ============================================================================
@@ -1485,7 +1586,11 @@ class BrowserManager:
             return False
     
     async def create_context(self, platform: str = 'desktop', use_proxy: bool = True) -> Optional[BrowserContext]:
-        """Create a new browser context with fingerprinting and optional proxy."""
+        """Create a new browser context with fingerprinting and optional proxy.
+        
+        CRITICAL: Fetches proxy location FIRST, then generates fingerprint matching proxy country.
+        This ensures browser location matches proxy location (USA proxy → USA fingerprint).
+        """
         try:
             if not self.browser:
                 success = await self.initialize()
@@ -1493,13 +1598,32 @@ class BrowserManager:
                     self.log_manager.log('Cannot create context: browser initialization failed', 'ERROR')
                     return None
             
-            # Generate fingerprint
+            # CRITICAL FIX: Fetch proxy BEFORE generating fingerprint
+            # This allows fingerprint to match proxy location
+            proxy_config = None
+            proxy_location = None
+            if use_proxy:
+                proxy_config = self.proxy_manager.get_proxy_config()
+                if proxy_config:
+                    # Fetch proxy geolocation FIRST
+                    geo_manager = ProxyGeolocation()
+                    proxy_location = await geo_manager.fetch_location(proxy_config)
+                    
+                    server = proxy_config.get('server', 'unknown')
+                    self.log_manager.log(f'✓ Proxy selected: {server}')
+                    self.log_manager.log(f'✓ Proxy Location: {proxy_location["country"]} ({proxy_location.get("countryCode", "?")}), IP: {proxy_location["ip"]}')
+            
+            # Generate fingerprint AFTER getting proxy location
+            # Pass proxy_location so fingerprint matches proxy country
             self.fingerprint_manager.platform = platform
-            fingerprint = self.fingerprint_manager.generate_fingerprint()
+            fingerprint = self.fingerprint_manager.generate_fingerprint(proxy_location)
             
             self.log_manager.log(f'━━━ Creating Browser Context ━━━')
             self.log_manager.log(f'Platform: {platform}')
             self.log_manager.log(f'User Agent: {fingerprint["user_agent"][:60]}...')
+            self.log_manager.log(f'Timezone: {fingerprint["timezone"]}, Locale: {fingerprint["locale"]}')
+            if proxy_location:
+                self.log_manager.log(f'✓ Fingerprint MATCHED to proxy location: {proxy_location["country"]}')
             
             context_options = {
                 'user_agent': fingerprint['user_agent'],
@@ -1508,22 +1632,11 @@ class BrowserManager:
                 'timezone_id': fingerprint['timezone'],
             }
             
-            # Add proxy if enabled and configured
-            proxy_config = None
-            proxy_location = None
-            if use_proxy:
-                proxy_config = self.proxy_manager.get_proxy_config()
-                if proxy_config:
-                    # Fetch proxy geolocation
-                    geo_manager = ProxyGeolocation()
-                    proxy_location = await geo_manager.fetch_location(proxy_config)
-                    
-                    context_options['proxy'] = proxy_config
-                    server = proxy_config.get('server', 'unknown')
-                    self.log_manager.log(f'✓ Using proxy: {server}')
-                    self.log_manager.log(f'✓ Proxy Location: {proxy_location["country"]}, IP: {proxy_location["ip"]}')
-                else:
-                    self.log_manager.log('No proxy configured, using direct connection')
+            # Add proxy if configured
+            if proxy_config:
+                context_options['proxy'] = proxy_config
+            else:
+                self.log_manager.log('No proxy configured, using direct connection')
             
             # Try to create context with proxy
             try:
