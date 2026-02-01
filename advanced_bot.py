@@ -17793,7 +17793,7 @@ class ScriptExecutor:
 # ============================================================================
 
 class ProxyManager:
-    """Manages proxy configurations."""
+    """Manages proxy configurations with thread-safe queue."""
     
     def __init__(self):
         self.proxy_enabled = False
@@ -17802,6 +17802,8 @@ class ProxyManager:
         self.rotate_proxy = True
         self.current_proxy_index = 0
         self.failed_proxies = set()
+        self.proxy_queue = []  # Queue for thread-safe proxy distribution
+        self.proxy_queue_index = 0  # Track position in queue
     
     def parse_proxy_list(self, proxy_text: str) -> List[Dict[str, str]]:
         """Parse proxy list from text input.
@@ -17906,36 +17908,39 @@ class ProxyManager:
         
         return proxies
     
+    def initialize_queue(self):
+        """Initialize proxy queue from proxy list (call after parsing proxies)."""
+        self.proxy_queue = [p for p in self.proxy_list]
+        self.proxy_queue_index = 0
+    
     def get_proxy_config(self) -> Optional[Dict[str, str]]:
-        """Get proxy configuration for Playwright.
+        """Get next proxy from queue (thread-safe sequential distribution).
         
-        NOTE: Proxy rotation has been REMOVED as per requirements.
-        Each call returns the next proxy in sequence. Each browser context
-        gets ONE proxy and uses it for the entire session (no mid-session rotation).
-        
-        This sequential selection ensures different browsers use different proxies,
-        but each browser sticks with its assigned proxy.
+        Each call returns the NEXT proxy in sequence (no repeats).
+        Returns None when all proxies are consumed.
+        This ensures each thread gets a unique proxy and bot stops when proxies run out.
         """
-        if not self.proxy_enabled or not self.proxy_list:
+        if not self.proxy_enabled or not self.proxy_queue:
             return None
         
-        # Filter out failed proxies
-        available_proxies = [p for i, p in enumerate(self.proxy_list) if i not in self.failed_proxies]
+        # Check if we have proxies left in queue
+        if self.proxy_queue_index >= len(self.proxy_queue):
+            return None  # All proxies consumed
         
-        if not available_proxies:
-            # Reset failed proxies if all failed
-            self.failed_proxies.clear()
-            available_proxies = self.proxy_list
-        
-        # Select next proxy sequentially (different browser gets different proxy)
-        # But each browser keeps its proxy for the entire session
-        proxy = available_proxies[self.current_proxy_index % len(available_proxies)]
-        self.current_proxy_index += 1
+        # Get next proxy from queue
+        proxy = self.proxy_queue[self.proxy_queue_index]
+        self.proxy_queue_index += 1
         
         return proxy
     
+    def get_remaining_proxies(self) -> int:
+        """Get number of remaining proxies in queue."""
+        if not self.proxy_enabled or not self.proxy_queue:
+            return 0
+        return max(0, len(self.proxy_queue) - self.proxy_queue_index)
+    
     def mark_proxy_failed(self, proxy_config: Dict[str, str]):
-        """Mark a proxy as failed."""
+        """Mark a proxy as failed (for logging purposes, doesn't affect queue)."""
         try:
             idx = self.proxy_list.index(proxy_config)
             self.failed_proxies.add(idx)
@@ -19164,14 +19169,15 @@ class AutomationWorker(QObject):
                 while self.running and retry_count < max_retries:
                     context = None
                     try:
-                        # Get next proxy if available
-                        proxy_info = None
-                        if proxy_manager.proxy_enabled and proxy_manager.get_proxy_count() > 0:
-                            proxy_info = proxy_manager.get_next_proxy()
-                            if proxy_info:
-                                self.emit_log(f'[Thread {thread_num}] Using proxy: {proxy_info.get("server", "N/A")}')
+                        # Check if proxies are available (if proxy mode enabled)
+                        if proxy_manager.proxy_enabled:
+                            remaining = proxy_manager.get_remaining_proxies()
+                            if remaining <= 0:
+                                self.emit_log(f'[Thread {thread_num}] No more proxies available, stopping', 'INFO')
+                                break
+                            self.emit_log(f'[Thread {thread_num}] Starting (Proxies remaining: {remaining})')
                         
-                        # Create browser context with proxy
+                        # Create browser context (proxy will be assigned automatically by create_context)
                         self.emit_log(f'[Thread {thread_num}] Creating visible browser context...')
                         context = await self.browser_manager.create_context(use_proxy=proxy_manager.proxy_enabled)
                         
@@ -19201,14 +19207,18 @@ class AutomationWorker(QObject):
                         # If proxy failed, try next proxy
                         if 'proxy' in str(e).lower() or 'net::ERR' in str(e):
                             self.emit_log(f'[Thread {thread_num}] Proxy failure detected, will use next proxy', 'WARNING')
-                            # Proxy manager will automatically rotate to next proxy
                     
                     finally:
                         if context:
                             await context.close()
                         
-                        # Thread maintenance: Restart if still running and not at max retries
-                        if self.running and retry_count < max_retries:
+                        # Thread maintenance: Restart if still running, not at max retries, and proxies available
+                        should_restart = self.running and retry_count < max_retries
+                        if proxy_manager.proxy_enabled and proxy_manager.get_remaining_proxies() <= 0:
+                            should_restart = False
+                            self.emit_log(f'[Thread {thread_num}] No more proxies, stopping thread', 'INFO')
+                        
+                        if should_restart:
                             self.emit_log(f'[Thread {thread_num}] Browser closed, restarting thread...', 'INFO')
                             await asyncio.sleep(1)  # Brief pause before restart
                         elif retry_count >= max_retries:
@@ -19239,7 +19249,11 @@ class AutomationWorker(QObject):
             self.emit_log(f'RPA mode error: {e}', 'ERROR')
     
     async def run_normal_mode(self):
-        """Execute normal automation mode."""
+        """Execute normal automation mode with worker pool pattern.
+        
+        Maintains N concurrent browsers at all times, replacing any that close,
+        until all proxies are consumed or user stops.
+        """
         try:
             # Get configuration
             url_list = self.config.get('url_list', [])
@@ -19247,7 +19261,7 @@ class AutomationWorker(QObject):
             stay_time = self.config.get('stay_time', 120)  # Fixed stay time in seconds
             min_time_spend = self.config.get('min_time_spend', 120)  # Min random time in seconds
             max_time_spend = self.config.get('max_time_spend', 240)  # Max random time in seconds
-            num_browsers = self.config.get('threads', 1)  # Number of concurrent browser profiles to open
+            num_threads = self.config.get('threads', 1)  # Number of concurrent browser instances
             platforms = self.config.get('platforms', ['windows'])
             content_ratio = self.config.get('content_ratio', 85) / 100
             visit_type = self.config.get('visit_type', 'direct')
@@ -19266,7 +19280,7 @@ class AutomationWorker(QObject):
             enable_text_highlight = self.config.get('enable_text_highlight', False)
             
             
-            self.emit_log(f'Configuration: {len(url_list)} URLs, {num_browsers} browser profiles to open')
+            self.emit_log(f'Configuration: {len(url_list)} URLs, {num_threads} concurrent threads')
             if random_time_enabled:
                 self.emit_log(f'Time per profile: Random between {min_time_spend}-{max_time_spend} seconds with human scrolling')
             else:
@@ -19274,29 +19288,32 @@ class AutomationWorker(QObject):
             if enable_text_highlight:
                 self.emit_log('✓ Text highlighting enabled')
             
-            # Check proxy configuration and log proxy status BEFORE browser initialization
+            # Check proxy configuration and initialize queue
             proxy_manager = self.browser_manager.proxy_manager
             if proxy_manager.proxy_enabled:
                 proxy_count = proxy_manager.get_proxy_count()
                 if proxy_count > 0:
+                    # Initialize proxy queue for sequential distribution
+                    proxy_manager.initialize_queue()
                     self.emit_log(f'✓ Proxy configuration loaded: {proxy_count} proxies available')
-                    # NOTE: Proxy rotation removed - each browser uses ONE fixed proxy
+                    self.emit_log(f'✓ Worker pool mode: {num_threads} threads will run until all proxies consumed')
                 else:
                     self.emit_log('⚠ Proxy enabled but no proxies loaded', 'WARNING')
             else:
                 self.emit_log('Proxy disabled, using direct connection')
+                self.emit_log(f'Running {num_threads} concurrent browser(s) without proxy rotation')
             
             # Initialize browser AFTER proxy validation
             self.browser_manager.headless = self.config.get('headless', False)
             
-            self.emit_log('Initializing browser...')
+            self.emit_log('Initializing Playwright...')
             success = await self.browser_manager.initialize()
             if not success:
                 self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'ERROR')
-                self.emit_log('Failed to initialize browser', 'ERROR')
+                self.emit_log('Failed to initialize Playwright', 'ERROR')
                 self.emit_log('Please check the logs above for details', 'ERROR')
                 self.emit_log('Common issues:', 'ERROR')
-                self.emit_log('  1. Chromium not installed: Run "playwright install chromium"', 'ERROR')
+                self.emit_log('  1. Chrome not installed (required for channel="chrome")', 'ERROR')
                 self.emit_log('  2. Port conflict or permission issues', 'ERROR')
                 self.emit_log('  3. System resources (memory/disk) insufficient', 'ERROR')
                 self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'ERROR')
@@ -19305,42 +19322,98 @@ class AutomationWorker(QObject):
             # Create consent manager
             consent_manager = ConsentManager(self.log_manager) if enable_consent else None
             
-            self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-            self.emit_log(f'Starting execution: {num_browsers} browser profiles opening simultaneously')
-            self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+            # Semaphore to limit concurrent workers
+            semaphore = asyncio.Semaphore(num_threads)
+            active_workers = []
+            worker_counter = 0
+            completed_count = 0
             
-            # Create tasks for concurrent browser execution - one profile per browser
-            tasks = []
-            for i in range(num_browsers):
-                if not self.running:
-                    break
+            async def worker_task():
+                """Single worker that processes one profile."""
+                nonlocal worker_counter, completed_count
                 
-                profile_num = i + 1
-                
-                task = self.execute_single_profile(
-                    profile_num, url_list, platforms, visit_type,
-                    search_keyword, target_domain, referral_sources,
-                    random_time_enabled, stay_time, min_time_spend, max_time_spend, enable_consent,
-                    enable_interaction, enable_extra_pages, max_pages,
-                    consent_manager, enable_text_highlight,
-                    utm_campaign, utm_medium, utm_term, utm_content
-                )
-                tasks.append(task)
-            
-            # Execute all browser tasks concurrently
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Count successes and log exceptions
-            success_count = 0
-            for i, result in enumerate(results):
-                if result is True:
-                    success_count += 1
-                elif isinstance(result, Exception):
-                    profile_num = i + 1
-                    self.emit_log(f'Profile {profile_num} exception: {result}', 'ERROR')
+                async with semaphore:
+                    worker_num = worker_counter
+                    worker_counter += 1
+                    
+                    try:
+                        # Check if we should continue (proxies available or no proxy mode)
+                        if proxy_manager.proxy_enabled:
+                            remaining = proxy_manager.get_remaining_proxies()
+                            if remaining <= 0:
+                                self.emit_log(f'[Worker {worker_num}] No more proxies available, stopping', 'INFO')
+                                return False
+                            self.emit_log(f'[Worker {worker_num}] Starting (Proxies remaining: {remaining})')
+                        else:
+                            self.emit_log(f'[Worker {worker_num}] Starting')
+                        
+                        # Execute single profile
+                        result = await self.execute_single_profile(
+                            worker_num, url_list, platforms, visit_type,
+                            search_keyword, target_domain, referral_sources,
+                            random_time_enabled, stay_time, min_time_spend, max_time_spend, enable_consent,
+                            enable_interaction, enable_extra_pages, max_pages,
+                            consent_manager, enable_text_highlight,
+                            utm_campaign, utm_medium, utm_term, utm_content
+                        )
+                        
+                        if result:
+                            completed_count += 1
+                            self.emit_log(f'[Worker {worker_num}] ✓ Completed successfully (Total: {completed_count})')
+                        else:
+                            self.emit_log(f'[Worker {worker_num}] ✗ Failed', 'WARNING')
+                        
+                        return result
+                        
+                    except Exception as e:
+                        self.emit_log(f'[Worker {worker_num}] Exception: {e}', 'ERROR')
+                        return False
             
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-            self.emit_log(f'✓ Automation completed: {success_count}/{num_browsers} profiles processed successfully')
+            self.emit_log(f'Starting worker pool: {num_threads} concurrent threads')
+            self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+            
+            # Keep spawning workers until stopped or proxies exhausted
+            try:
+                while self.running:
+                    # Check if we should continue
+                    if proxy_manager.proxy_enabled:
+                        remaining = proxy_manager.get_remaining_proxies()
+                        if remaining <= 0:
+                            self.emit_log('All proxies consumed, waiting for active workers to finish...')
+                            break
+                    
+                    # Remove completed tasks
+                    active_workers = [w for w in active_workers if not w.done()]
+                    
+                    # Spawn new workers if below thread limit
+                    while len(active_workers) < num_threads and self.running:
+                        # Check proxies again before spawning
+                        if proxy_manager.proxy_enabled and proxy_manager.get_remaining_proxies() <= 0:
+                            break
+                        
+                        task = asyncio.create_task(worker_task())
+                        active_workers.append(task)
+                        await asyncio.sleep(0.5)  # Small delay between spawns
+                    
+                    # Wait a bit before checking again
+                    if active_workers:
+                        # Wait for at least one worker to finish
+                        done, pending = await asyncio.wait(active_workers, return_when=asyncio.FIRST_COMPLETED)
+                    else:
+                        # No workers left to spawn
+                        break
+                
+                # Wait for all remaining workers to finish
+                if active_workers:
+                    self.emit_log(f'Waiting for {len(active_workers)} active worker(s) to finish...')
+                    await asyncio.gather(*active_workers, return_exceptions=True)
+                
+            except Exception as e:
+                self.emit_log(f'Worker pool error: {e}', 'ERROR')
+            
+            self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+            self.emit_log(f'✓ Automation completed: {completed_count} profiles processed successfully')
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             
             # Cleanup
@@ -20686,9 +20759,12 @@ class AppGUI(QMainWindow):
                 self.log_manager.log('Configuring proxy settings...')
                 self.automation_worker.browser_manager.proxy_manager.proxy_enabled = True
                 self.automation_worker.browser_manager.proxy_manager.proxy_type = config['proxy_type']
-                # Proxy rotation removed - each browser uses fixed proxy
+                # Parse proxy list
                 self.automation_worker.browser_manager.proxy_manager.proxy_list = \
                     self.automation_worker.browser_manager.proxy_manager.parse_proxy_list(config['proxy_list'])
+                
+                # Initialize proxy queue for sequential distribution
+                self.automation_worker.browser_manager.proxy_manager.initialize_queue()
                 
                 proxy_count = len(self.automation_worker.browser_manager.proxy_manager.proxy_list)
                 self.log_manager.log(f'✓ Proxy configuration complete: {proxy_count} proxies loaded')
