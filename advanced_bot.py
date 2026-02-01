@@ -1788,18 +1788,25 @@ class AutomationWorker(QObject):
         if content:
             utm_params['utm_content'] = content
         
-        # Get existing query parameters
+        # Get existing query parameters - parse_qs returns lists for each key
         existing_params = parse_qs(parsed.query)
         
         # Merge with UTM parameters (UTM params take precedence)
-        # parse_qs returns lists, so we need to handle multiple values properly
+        # We need to convert to a list format for urlencode with doseq=True
+        all_params = []
+        
+        # Add UTM parameters first
+        for key, value in utm_params.items():
+            all_params.append((key, value))
+        
+        # Add existing parameters (preserving multiple values for same key)
         for key, value_list in existing_params.items():
             if key not in utm_params:
-                # If there are multiple values, join them; otherwise use the single value
-                utm_params[key] = value_list[0] if len(value_list) == 1 else ','.join(value_list)
+                for value in value_list:
+                    all_params.append((key, value))
         
-        # Rebuild URL with UTM parameters
-        new_query = urlencode(utm_params)
+        # Rebuild URL with UTM parameters using doseq=True to handle multi-value params
+        new_query = urlencode(all_params, doseq=False)
         new_url = urlunparse((
             parsed.scheme,
             parsed.netloc,
@@ -1844,7 +1851,13 @@ class AutomationWorker(QObject):
                 term=utm_term,
                 content=utm_content
             )
-            self.emit_log(f'[INFO] UTM parameters successfully added to target URL')
+            # Log which UTM parameters were added for debugging
+            utm_info_parts = [f'source={referrer}', f'medium={utm_medium}', f'campaign={utm_campaign}']
+            if utm_term:
+                utm_info_parts.append(f'term={utm_term}')
+            if utm_content:
+                utm_info_parts.append(f'content={utm_content}')
+            self.emit_log(f'[INFO] UTM parameters added: {", ".join(utm_info_parts)}')
         else:
             target_url_with_utm = target_url
         
