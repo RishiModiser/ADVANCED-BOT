@@ -132,7 +132,17 @@ REFERRER_URLS = {
     'reddit': 'https://out.reddit.com',  # Reddit outbound link tracker
     'linkedin': 'https://www.linkedin.com/redir',  # LinkedIn redirect
     'pinterest': 'https://www.pinterest.com/pin/create/button',  # Pinterest sharing
-    'youtube': 'https://www.youtube.com/redirect'  # YouTube redirect
+    'youtube': 'https://www.youtube.com/redirect',  # YouTube redirect
+    'tiktok': 'https://www.tiktok.com/redirect',  # TikTok redirect
+    'whatsapp': 'https://chat.whatsapp.com',  # WhatsApp share
+    'snapchat': 'https://www.snapchat.com/add',  # Snapchat add
+    'discord': 'https://discord.gg',  # Discord invite
+    'medium': 'https://medium.com/m/global-identity',  # Medium redirect
+    'quora': 'https://www.quora.com/share',  # Quora share
+    'tumblr': 'https://www.tumblr.com/share',  # Tumblr share
+    'vk': 'https://vk.com/share.php',  # VK share
+    'weibo': 'https://service.weibo.com/share/share.php',  # Weibo share
+    'line': 'https://line.me/R/msg/text'  # LINE share
 }
 
 # Link filtering - URLs to skip when clicking content links
@@ -1746,17 +1756,95 @@ class AutomationWorker(QObject):
         self.running = False
         self.emit_log('Stopping automation...')
     
-    async def handle_referral_visit(self, page: Page, target_url: str, referral_sources: List[str]):
-        """Handle referral visit - simulate traffic from social media referral URLs.
+    @staticmethod
+    def generate_utm_url(base_url: str, source: str, medium: str, campaign: str, term: str = '', content: str = '') -> str:
+        """Generate a URL with UTM parameters.
+        
+        Args:
+            base_url: The target website URL
+            source: UTM source (e.g., 'facebook', 'twitter')
+            medium: UTM medium (e.g., 'social', 'paid_social', 'influencer')
+            campaign: Campaign name
+            term: Optional UTM term
+            content: Optional UTM content
+            
+        Returns:
+            Complete URL with UTM parameters
+        """
+        from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
+        
+        # Parse the base URL
+        parsed = urlparse(base_url)
+        
+        # Build UTM parameters
+        utm_params = {
+            'utm_source': source,
+            'utm_medium': medium,
+            'utm_campaign': campaign,
+        }
+        
+        if term:
+            utm_params['utm_term'] = term
+        if content:
+            utm_params['utm_content'] = content
+        
+        # Get existing query parameters
+        existing_params = parse_qs(parsed.query)
+        
+        # Merge with UTM parameters (UTM params take precedence)
+        for key, value in existing_params.items():
+            if key not in utm_params:
+                utm_params[key] = value[0] if isinstance(value, list) else value
+        
+        # Rebuild URL with UTM parameters
+        new_query = urlencode(utm_params)
+        new_url = urlunparse((
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            parsed.params,
+            new_query,
+            parsed.fragment
+        ))
+        
+        return new_url
+    
+    async def handle_referral_visit(self, page: Page, target_url: str, referral_sources: List[str], 
+                                     utm_medium: str = 'social', utm_campaign: str = '', 
+                                     utm_term: str = '', utm_content: str = ''):
+        """Handle referral visit - simulate traffic from social media referral URLs with UTM parameters.
         
         Creates realistic referral patterns using platform-specific referral URLs
-        (e.g., Facebook's katana/lm subdomain, Twitter's t.co, etc.)
+        (e.g., Facebook's katana/lm subdomain, Twitter's t.co, etc.) and adds UTM tracking parameters.
+        
+        Args:
+            page: Playwright Page object
+            target_url: The target website URL
+            referral_sources: List of referral sources to randomly select from
+            utm_medium: UTM medium parameter (default: 'social')
+            utm_campaign: UTM campaign name
+            utm_term: Optional UTM term
+            utm_content: Optional UTM content
         """
         # Randomly select one referral source
         referrer = random.choice(referral_sources)
         
         # Get referrer URL from constants (now uses referral-style URLs)
         referrer_url = REFERRER_URLS.get(referrer, 'https://www.google.com/url')
+        
+        # Generate UTM-tracked URL if campaign is provided
+        if utm_campaign:
+            target_url_with_utm = self.generate_utm_url(
+                target_url, 
+                source=referrer,
+                medium=utm_medium,
+                campaign=utm_campaign,
+                term=utm_term,
+                content=utm_content
+            )
+            self.emit_log(f'[INFO] Generated UTM URL: {target_url_with_utm[:100]}...')
+        else:
+            target_url_with_utm = target_url
         
         self.emit_log(f'[INFO] Referral source selected: {referrer.capitalize()}')
         self.emit_log(f'Using referral URL pattern: {referrer_url}')
@@ -1771,10 +1859,10 @@ class AutomationWorker(QObject):
             await HumanBehavior.scroll_page(page, random.randint(20, 40))
             await asyncio.sleep(random.uniform(1, 3))
             
-            # Navigate to target URL with referer header set
+            # Navigate to target URL with referer header set and UTM parameters
             # This simulates clicking a link from the referral source
             self.emit_log(f'Navigating to target from {referrer.capitalize()} referral...')
-            await page.goto(target_url, wait_until='domcontentloaded', timeout=30000, referer=referrer_url)
+            await page.goto(target_url_with_utm, wait_until='domcontentloaded', timeout=30000, referer=referrer_url)
             
         except Exception as e:
             self.emit_log(f'Error during referral visit: {e}', 'ERROR')
@@ -1966,7 +2054,8 @@ class AutomationWorker(QObject):
                                    search_keyword, target_domain, referral_sources,
                                    min_time_spend, max_time_spend, enable_consent, 
                                    enable_interaction, enable_extra_pages, max_pages,
-                                   consent_manager, enable_highlight=False, enable_ad_interaction=False):
+                                   consent_manager, enable_highlight=False, enable_ad_interaction=False,
+                                   utm_campaign='', utm_medium='social', utm_term='', utm_content=''):
         """Execute a single visit/profile session."""
         try:
             # Select random URL and platform
@@ -2025,7 +2114,8 @@ class AutomationWorker(QObject):
                 
                 # Navigate based on visit type
                 if visit_type == 'referral':
-                    await self.handle_referral_visit(page, target_url, referral_sources)
+                    await self.handle_referral_visit(page, target_url, referral_sources,
+                                                    utm_medium, utm_campaign, utm_term, utm_content)
                 elif visit_type == 'search':
                     # Search visit - find target domain in Google results
                     found = await self.handle_search_visit(page, target_domain, search_keyword)
@@ -2071,14 +2161,16 @@ class AutomationWorker(QObject):
                                   search_keyword, target_domain, referral_sources,
                                   min_time_spend, max_time_spend, enable_consent,
                                   enable_interaction, enable_extra_pages, max_pages,
-                                  consent_manager, enable_highlight=False, enable_ad_interaction=False):
+                                  consent_manager, enable_highlight=False, enable_ad_interaction=False,
+                                  utm_campaign='', utm_medium='social', utm_term='', utm_content=''):
         """Execute a single tab within a browser."""
         try:
             self.emit_log(f'[Tab {tab_num}] Processing URL: {target_url[:50]}...')
             
             # Navigate based on visit type
             if visit_type == 'referral':
-                await self.handle_referral_visit(page, target_url, referral_sources)
+                await self.handle_referral_visit(page, target_url, referral_sources,
+                                                utm_medium, utm_campaign, utm_term, utm_content)
             elif visit_type == 'search':
                 # Search visit - find target domain in Google results
                 found = await self.handle_search_visit(page, target_domain, search_keyword)
@@ -2117,7 +2209,8 @@ class AutomationWorker(QObject):
                                         search_keyword, target_domain, referral_sources,
                                         min_time_spend, max_time_spend, enable_consent,
                                         enable_interaction, enable_extra_pages, max_pages,
-                                        consent_manager, enable_highlight=False, enable_ad_interaction=False):
+                                        consent_manager, enable_highlight=False, enable_ad_interaction=False,
+                                        utm_campaign='', utm_medium='social', utm_term='', utm_content=''):
         """Execute a single browser with multiple tabs."""
         try:
             # Select random platform for this browser
@@ -2185,7 +2278,8 @@ class AutomationWorker(QObject):
                         search_keyword, target_domain, referral_sources,
                         min_time_spend, max_time_spend, enable_consent,
                         enable_interaction, enable_extra_pages, max_pages,
-                        consent_manager, enable_highlight, enable_ad_interaction
+                        consent_manager, enable_highlight, enable_ad_interaction,
+                        utm_campaign, utm_medium, utm_term, utm_content
                     )
                     tasks.append(task)
                 
@@ -2308,6 +2402,10 @@ class AutomationWorker(QObject):
             search_keyword = self.config.get('search_keyword', '')
             target_domain = self.config.get('target_domain', '')
             referral_sources = self.config.get('referral_sources', [])
+            utm_campaign = self.config.get('utm_campaign', '')
+            utm_medium = self.config.get('utm_medium', 'social')
+            utm_term = self.config.get('utm_term', '')
+            utm_content = self.config.get('utm_content', '')
             enable_interaction = self.config.get('enable_interaction', False)
             enable_extra_pages = self.config.get('enable_extra_pages', False)
             max_pages = self.config.get('max_pages', 5)
@@ -2400,7 +2498,8 @@ class AutomationWorker(QObject):
                     search_keyword, target_domain, referral_sources,
                     min_time_spend, max_time_spend, enable_consent,
                     enable_interaction, enable_extra_pages, max_pages,
-                    consent_manager, enable_text_highlight, enable_ad_interaction
+                    consent_manager, enable_text_highlight, enable_ad_interaction,
+                    utm_campaign, utm_medium, utm_term, utm_content
                 )
                 tasks.append(task)
             
@@ -2695,15 +2794,48 @@ class AppGUI(QMainWindow):
         visit_type_group.setLayout(visit_type_layout)
         layout.addWidget(visit_type_group)
         
-        # Referral Source Selector (NEW FEATURE)
-        self.referral_group = QGroupBox('🔗 Referral Source Selector')
-        referral_layout = QGridLayout()
+        # Referral Source Selector (ENHANCED UTM FEATURE)
+        self.referral_group = QGroupBox('🔗 Advanced UTM Referral Traffic Generator')
+        referral_layout = QVBoxLayout()
         referral_layout.setSpacing(10)
         
-        referral_label = QLabel('Select referral sources (multi-select allowed):')
-        referral_layout.addWidget(referral_label, 0, 0, 1, 2)
+        # UTM Parameter Inputs
+        utm_params_group = QGroupBox('📊 UTM Parameters')
+        utm_params_layout = QFormLayout()
+        utm_params_layout.setSpacing(10)
         
-        # Checkboxes in 2 columns - expanded to include more social platforms
+        # Campaign Name
+        self.utm_campaign_input = QLineEdit()
+        self.utm_campaign_input.setPlaceholderText('summer_sale_2024')
+        utm_params_layout.addRow('Campaign Name:', self.utm_campaign_input)
+        
+        # UTM Medium
+        self.utm_medium_combo = QComboBox()
+        self.utm_medium_combo.addItems(['social', 'paid_social', 'influencer', 'referral', 'cpc', 'display'])
+        utm_params_layout.addRow('UTM Medium:', self.utm_medium_combo)
+        
+        # UTM Term (optional)
+        self.utm_term_input = QLineEdit()
+        self.utm_term_input.setPlaceholderText('targeting_keywords (optional)')
+        utm_params_layout.addRow('UTM Term (Optional):', self.utm_term_input)
+        
+        # UTM Content (optional)
+        self.utm_content_input = QLineEdit()
+        self.utm_content_input.setPlaceholderText('banner_ad_1 (optional)')
+        utm_params_layout.addRow('UTM Content (Optional):', self.utm_content_input)
+        
+        utm_params_group.setLayout(utm_params_layout)
+        referral_layout.addWidget(utm_params_group)
+        
+        # Social Platform Selector
+        platform_selector_group = QGroupBox('🌐 Select Social Media Platforms')
+        platform_grid = QGridLayout()
+        platform_grid.setSpacing(10)
+        
+        platform_label = QLabel('Select platforms for referral traffic (multi-select):')
+        platform_grid.addWidget(platform_label, 0, 0, 1, 3)
+        
+        # Checkboxes in 3 columns - 16+ social platforms
         self.referral_facebook = QCheckBox('✅ Facebook')
         self.referral_google = QCheckBox('✅ Google')
         self.referral_twitter = QCheckBox('✅ Twitter (X)')
@@ -2713,21 +2845,46 @@ class AppGUI(QMainWindow):
         self.referral_linkedin = QCheckBox('✅ LinkedIn')
         self.referral_pinterest = QCheckBox('✅ Pinterest')
         self.referral_youtube = QCheckBox('✅ YouTube')
+        self.referral_tiktok = QCheckBox('✅ TikTok')
+        self.referral_whatsapp = QCheckBox('✅ WhatsApp')
+        self.referral_snapchat = QCheckBox('✅ Snapchat')
+        self.referral_discord = QCheckBox('✅ Discord')
+        self.referral_medium = QCheckBox('✅ Medium')
+        self.referral_quora = QCheckBox('✅ Quora')
+        self.referral_tumblr = QCheckBox('✅ Tumblr')
+        self.referral_vk = QCheckBox('✅ VK')
+        self.referral_weibo = QCheckBox('✅ Weibo')
+        self.referral_line = QCheckBox('✅ LINE')
         
         # Set default checked
         self.referral_facebook.setChecked(True)
         self.referral_google.setChecked(True)
         
-        # Add to grid (2 columns)
-        referral_layout.addWidget(self.referral_facebook, 1, 0)
-        referral_layout.addWidget(self.referral_google, 1, 1)
-        referral_layout.addWidget(self.referral_twitter, 2, 0)
-        referral_layout.addWidget(self.referral_telegram, 2, 1)
-        referral_layout.addWidget(self.referral_instagram, 3, 0)
-        referral_layout.addWidget(self.referral_reddit, 3, 1)
-        referral_layout.addWidget(self.referral_linkedin, 4, 0)
-        referral_layout.addWidget(self.referral_pinterest, 4, 1)
-        referral_layout.addWidget(self.referral_youtube, 5, 0)
+        # Add to grid (3 columns for better space utilization)
+        row = 1
+        col = 0
+        for checkbox in [
+            self.referral_facebook, self.referral_google, self.referral_twitter,
+            self.referral_telegram, self.referral_instagram, self.referral_reddit,
+            self.referral_linkedin, self.referral_pinterest, self.referral_youtube,
+            self.referral_tiktok, self.referral_whatsapp, self.referral_snapchat,
+            self.referral_discord, self.referral_medium, self.referral_quora,
+            self.referral_tumblr, self.referral_vk, self.referral_weibo, self.referral_line
+        ]:
+            platform_grid.addWidget(checkbox, row, col)
+            col += 1
+            if col >= 3:
+                col = 0
+                row += 1
+        
+        platform_selector_group.setLayout(platform_grid)
+        referral_layout.addWidget(platform_selector_group)
+        
+        # Info label
+        info_label = QLabel('ℹ️ UTM parameters will be automatically added to track referral traffic from selected platforms')
+        info_label.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
+        info_label.setWordWrap(True)
+        referral_layout.addWidget(info_label)
         
         self.referral_group.setLayout(referral_layout)
         self.referral_group.setVisible(False)  # Hidden by default
@@ -3600,7 +3757,13 @@ class AppGUI(QMainWindow):
                 
                 # Collect referral sources if referral type is selected
                 referral_sources = []
+                utm_campaign = ''
+                utm_medium = 'social'
+                utm_term = ''
+                utm_content = ''
+                
                 if visit_type == 'referral':
+                    # Collect selected platforms
                     if self.referral_facebook.isChecked():
                         referral_sources.append('facebook')
                     if self.referral_google.isChecked():
@@ -3619,10 +3782,41 @@ class AppGUI(QMainWindow):
                         referral_sources.append('pinterest')
                     if self.referral_youtube.isChecked():
                         referral_sources.append('youtube')
+                    if self.referral_tiktok.isChecked():
+                        referral_sources.append('tiktok')
+                    if self.referral_whatsapp.isChecked():
+                        referral_sources.append('whatsapp')
+                    if self.referral_snapchat.isChecked():
+                        referral_sources.append('snapchat')
+                    if self.referral_discord.isChecked():
+                        referral_sources.append('discord')
+                    if self.referral_medium.isChecked():
+                        referral_sources.append('medium')
+                    if self.referral_quora.isChecked():
+                        referral_sources.append('quora')
+                    if self.referral_tumblr.isChecked():
+                        referral_sources.append('tumblr')
+                    if self.referral_vk.isChecked():
+                        referral_sources.append('vk')
+                    if self.referral_weibo.isChecked():
+                        referral_sources.append('weibo')
+                    if self.referral_line.isChecked():
+                        referral_sources.append('line')
                     
                     if not referral_sources:
                         QMessageBox.warning(self, 'Input Error', 'Please select at least one referral source')
                         return
+                    
+                    # Collect UTM parameters
+                    utm_campaign = self.utm_campaign_input.text().strip()
+                    utm_medium = self.utm_medium_combo.currentText()
+                    utm_term = self.utm_term_input.text().strip()
+                    utm_content = self.utm_content_input.text().strip()
+                    
+                    # Campaign name is optional - if not provided, UTM won't be added
+                    if not utm_campaign:
+                        self.log_manager.log('⚠️ Warning: No campaign name provided. UTM parameters will not be added.', 'WARNING')
+
                 
                 # Get selected platforms
                 selected_platforms = []
@@ -3656,6 +3850,10 @@ class AppGUI(QMainWindow):
                     'search_keyword': self.search_keyword_input.text().strip() if visit_type == 'search' else '',
                     'target_domain': self.target_domain_input.text().strip() if visit_type == 'search' else '',
                     'referral_sources': referral_sources,
+                    'utm_campaign': utm_campaign,
+                    'utm_medium': utm_medium,
+                    'utm_term': utm_term,
+                    'utm_content': utm_content,
                     'enable_interaction': self.enable_interaction.isChecked(),
                     'enable_extra_pages': self.enable_extra_pages.isChecked(),
                     'max_pages': self.max_pages_input.value(),
