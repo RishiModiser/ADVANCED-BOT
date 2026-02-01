@@ -17281,8 +17281,12 @@ class HumanBehavior:
     
     @staticmethod
     async def idle_pause():
-        """Random idle pause to simulate reading/thinking."""
-        await asyncio.sleep(random.uniform(2, 5))
+        """Random idle pause to simulate reading/thinking.
+        
+        Simulates natural reading pauses that occur when humans read content.
+        Used to make browsing behavior appear more realistic.
+        """
+        await asyncio.sleep(random.uniform(2.5, 6.0))
     
     @staticmethod
     async def highlight_text(page: Page):
