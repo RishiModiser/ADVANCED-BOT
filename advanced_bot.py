@@ -17685,7 +17685,11 @@ class ScriptExecutor:
                 
                 try:
                     if step_type == 'newPage':
-                        self.current_page = await context.new_page()
+                        # For first page in persistent context, use existing page
+                        if not self.current_page and context.pages:
+                            self.current_page = context.pages[0]
+                        else:
+                            self.current_page = await context.new_page()
                         self.log_manager.log(f'✓ Step {idx + 1}: New page opened')
                     
                     elif step_type == 'navigate':
@@ -18226,188 +18230,48 @@ class AdDetectionManager:
 # ============================================================================
 
 class BrowserManager:
-    """Manages Playwright browser instances."""
+    """Manages Playwright browser instances using persistent contexts."""
     
     def __init__(self, log_manager: LogManager):
         self.log_manager = log_manager
         self.playwright: Optional[Playwright] = None
-        self.browser: Optional[Browser] = None
+        self.browser: Optional[Browser] = None  # Kept for compatibility but not used with persistent context
         self.context: Optional[BrowserContext] = None
         self.fingerprint_manager = FingerprintManager()
         self.proxy_manager = ProxyManager()
         self.headless = False
+        self.active_contexts = []  # Track all active persistent contexts for cleanup
     
     async def initialize(self):
-        """Initialize Playwright and browser."""
+        """Initialize Playwright only (no browser launch with persistent contexts)."""
         try:
             self.log_manager.log('━━━ Browser Initialization Started ━━━')
             self.log_manager.log('Initializing Playwright...')
             self.playwright = await async_playwright().start()
             self.log_manager.log('✓ Playwright started successfully')
-            
-            launch_options = {
-                'headless': self.headless,
-                'args': [
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-dev-shm-usage',
-                    '--no-sandbox',
-                    '--disable-infobars',
-                    '--disable-automation',
-                    '--disable-web-security',
-                    '--disable-features=IsolateOrigins,site-per-process'
-                ]
-            }
-            
-            # Note: Proxy is now set per-context, not per-browser
-            
-            self.log_manager.log(f'Launching Chromium browser (headless={self.headless})...')
-            self.browser = await self.playwright.chromium.launch(**launch_options)
-            self.log_manager.log('✓ Browser launched successfully')
             self.log_manager.log('━━━ Browser Initialization Complete ━━━')
             
             return True
             
         except Exception as e:
             error_msg = str(e)
-            self.log_manager.log(f'Browser initialization error: {error_msg}', 'ERROR')
-            
-            # Expanded error detection for browser installation issues
-            browser_not_found_patterns = [
-                "Executable doesn't exist",  # Use double quotes to avoid escaping
-                'Browser was not found',
-                'Failed to launch',
-                'Could not find browser',
-                'No such file or directory',
-                'playwright.chromium.launch'
-            ]
-            
-            # Check for system dependency issues (common on Linux)
-            missing_deps_patterns = [
-                'libgobject',
-                'libnss',
-                'libatk',
-                'libdrm',
-                'libgbm',
-                'libasound',
-                'error while loading shared libraries'
-            ]
-            
-            is_browser_missing = any(pattern in error_msg for pattern in browser_not_found_patterns)
-            is_deps_missing = any(pattern in error_msg for pattern in missing_deps_patterns)
-            
-            # Check if it's a browser not installed error or missing dependencies
-            if is_browser_missing or is_deps_missing:
-                self.log_manager.log('', 'ERROR')
-                if is_browser_missing and is_deps_missing:
-                    self.log_manager.log('Chromium browser and system dependencies are not installed!', 'ERROR')
-                elif is_browser_missing:
-                    self.log_manager.log('Chromium browser is not installed!', 'ERROR')
-                else:
-                    self.log_manager.log('System dependencies are missing!', 'ERROR')
-                
-                self.log_manager.log('Attempting automatic installation...', 'WARNING')
-                
-                # Attempt to install the browser automatically
-                try:
-                    # Verify playwright executable exists
-                    playwright_path = shutil.which('playwright')
-                    if not playwright_path:
-                        self.log_manager.log('✗ Playwright executable not found in PATH', 'ERROR')
-                        self.log_manager.log('Please ensure playwright is installed: pip install playwright', 'ERROR')
-                        return False
-                    
-                    # Install browser if missing
-                    if is_browser_missing:
-                        self.log_manager.log('Installing Chromium browser...', 'INFO')
-                        result = subprocess.run(
-                            [playwright_path, 'install', 'chromium'],
-                            capture_output=True,
-                            text=True,
-                            timeout=300  # 5 minute timeout
-                        )
-                        
-                        if result.returncode != 0:
-                            self.log_manager.log('✗ Browser installation failed', 'ERROR')
-                            if result.stderr:
-                                self.log_manager.log(f'Error: {result.stderr}', 'ERROR')
-                            self.log_manager.log('Please run manually: playwright install chromium', 'ERROR')
-                            return False
-                        
-                        self.log_manager.log('✓ Browser installed successfully!', 'INFO')
-                    
-                    # Install system dependencies on Linux
-                    # Note: We install deps proactively when browser is missing because:
-                    # 1. If deps were the issue, this fixes it
-                    # 2. If browser was missing, deps are often also needed (fresh Linux systems)
-                    # 3. Better to install now than fail on retry
-                    if platform.system() == 'Linux' and (is_deps_missing or is_browser_missing):
-                        self.log_manager.log('Installing system dependencies (Linux)...', 'INFO')
-                        deps_result = subprocess.run(
-                            [playwright_path, 'install-deps', 'chromium'],
-                            capture_output=True,
-                            text=True,
-                            timeout=300  # 5 minute timeout
-                        )
-                        
-                        if deps_result.returncode != 0:
-                            self.log_manager.log('⚠ System dependencies installation failed', 'WARNING')
-                            self.log_manager.log('This may require sudo privileges', 'WARNING')
-                            self.log_manager.log('Try manually: sudo playwright install-deps chromium', 'WARNING')
-                            # Don't return False - try to launch anyway
-                        else:
-                            self.log_manager.log('✓ System dependencies installed successfully!', 'INFO')
-                    
-                    # Retry initialization
-                    self.log_manager.log('Retrying browser initialization...', 'INFO')
-                    try:
-                        # Ensure Playwright is initialized before launching browser
-                        if not self.playwright:
-                            self.log_manager.log('Initializing Playwright...', 'INFO')
-                            self.playwright = await async_playwright().start()
-                            self.log_manager.log('✓ Playwright started successfully', 'INFO')
-                        
-                        self.browser = await self.playwright.chromium.launch(**launch_options)
-                        self.log_manager.log('✓ Browser launched successfully after auto-install')
-                        self.log_manager.log('━━━ Browser Initialization Complete ━━━')
-                        return True
-                    except Exception as retry_error:
-                        retry_msg = str(retry_error)
-                        self.log_manager.log(f'Failed to launch browser after install: {retry_msg}', 'ERROR')
-                        
-                        # Check if still missing dependencies
-                        if any(pattern in retry_msg for pattern in missing_deps_patterns):
-                            self.log_manager.log('', 'ERROR')
-                            self.log_manager.log('System dependencies are still missing.', 'ERROR')
-                            self.log_manager.log('Please run: sudo playwright install-deps chromium', 'ERROR')
-                            self.log_manager.log('Or install dependencies manually for your distribution', 'ERROR')
-                        
-                except subprocess.TimeoutExpired:
-                    self.log_manager.log('✗ Installation timed out (>5 minutes)', 'ERROR')
-                    self.log_manager.log('Check your internet connection and try again', 'ERROR')
-                except Exception as install_error:
-                    self.log_manager.log(f'✗ Installation error: {install_error}', 'ERROR')
-                
-                self.log_manager.log('', 'ERROR')
-                self.log_manager.log('Manual installation steps:', 'ERROR')
-                self.log_manager.log('  1. playwright install chromium', 'ERROR')
-                if platform.system() == 'Linux':
-                    self.log_manager.log('  2. sudo playwright install-deps chromium  (Linux only)', 'ERROR')
-                self.log_manager.log('Or: python -m playwright install chromium', 'ERROR')
-                self.log_manager.log('', 'ERROR')
-            
+            self.log_manager.log(f'Playwright initialization error: {error_msg}', 'ERROR')
             return False
     
     async def create_context(self, platform: str = 'windows', use_proxy: bool = True) -> Optional[BrowserContext]:
-        """Create a new browser context with fingerprinting and optional proxy.
+        """Create a new browser persistent context with unique profile.
+        
+        Uses launch_persistent_context to create real Chrome windows with their own taskbar icons.
+        Each context gets a unique profile folder in profiles/profile_XXXX.
         
         CRITICAL: Fetches proxy location FIRST, then generates fingerprint matching proxy country.
         This ensures browser location matches proxy location (USA proxy → USA fingerprint).
         """
         try:
-            if not self.browser:
+            if not self.playwright:
                 success = await self.initialize()
-                if not success or not self.browser:
-                    self.log_manager.log('Cannot create context: browser initialization failed', 'ERROR')
+                if not success or not self.playwright:
+                    self.log_manager.log('Cannot create context: Playwright initialization failed', 'ERROR')
                     return None
             
             # CRITICAL FIX: Fetch proxy BEFORE generating fingerprint
@@ -18426,6 +18290,9 @@ class BrowserManager:
                         server = proxy_config.get('server', 'unknown')
                         self.log_manager.log(f'✓ Proxy selected: {server}')
                         self.log_manager.log(f'✓ Proxy Location: {proxy_location["country"]} ({proxy_location.get("countryCode", "?")}), IP: {proxy_location["ip"]}')
+                        # Log timezone if available
+                        if 'timezone' in proxy_location:
+                            self.log_manager.log(f'✓ Proxy Timezone: {proxy_location["timezone"]}')
                     else:
                         # Invalid proxy location data
                         self.log_manager.log('⚠ Proxy location data incomplete, using without geo-matching', 'WARNING')
@@ -18436,18 +18303,35 @@ class BrowserManager:
             self.fingerprint_manager.platform = platform
             fingerprint = self.fingerprint_manager.generate_fingerprint(proxy_location)
             
-            self.log_manager.log(f'━━━ Creating Browser Context ━━━')
+            # Create unique profile directory
+            user_data_dir = Path(f"profiles/profile_{random.randint(1000, 9999)}")
+            user_data_dir.mkdir(parents=True, exist_ok=True)
+            
+            self.log_manager.log(f'━━━ Creating Browser Persistent Context ━━━')
             self.log_manager.log(f'Platform: {platform}')
+            self.log_manager.log(f'Profile: {user_data_dir}')
             self.log_manager.log(f'User Agent: {fingerprint["user_agent"][:60]}...')
             self.log_manager.log(f'Timezone: {fingerprint["timezone"]}, Locale: {fingerprint["locale"]}')
             if proxy_location:
                 self.log_manager.log(f'✓ Fingerprint MATCHED to proxy location: {proxy_location["country"]}')
             
+            # Build context options for launch_persistent_context
             context_options = {
                 'user_agent': fingerprint['user_agent'],
                 'viewport': fingerprint['viewport'],
                 'locale': fingerprint['locale'],
                 'timezone_id': fingerprint['timezone'],
+                'headless': self.headless,
+                'channel': 'chrome',  # Use real Chrome instead of Chromium
+                'args': [
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                    '--disable-infobars',
+                    '--disable-automation',
+                    '--disable-web-security',
+                    '--disable-features=IsolateOrigins,site-per-process'
+                ]
             }
             
             # Add proxy if configured
@@ -18456,9 +18340,13 @@ class BrowserManager:
             else:
                 self.log_manager.log('No proxy configured, using direct connection')
             
-            # Try to create context with proxy
+            # Try to create persistent context with proxy
             try:
-                self.context = await self.browser.new_context(**context_options)
+                context = await self.playwright.chromium.launch_persistent_context(
+                    user_data_dir=str(user_data_dir),
+                    **context_options
+                )
+                self.active_contexts.append(context)
             except Exception as proxy_error:
                 # Check if error is proxy-related
                 error_str = str(proxy_error).lower()
@@ -18479,15 +18367,19 @@ class BrowserManager:
                     
                     # Retry without proxy (remove proxy from options)
                     context_options.pop('proxy', None)
-                    self.context = await self.browser.new_context(**context_options)
+                    context = await self.playwright.chromium.launch_persistent_context(
+                        user_data_dir=str(user_data_dir),
+                        **context_options
+                    )
+                    self.active_contexts.append(context)
                     self.log_manager.log('✓ Browser context created with direct connection (proxy bypassed)')
                     proxy_location = None  # Clear proxy location since not using proxy
                 else:
                     # Re-raise if not a proxy error
                     raise
             
-            # Inject navigator properties
-            await self.context.add_init_script(f"""
+            # Inject navigator properties via init script
+            await context.add_init_script(f"""
                 Object.defineProperty(navigator, 'hardwareConcurrency', {{
                     get: () => {fingerprint['hardware_concurrency']}
                 }});
@@ -18497,27 +18389,47 @@ class BrowserManager:
             """)
             
             # Store proxy location for later use (e.g., displaying in browser)
-            self.context._proxy_location = proxy_location
+            context._proxy_location = proxy_location
             
-            self.log_manager.log('✓ Browser context created successfully')
+            self.log_manager.log('✓ Browser persistent context created successfully')
             self.log_manager.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-            return self.context
+            return context
             
         except Exception as e:
             self.log_manager.log(f'Context creation error: {e}', 'ERROR')
             self.log_manager.log('This may be due to:', 'ERROR')
             self.log_manager.log('  - Invalid proxy configuration', 'ERROR')
             self.log_manager.log('  - Network connectivity issues', 'ERROR')
+            self.log_manager.log('  - Chrome not installed (required for channel="chrome")', 'ERROR')
             self.log_manager.log('  - Browser crash or resource exhaustion', 'ERROR')
             return None
     
     async def close(self):
-        """Close browser and cleanup."""
+        """Close all browser contexts and cleanup."""
         try:
+            # Close all active persistent contexts
+            for context in self.active_contexts:
+                try:
+                    await context.close()
+                except Exception:
+                    pass  # Ignore errors during cleanup
+            self.active_contexts.clear()
+            
+            # Close single context if exists (backward compatibility)
             if self.context:
-                await self.context.close()
+                try:
+                    await self.context.close()
+                except Exception:
+                    pass
+            
+            # Close browser if exists (old architecture, shouldn't exist with persistent context)
             if self.browser:
-                await self.browser.close()
+                try:
+                    await self.browser.close()
+                except Exception:
+                    pass
+            
+            # Stop playwright
             if self.playwright:
                 await self.playwright.stop()
             
@@ -18683,54 +18595,49 @@ class AutomationWorker(QObject):
             raise
     
     async def handle_search_visit(self, page: Page, target_domain: str, keyword: str):
-        """Handle search visit - search on Google, find target domain, and click it."""
+        """Handle search visit - search on Google, find target domain, and click it.
+        
+        Fixed to prevent reload loops and ensure proper Google search behavior:
+        1. Wait for search box with proper selector
+        2. Type character by character (not fill)
+        3. Wait for results properly
+        4. Find and click target domain
+        5. Start scrolling after click
+        """
         self.emit_log(f'[INFO] Search visit with keyword: "{keyword}" for domain: "{target_domain}"')
         
         try:
             # Navigate to Google
             self.emit_log('Opening Google...')
             await page.goto('https://www.google.com', wait_until='domcontentloaded', timeout=60000)
-            await asyncio.sleep(random.uniform(1, 2))
             
-            # Focus search box
-            search_selectors = ['input[name="q"]', 'textarea[name="q"]', '#APjFqb']
-            search_box = None
+            # Wait for search box to appear (use proper wait instead of sleep)
+            self.emit_log('Waiting for search box...')
+            try:
+                await page.wait_for_selector('textarea[name="q"]', timeout=10000)
+            except:
+                # Fallback to input if textarea not found
+                await page.wait_for_selector('input[name="q"]', timeout=10000)
             
-            for selector in search_selectors:
-                try:
-                    search_box = await page.query_selector(selector)
-                    if search_box:
-                        break
-                except:
-                    continue
-            
-            if not search_box:
-                self.emit_log('Could not find Google search box, skipping search', 'WARNING')
-                return False
-            
-            # Type keyword character by character with delays
+            # Type keyword like a human (character by character with delay)
             self.emit_log('Typing search keyword...')
-            await search_box.click()
-            await asyncio.sleep(random.uniform(0.3, 0.6))
-            
-            for char in keyword:
-                await search_box.type(char)
-                await asyncio.sleep(random.uniform(0.1, 0.3))
+            await page.type('textarea[name="q"], input[name="q"]', keyword, delay=random.randint(100, 200))
             
             # Press Enter
+            self.emit_log('Pressing Enter...')
             await asyncio.sleep(random.uniform(0.5, 1.0))
-            await search_box.press('Enter')
+            await page.press('textarea[name="q"], input[name="q"]', 'Enter')
             
-            # Wait for results
-            await asyncio.sleep(random.uniform(3, 5))
-            
-            # Wait for search results to fully load
+            # Wait for search results to load properly
+            self.emit_log('Waiting for search results...')
             try:
-                await page.wait_for_selector('div#search', timeout=10000)
+                await page.wait_for_selector('div#search', timeout=15000)
             except:
-                pass
+                self.emit_log('Search results selector not found, continuing anyway', 'WARNING')
             
-            # Scroll results page
+            await asyncio.sleep(random.uniform(2, 3))
+            
+            # Scroll results page to simulate reading
             await HumanBehavior.scroll_page(page, random.randint(30, 60))
             await asyncio.sleep(random.uniform(1, 2))
             
@@ -18755,7 +18662,17 @@ class AutomationWorker(QObject):
                 # Click the found link
                 self.emit_log('Clicking on target domain link...')
                 await found_link.click()
+                
+                # Wait for navigation after click
+                try:
+                    await page.wait_for_load_state('domcontentloaded', timeout=30000)
+                except:
+                    pass
+                
                 await asyncio.sleep(random.uniform(2, 4))
+                
+                # After clicking, normal scrolling behavior will be handled by the caller
+                self.emit_log('✓ Successfully navigated to target domain from search')
                 return True
             else:
                 self.emit_log(f'⚠ Target domain "{target_domain}" not found in top results', 'WARNING')
@@ -18851,8 +18768,8 @@ class AutomationWorker(QObject):
                 return False
             
             try:
-                # Create new page
-                page = await context.new_page()
+                # Get the first page from persistent context (instead of creating new page)
+                page = context.pages[0] if context.pages else await context.new_page()
                 
                 # Display proxy location in page title if available
                 proxy_location = getattr(context, '_proxy_location', None)
@@ -19007,8 +18924,8 @@ class AutomationWorker(QObject):
                 # Get proxy location once for the profile
                 proxy_location = getattr(context, '_proxy_location', None)
                 
-                # Create page
-                page = await context.new_page()
+                # Get the first page from persistent context (instead of creating new page)
+                page = context.pages[0] if context.pages else await context.new_page()
                 
                 # Display proxy location if available
                 if proxy_location:
@@ -19100,8 +19017,11 @@ class AutomationWorker(QObject):
                 pages = []
                 
                 for tab_idx in range(num_tabs):
-                    # Create new page (tab)
-                    page = await context.new_page()
+                    # For first tab, use existing page from persistent context; for others, create new
+                    if tab_idx == 0 and context.pages:
+                        page = context.pages[0]
+                    else:
+                        page = await context.new_page()
                     pages.append(page)
                     
                     # Display proxy location in each tab if available
@@ -19836,6 +19756,13 @@ class AppGUI(QMainWindow):
         stay_time_layout.addStretch()
         traffic_layout.addLayout(stay_time_layout)
         
+        # Random Enable checkbox - MOVED HERE per requirements (below Stay Time, above Random Minimum)
+        self.random_time_enabled = QCheckBox('🎲 Enable Random Time')
+        self.random_time_enabled.setChecked(False)
+        self.random_time_enabled.setToolTip('When enabled, uses random time between min and max. When disabled, uses fixed stay time.')
+        self.random_time_enabled.toggled.connect(self.toggle_random_time_inputs)
+        traffic_layout.addWidget(self.random_time_enabled)
+        
         # Random time inputs (hidden by default)
         min_time_layout = QHBoxLayout()
         min_time_layout.addWidget(QLabel('  Random Minimum (seconds):'))
@@ -19862,13 +19789,6 @@ class AppGUI(QMainWindow):
         max_time_layout.addWidget(self.max_time_input)
         max_time_layout.addStretch()
         traffic_layout.addLayout(max_time_layout)
-        
-        # Random Enable checkbox - MOVED DOWN
-        self.random_time_enabled = QCheckBox('🎲 Enable Random Time')
-        self.random_time_enabled.setChecked(False)
-        self.random_time_enabled.setToolTip('When enabled, uses random time between min and max. When disabled, uses fixed stay time.')
-        self.random_time_enabled.toggled.connect(self.toggle_random_time_inputs)
-        traffic_layout.addWidget(self.random_time_enabled)
         
         # Threads (concurrent browsers) - Fixed to open multiple profiles simultaneously
         traffic_layout.addWidget(QLabel('THREAD/CONCURRENT:'))
