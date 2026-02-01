@@ -122,25 +122,26 @@ class TestBrowserManager(unittest.TestCase):
         self.assertIsInstance(manager.active_contexts, list)
         print("✓ BrowserManager has active_contexts tracking")
     
-    @patch('advanced_bot.async_playwright')
-    async def test_initialize_playwright_only(self, mock_playwright):
+    def test_initialize_playwright_only(self):
         """Test that initialize only starts Playwright, not browser."""
         log_manager = LogManager()
         manager = BrowserManager(log_manager)
         
         # Mock playwright
         mock_pw = AsyncMock()
-        mock_playwright.return_value.start = AsyncMock(return_value=mock_pw)
-        
-        result = await manager.initialize()
-        
-        # Should initialize playwright
-        self.assertTrue(result)
-        self.assertIsNotNone(manager.playwright)
-        
-        # Should NOT launch a browser (that happens in create_context now)
-        self.assertIsNone(manager.browser)
-        print("✓ initialize() only starts Playwright (no browser launch)")
+        with patch('advanced_bot.async_playwright') as mock_playwright:
+            mock_playwright.return_value.start = AsyncMock(return_value=mock_pw)
+            
+            # Run async test
+            result = asyncio.run(manager.initialize())
+            
+            # Should initialize playwright
+            self.assertTrue(result)
+            self.assertIsNotNone(manager.playwright)
+            
+            # Should NOT launch a browser (that happens in create_context now)
+            self.assertIsNone(manager.browser)
+            print("✓ initialize() only starts Playwright (no browser launch)")
 
 
 def run_tests():

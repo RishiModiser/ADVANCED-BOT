@@ -217,8 +217,43 @@ All tests pass successfully.
 ## Migration Notes
 
 ### For Users
-- **Chrome Required:** The bot now requires Google Chrome to be installed (not just Chromium)
-- **Profile Storage:** Persistent profiles are stored in `profiles/` directory
+
+**⚠️ Chrome Installation Required:**
+
+The bot now requires **Google Chrome** to be installed (not just Chromium). This enables more realistic traffic simulation with proper browser windows.
+
+**Installation Instructions:**
+
+**Windows:**
+1. Download Chrome from: https://www.google.com/chrome/
+2. Run the installer
+3. Chrome will be installed to: `C:\Program Files\Google\Chrome\Application\chrome.exe`
+
+**macOS:**
+1. Download Chrome from: https://www.google.com/chrome/
+2. Open the .dmg file and drag Chrome to Applications
+3. Chrome will be at: `/Applications/Google Chrome.app`
+
+**Linux (Debian/Ubuntu):**
+```bash
+wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+sudo dpkg -i google-chrome-stable_current_amd64.deb
+sudo apt-get install -f
+```
+
+**Linux (Fedora/RHEL):**
+```bash
+sudo dnf install google-chrome-stable
+```
+
+**Verification:**
+After installation, verify Chrome is accessible:
+- Windows: Check if `chrome.exe` exists in Program Files
+- macOS: Open Chrome from Applications
+- Linux: Run `google-chrome --version` in terminal
+
+**Other Changes:**
+- **Profile Storage:** Persistent profiles are stored in `profiles/` directory (auto-created)
 - **Proxy Files:** Ensure `proxies.txt` is properly formatted (one proxy per line)
 
 ### For Developers
