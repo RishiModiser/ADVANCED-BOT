@@ -90,7 +90,11 @@ AD_NETWORK_BLOCKLIST = [
 CONSENT_BUTTON_TEXTS = [
     'accept', 'accept all', 'agree', 'allow all', 'i agree',
     'agree and close', 'allow cookies', 'got it', 'ok', 'consent',
-    'agree and continue', 'akzeptieren', 'accepter', 'aceptar'
+    'agree and continue', 'akzeptieren', 'accepter', 'aceptar',
+    'accept cookies', 'accepter tout', 'alle akzeptieren', 'tout accepter',
+    'accept all cookies', 'allow all cookies', 'i accept', 'i understand',
+    'agree to all', 'j\'accepte', 'acepto', 'accetto', 'continuar',
+    'continue', 'understood', 'dismiss', 'close'
 ]
 
 SPONSORED_SELECTORS = [
@@ -17028,9 +17032,10 @@ class FingerprintManager:
                 'height': random.choice([640, 667, 732, 896])
             }
         else:
+            # Use realistic desktop viewport sizes (not maximized, comfortable viewing)
             self.viewport = {
-                'width': random.choice([1280, 1366, 1440, 1920]),
-                'height': random.choice([720, 768, 900, 1080])
+                'width': random.choice([1280, 1366, 1440, 1536, 1600]),
+                'height': random.choice([720, 768, 800, 864, 900])
             }
         
         # CRITICAL FIX: Match timezone and locale to proxy location if available
@@ -17143,7 +17148,7 @@ class HumanBehavior:
     
     @staticmethod
     async def scroll_page(page: Page, depth_percent: int = None):
-        """Scroll page with enhanced human-like behavior - viewport-based, random direction, pauses."""
+        """Scroll page with enhanced human-like behavior - viewport-based, random direction, pauses, mouse movement."""
         try:
             if depth_percent is None:
                 depth_percent = random.randint(30, 100)
@@ -17165,6 +17170,15 @@ class HumanBehavior:
                 # Clamp to valid range
                 next_position = max(0, min(next_position, target_scroll))
                 
+                # ENHANCED: Add mouse movement during scroll (simulating user moving mouse while scrolling)
+                try:
+                    viewport_width = await page.evaluate('window.innerWidth')
+                    x = random.randint(100, viewport_width - 100)
+                    y = random.randint(100, viewport_height - 100)
+                    await page.mouse.move(x, y)
+                except:
+                    pass
+                
                 # Use smooth scrolling behavior
                 await page.evaluate(f'''
                     window.scrollTo({{
@@ -17175,8 +17189,8 @@ class HumanBehavior:
                 
                 current_position = next_position
                 
-                # Variable pause between scrolls
-                await asyncio.sleep(random.uniform(0.2, 0.6))
+                # Variable pause between scrolls (human reading)
+                await asyncio.sleep(random.uniform(0.3, 0.8))
                 
                 # Occasionally scroll back up a bit (human-like behavior)
                 if random.random() < BACK_SCROLL_CHANCE and current_position > viewport_height:
@@ -17188,28 +17202,46 @@ class HumanBehavior:
                             behavior: 'smooth'
                         }})
                     ''')
-                    await asyncio.sleep(random.uniform(0.3, 0.7))
+                    await asyncio.sleep(random.uniform(0.4, 0.9))
                 
-                # Random pause to simulate reading
+                # Random pause to simulate reading content
                 if random.random() < READING_PAUSE_CHANCE:
-                    await asyncio.sleep(random.uniform(1.0, 3.0))
+                    await asyncio.sleep(random.uniform(1.5, 4.0))
             
             # Final idle pause
-            await asyncio.sleep(random.uniform(0.5, 2.0))
+            await asyncio.sleep(random.uniform(0.8, 2.5))
             
         except Exception as e:
             logging.error(f'Scroll error: {e}')
     
     @staticmethod
     async def mouse_movement(page: Page, x: int, y: int):
-        """Simulate natural mouse movement."""
+        """Simulate natural mouse movement with easing."""
         try:
-            # Add slight randomness to coordinates
-            x_offset = random.randint(-5, 5)
-            y_offset = random.randint(-5, 5)
+            # Get current mouse position (start from 0,0 if not available)
+            current_x = 0
+            current_y = 0
             
-            await page.mouse.move(x + x_offset, y + y_offset)
-            await asyncio.sleep(random.uniform(0.05, 0.15))
+            # Calculate steps for smooth movement
+            steps = random.randint(10, 20)
+            for i in range(steps):
+                # Easing function for natural movement
+                progress = (i + 1) / steps
+                eased_progress = progress * progress * (3 - 2 * progress)  # Smoothstep
+                
+                # Calculate intermediate position
+                intermediate_x = current_x + (x - current_x) * eased_progress
+                intermediate_y = current_y + (y - current_y) * eased_progress
+                
+                # Add slight randomness
+                jitter_x = random.randint(-3, 3)
+                jitter_y = random.randint(-3, 3)
+                
+                await page.mouse.move(
+                    int(intermediate_x + jitter_x),
+                    int(intermediate_y + jitter_y)
+                )
+                await asyncio.sleep(random.uniform(0.01, 0.03))
             
         except Exception as e:
             logging.error(f'Mouse movement error: {e}')
@@ -17255,12 +17287,85 @@ class HumanBehavior:
     @staticmethod
     async def highlight_text(page: Page):
         """
-        Randomly highlight text on page to simulate human reading behavior.
-        Selects random text elements and highlights them briefly.
+        Enhanced AI-powered text highlighting to simulate human reading behavior.
+        Selects random text elements and highlights them with realistic mouse drag simulation.
         """
         try:
-            # Find text elements (paragraphs, divs with text)
-            text_elements = await page.query_selector_all('p, div, span, article, section')
+            # Find text elements (paragraphs, divs with text, articles)
+            text_elements = await page.query_selector_all('p, div, span, article, section, h1, h2, h3, li')
+            
+            if not text_elements or len(text_elements) == 0:
+                return
+            
+            # Randomly select 1-3 elements to highlight
+            num_highlights = random.randint(1, 3)
+            
+            for _ in range(num_highlights):
+                # Select random element
+                element = random.choice(text_elements)
+                
+                try:
+                    # Get bounding box
+                    box = await element.bounding_box()
+                    if not box:
+                        continue
+                    
+                    # Get text content to ensure it has text
+                    text = await element.inner_text()
+                    if not text or len(text.strip()) < 10:
+                        continue
+                    
+                    # Calculate highlight start and end positions
+                    # Start somewhere in the middle-left of the element
+                    start_x = int(box['x'] + random.uniform(10, box['width'] * 0.3))
+                    start_y = int(box['y'] + box['height'] / 2 + random.randint(-5, 5))
+                    
+                    # End somewhere in the middle-right (simulating reading direction)
+                    end_x = int(box['x'] + random.uniform(box['width'] * 0.5, box['width'] - 10))
+                    end_y = int(box['y'] + box['height'] / 2 + random.randint(-5, 5))
+                    
+                    # Move mouse to start position with natural movement
+                    await HumanBehavior.mouse_movement(page, start_x, start_y)
+                    await asyncio.sleep(random.uniform(0.1, 0.3))
+                    
+                    # Press mouse down (start selection)
+                    await page.mouse.down()
+                    await asyncio.sleep(random.uniform(0.05, 0.15))
+                    
+                    # Drag to end position with intermediate steps (more realistic)
+                    steps = random.randint(5, 10)
+                    for i in range(steps):
+                        progress = (i + 1) / steps
+                        intermediate_x = int(start_x + (end_x - start_x) * progress)
+                        intermediate_y = int(start_y + (end_y - start_y) * progress)
+                        
+                        await page.mouse.move(
+                            intermediate_x + random.randint(-2, 2),
+                            intermediate_y + random.randint(-2, 2)
+                        )
+                        await asyncio.sleep(random.uniform(0.02, 0.05))
+                    
+                    # Release mouse (end selection)
+                    await page.mouse.up()
+                    
+                    # Pause to simulate reading the highlighted text
+                    await asyncio.sleep(random.uniform(0.5, 2.0))
+                    
+                    # Click elsewhere to deselect (optional, human-like)
+                    if random.random() < 0.5:
+                        viewport_width = await page.evaluate('window.innerWidth')
+                        viewport_height = await page.evaluate('window.innerHeight')
+                        random_x = random.randint(100, viewport_width - 100)
+                        random_y = random.randint(100, viewport_height - 100)
+                        await page.mouse.click(random_x, random_y)
+                        await asyncio.sleep(random.uniform(0.3, 0.8))
+                    
+                except Exception as e:
+                    logging.error(f'Error highlighting text on element: {e}')
+                    continue
+            
+        except Exception as e:
+            logging.error(f'Error in highlight_text: {e}')
             
             if not text_elements:
                 return
@@ -18539,6 +18644,10 @@ class AutomationWorker(QObject):
             self.emit_log(f'Navigating to target from {referrer.capitalize()} referral...')
             await page.goto(target_url_with_utm, wait_until='domcontentloaded', timeout=30000, referer=referrer_url)
             
+            # CRITICAL FIX: Add proper wait after navigation to prevent immediate close
+            await asyncio.sleep(random.uniform(3, 5))
+            self.emit_log(f'✓ Successfully landed on target site via {referrer.capitalize()} referral')
+            
         except Exception as e:
             self.emit_log(f'Error during referral visit: {e}', 'ERROR')
             raise
@@ -18548,10 +18657,11 @@ class AutomationWorker(QObject):
         
         Fixed to prevent reload loops and ensure proper Google search behavior:
         1. Wait for search box with proper selector
-        2. Type character by character (not fill)
-        3. Wait for results properly
-        4. Find and click target domain
-        5. Start scrolling after click
+        2. Handle consent popups first
+        3. Type character by character (not fill)
+        4. Wait for results properly
+        5. Find and click target domain
+        6. Start scrolling after click
         """
         self.emit_log(f'[INFO] Search visit with keyword: "{keyword}" for domain: "{target_domain}"')
         
@@ -18559,48 +18669,75 @@ class AutomationWorker(QObject):
             # Navigate to Google
             self.emit_log('Opening Google...')
             await page.goto('https://www.google.com', wait_until='domcontentloaded', timeout=60000)
+            await asyncio.sleep(random.uniform(2, 3))
+            
+            # Handle consent popups on Google first
+            self.emit_log('Checking for Google consent dialogs...')
+            try:
+                # Try to find and click "Accept all" button on Google consent
+                accept_buttons = await page.query_selector_all('button')
+                for button in accept_buttons:
+                    text = await button.inner_text()
+                    if text and any(word in text.lower() for word in ['accept', 'agree', 'accept all', 'i agree']):
+                        await button.click()
+                        self.emit_log('✓ Clicked Google consent button')
+                        await asyncio.sleep(2)
+                        break
+            except Exception as e:
+                self.emit_log(f'No consent needed or error: {e}', 'INFO')
             
             # Wait for search box to appear (use proper wait instead of sleep)
             self.emit_log('Waiting for search box...')
             try:
                 await page.wait_for_selector('textarea[name="q"]', timeout=10000)
+                search_selector = 'textarea[name="q"]'
             except:
                 # Fallback to input if textarea not found
-                await page.wait_for_selector('input[name="q"]', timeout=10000)
+                try:
+                    await page.wait_for_selector('input[name="q"]', timeout=10000)
+                    search_selector = 'input[name="q"]'
+                except:
+                    self.emit_log('Could not find search box', 'ERROR')
+                    return False
             
             # Type keyword like a human (character by character with delay)
-            self.emit_log('Typing search keyword...')
-            await page.type('textarea[name="q"], input[name="q"]', keyword, delay=random.randint(100, 200))
+            self.emit_log(f'Typing search keyword: "{keyword}"...')
+            await page.type(search_selector, keyword, delay=random.randint(80, 150))
             
             # Press Enter
             self.emit_log('Pressing Enter...')
             await asyncio.sleep(random.uniform(0.5, 1.0))
-            await page.press('textarea[name="q"], input[name="q"]', 'Enter')
+            await page.press(search_selector, 'Enter')
             
             # Wait for search results to load properly
             self.emit_log('Waiting for search results...')
             try:
                 await page.wait_for_selector('div#search', timeout=15000)
             except:
-                self.emit_log('Search results selector not found, continuing anyway', 'WARNING')
+                try:
+                    # Alternative selector for search results
+                    await page.wait_for_selector('[id="rso"]', timeout=15000)
+                except:
+                    self.emit_log('Search results selector not found, continuing anyway', 'WARNING')
             
-            await asyncio.sleep(random.uniform(2, 3))
+            await asyncio.sleep(random.uniform(2, 4))
             
             # Scroll results page to simulate reading
             await HumanBehavior.scroll_page(page, random.randint(30, 60))
             await asyncio.sleep(random.uniform(1, 2))
             
             # Try to find and click target domain in top 10 results
-            self.emit_log(f'Searching for target domain "{target_domain}" in top 10 results...')
+            self.emit_log(f'Searching for target domain "{target_domain}" in search results...')
             
-            # Get all result links
+            # Get all result links with better selector
             result_links = await page.query_selector_all('a[href]')
             
             found_link = None
-            for link in result_links[:30]:  # Check first 30 links (covers top 10 results)
+            for link in result_links[:50]:  # Check first 50 links to cover top results
                 try:
                     href = await link.get_attribute('href')
-                    if href and target_domain in href:
+                    # Check if target domain is in the link
+                    if href and target_domain.lower() in href.lower() and href.startswith('http'):
                         found_link = link
                         self.emit_log(f'✓ Found target domain in results: {href[:80]}...')
                         break
@@ -18610,7 +18747,12 @@ class AutomationWorker(QObject):
             if found_link:
                 # Click the found link
                 self.emit_log('Clicking on target domain link...')
-                await found_link.click()
+                try:
+                    await found_link.click()
+                except:
+                    # Fallback: Try to navigate directly if click fails
+                    href = await found_link.get_attribute('href')
+                    await page.goto(href, wait_until='domcontentloaded', timeout=30000)
                 
                 # Wait for navigation after click
                 try:
@@ -18618,18 +18760,33 @@ class AutomationWorker(QObject):
                 except:
                     pass
                 
-                await asyncio.sleep(random.uniform(2, 4))
+                await asyncio.sleep(random.uniform(3, 5))
                 
                 # After clicking, normal scrolling behavior will be handled by the caller
                 self.emit_log('✓ Successfully navigated to target domain from search')
                 return True
             else:
-                self.emit_log(f'⚠ Target domain "{target_domain}" not found in top results', 'WARNING')
-                return False
+                self.emit_log(f'⚠ Target domain "{target_domain}" not found in search results', 'WARNING')
+                # FALLBACK: If not found, at least try to navigate directly
+                self.emit_log(f'Attempting direct navigation to https://{target_domain}')
+                try:
+                    await page.goto(f'https://{target_domain}', wait_until='domcontentloaded', timeout=30000)
+                    await asyncio.sleep(random.uniform(2, 4))
+                    self.emit_log('✓ Direct navigation successful (fallback)')
+                    return True
+                except:
+                    return False
             
         except Exception as e:
             self.emit_log(f'Error during search visit: {e}', 'ERROR')
-            return False
+            # Try fallback navigation
+            try:
+                self.emit_log(f'Attempting fallback navigation to https://{target_domain}')
+                await page.goto(f'https://{target_domain}', wait_until='domcontentloaded', timeout=30000)
+                await asyncio.sleep(random.uniform(2, 4))
+                return True
+            except:
+                return False
     
     async def handle_interaction(self, page: Page, max_pages: int, enable_extra_pages: bool):
         """Handle advanced page interaction - click posts, explore pages, follow links with human behavior."""
@@ -18649,42 +18806,97 @@ class AutomationWorker(QObject):
                 await HumanBehavior.scroll_page(page, scroll_depth)
                 await asyncio.sleep(random.uniform(5, 15))
                 
-                # Random mouse movements
+                # Random mouse movements during interaction
                 try:
                     viewport_size = page.viewport_size
                     if viewport_size:
-                        x = random.randint(100, viewport_size['width'] - 100)
-                        y = random.randint(100, viewport_size['height'] - 100)
-                        await page.mouse.move(x, y)
-                        await asyncio.sleep(random.uniform(0.5, 2))
+                        for _ in range(random.randint(2, 5)):
+                            x = random.randint(100, viewport_size['width'] - 100)
+                            y = random.randint(100, viewport_size['height'] - 100)
+                            await page.mouse.move(x, y)
+                            await asyncio.sleep(random.uniform(0.3, 1.0))
                 except:
                     pass
                 
                 # Try to click a link if extra pages enabled
                 if enable_extra_pages and pages_visited < max_pages:
                     try:
-                        # Find clickable article/content links
-                        links = await page.query_selector_all('a[href^="http"], a[href^="/"]')
+                        # Find clickable article/content links - IMPROVED SELECTORS
+                        # Target common content link patterns
+                        content_selectors = [
+                            'article a[href]',
+                            '.post a[href]',
+                            '.entry a[href]',
+                            '.content a[href]',
+                            'main a[href]',
+                            '[role="article"] a[href]',
+                            '.blog-post a[href]',
+                            'a[href^="/"]:not(nav a):not(header a):not(footer a)',
+                            'a[href^="http"]:not(nav a):not(header a):not(footer a)'
+                        ]
+                        
+                        links = []
+                        for selector in content_selectors:
+                            try:
+                                found_links = await page.query_selector_all(selector)
+                                links.extend(found_links)
+                                if len(links) >= 20:
+                                    break
+                            except:
+                                continue
                         
                         if links and len(links) > 0:
-                            # Filter out navigation/social links
-                            content_link = random.choice(links[:min(20, len(links))])
+                            # Filter out navigation/social links more aggressively
+                            valid_links = []
+                            for link in links[:30]:  # Check first 30 links
+                                try:
+                                    href = await link.get_attribute('href')
+                                    if href:
+                                        # Skip unwanted links
+                                        skip_patterns = LINK_SKIP_PATTERNS + [
+                                            'mailto:', 'tel:', 'javascript:',
+                                            '#', 'login', 'signup', 'register',
+                                            'cart', 'checkout', 'account'
+                                        ]
+                                        if not any(skip in href.lower() for skip in skip_patterns):
+                                            # Check if link has visible text (likely content link)
+                                            text = await link.inner_text()
+                                            if text and len(text.strip()) > 5:
+                                                valid_links.append(link)
+                                except:
+                                    continue
                             
-                            href = await content_link.get_attribute('href')
-                            if href and not any(skip in href.lower() for skip in LINK_SKIP_PATTERNS):
+                            if valid_links:
+                                # Select random valid link
+                                content_link = random.choice(valid_links[:min(10, len(valid_links))])
+                                href = await content_link.get_attribute('href')
                                 
-                                self.emit_log(f'[INFO] Clicking link to new page (page {pages_visited + 1}/{max_pages})')
-                                await content_link.click()
-                                await asyncio.sleep(random.uniform(3, 6))
-                                pages_visited += 1
-                                interactions_count += 1
+                                self.emit_log(f'[INFO] Clicking content link (page {pages_visited + 1}/{max_pages}): {href[:60]}...')
                                 
-                                # Handle consents on new page
-                                consent_manager = ConsentManager(self.log_manager)
-                                await consent_manager.handle_consents(page)
-                                
+                                # Human-like click with mouse movement
+                                try:
+                                    box = await content_link.bounding_box()
+                                    if box:
+                                        # Move mouse to link first
+                                        x = int(box['x'] + box['width'] / 2)
+                                        y = int(box['y'] + box['height'] / 2)
+                                        await page.mouse.move(x, y)
+                                        await asyncio.sleep(random.uniform(0.3, 0.8))
+                                    
+                                    await content_link.click()
+                                    await asyncio.sleep(random.uniform(3, 6))
+                                    pages_visited += 1
+                                    interactions_count += 1
+                                    
+                                    # Handle consents on new page
+                                    consent_manager = ConsentManager(self.log_manager)
+                                    await consent_manager.handle_consents(page)
+                                except Exception as e:
+                                    self.emit_log(f'Could not click link: {e}', 'WARNING')
+                            else:
+                                self.emit_log('[INFO] No valid content links found, continuing interaction', 'WARNING')
                     except Exception as e:
-                        self.emit_log(f'Could not click link: {e}', 'WARNING')
+                        self.emit_log(f'Error finding/clicking links: {e}', 'WARNING')
                 
                 # Random idle pause (simulating reading)
                 await asyncio.sleep(random.uniform(8, 25))
@@ -20060,16 +20272,18 @@ class AppGUI(QMainWindow):
         # PySide6 stateChanged emits int (0=unchecked, 2=checked), compare with enum or value
         rpa_mode_enabled = state in (Qt.Checked, Qt.Checked.value)
         
-        # When RPA mode is enabled, disable all other features except proxy
+        # When RPA mode is enabled, disable all other features EXCEPT proxy and threads
         # When disabled, enable all features
         disable_features = rpa_mode_enabled
         
-        # Disable/enable all traffic settings except proxy
+        # IMPORTANT: Keep threads and proxy ENABLED when RPA mode is on
+        # Disable/enable all traffic settings except proxy and threads
         self.stay_time_input.setEnabled(not disable_features)
         self.random_time_enabled.setEnabled(not disable_features)
         self.min_time_input.setEnabled(not disable_features and self.random_time_enabled.isChecked())
         self.max_time_input.setEnabled(not disable_features and self.random_time_enabled.isChecked())
-        self.threads_input.setEnabled(not disable_features)
+        # KEEP THREADS ENABLED IN RPA MODE
+        self.threads_input.setEnabled(True)  # Always enabled
         self.content_ratio_input.setEnabled(not disable_features)
         
         # Disable/enable platform settings
