@@ -1792,9 +1792,11 @@ class AutomationWorker(QObject):
         existing_params = parse_qs(parsed.query)
         
         # Merge with UTM parameters (UTM params take precedence)
-        for key, value in existing_params.items():
+        # parse_qs returns lists, so we need to handle multiple values properly
+        for key, value_list in existing_params.items():
             if key not in utm_params:
-                utm_params[key] = value[0] if isinstance(value, list) else value
+                # If there are multiple values, join them; otherwise use the single value
+                utm_params[key] = value_list[0] if len(value_list) == 1 else ','.join(value_list)
         
         # Rebuild URL with UTM parameters
         new_query = urlencode(utm_params)
@@ -1842,7 +1844,7 @@ class AutomationWorker(QObject):
                 term=utm_term,
                 content=utm_content
             )
-            self.emit_log(f'[INFO] Generated UTM URL: {target_url_with_utm[:100]}...')
+            self.emit_log(f'[INFO] UTM parameters successfully added to target URL')
         else:
             target_url_with_utm = target_url
         
@@ -3813,9 +3815,9 @@ class AppGUI(QMainWindow):
                     utm_term = self.utm_term_input.text().strip()
                     utm_content = self.utm_content_input.text().strip()
                     
-                    # Campaign name is optional - if not provided, UTM won't be added
+                    # Campaign name is optional - if not provided, basic referral traffic will be used
                     if not utm_campaign:
-                        self.log_manager.log('⚠️ Warning: No campaign name provided. UTM parameters will not be added.', 'WARNING')
+                        self.log_manager.log('ℹ️ No campaign name provided. Basic referral traffic will be used without UTM tracking.', 'INFO')
 
                 
                 # Get selected platforms
