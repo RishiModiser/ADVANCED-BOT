@@ -1805,8 +1805,9 @@ class AutomationWorker(QObject):
                 for value in value_list:
                     all_params.append((key, value))
         
-        # Rebuild URL with UTM parameters using doseq=True to handle multi-value params
-        new_query = urlencode(all_params, doseq=False)
+        # Rebuild URL with UTM parameters
+        # Using list of tuples allows urlencode to naturally handle multiple values for same key
+        new_query = urlencode(all_params)
         new_url = urlunparse((
             parsed.scheme,
             parsed.netloc,
