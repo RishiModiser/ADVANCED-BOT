@@ -20024,7 +20024,7 @@ class AppGUI(QMainWindow):
         layout.addWidget(section_title)
         
         # Website URL - Multiple URLs Support
-        url_group = QGroupBox('🌍 Website Configuration')
+        self.url_group = QGroupBox('🌍 Website Configuration')
         url_layout = QVBoxLayout()
         url_layout.setSpacing(10)
         
@@ -20051,8 +20051,8 @@ class AppGUI(QMainWindow):
         remove_url_btn.clicked.connect(self.remove_url_from_list)
         url_layout.addWidget(remove_url_btn)
         
-        url_group.setLayout(url_layout)
-        layout.addWidget(url_group)
+        self.url_group.setLayout(url_layout)
+        layout.addWidget(self.url_group)
         
         # Visit Type Section (NEW FEATURE)
         visit_type_group = QGroupBox('🔍 Visit Type')
@@ -20192,7 +20192,12 @@ class AppGUI(QMainWindow):
         self.target_domain_input.setPlaceholderText('Enter your target domain...')
         search_layout.addWidget(self.target_domain_input)
         
-        info_label = QLabel('ℹ️ Bot will search keyword on Google, find target domain in top 10, and click it')
+        info_label = QLabel('ℹ️ Bot will:\n'
+                           '1. Open Google in a new tab\n'
+                           '2. Search for your keyword\n'
+                           '3. Find and click your target domain in top 10 results\n'
+                           '4. Visit directly if not found in results\n'
+                           '📝 Note: Target URLs above are NOT needed for Search Visit')
         info_label.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
         info_label.setWordWrap(True)
         search_layout.addWidget(info_label)
@@ -20300,10 +20305,19 @@ class AppGUI(QMainWindow):
     def toggle_referral_section(self, checked):
         """Toggle visibility of referral source selector."""
         self.referral_group.setVisible(checked)
+        # Show URL group for referral visits
+        if checked:
+            self.url_group.setVisible(True)
     
     def toggle_search_section(self, checked):
         """Toggle visibility of search settings."""
         self.search_group.setVisible(checked)
+        # Hide URL group for search visits since we use keyword + target domain instead
+        if checked:
+            self.url_group.setVisible(False)
+        else:
+            # Show URL group when not search visit
+            self.url_group.setVisible(True)
     
     def add_url_to_list(self):
         """Add URL from input to list widget."""
@@ -21247,26 +21261,7 @@ class AppGUI(QMainWindow):
                 
             else:
                 # Normal Mode: Standard automation
-                # Validate inputs - collect URLs from list widget
-                url_list = []
-                for i in range(self.url_list_widget.count()):
-                    url = self.url_list_widget.item(i).text().strip()
-                    if url:
-                        url_list.append(url)
-                
-                # If no URLs in list, check input field
-                if not url_list:
-                    url = self.url_input.text().strip()
-                    if url:
-                        if not url.startswith(('http://', 'https://')):
-                            url = 'https://' + url
-                        url_list.append(url)
-                
-                if not url_list:
-                    QMessageBox.warning(self, 'Input Error', 'Please enter at least one target URL')
-                    return
-            
-                # Get visit type
+                # Get visit type first to determine what validation is needed
                 visit_type = 'direct'
                 if self.visit_referral_radio.isChecked():
                     visit_type = 'referral'
@@ -21282,6 +21277,28 @@ class AppGUI(QMainWindow):
                         return
                     if not target_domain:
                         QMessageBox.warning(self, 'Input Error', 'Please enter a target domain for Search Visit type')
+                        return
+                    # For search visits, we don't need target URLs since we use keyword + target domain
+                    url_list = [target_domain]  # Use target domain as the URL list
+                else:
+                    # For direct and referral visits, we need target URLs
+                    # Validate inputs - collect URLs from list widget
+                    url_list = []
+                    for i in range(self.url_list_widget.count()):
+                        url = self.url_list_widget.item(i).text().strip()
+                        if url:
+                            url_list.append(url)
+                    
+                    # If no URLs in list, check input field
+                    if not url_list:
+                        url = self.url_input.text().strip()
+                        if url:
+                            if not url.startswith(('http://', 'https://')):
+                                url = 'https://' + url
+                            url_list.append(url)
+                    
+                    if not url_list:
+                        QMessageBox.warning(self, 'Input Error', 'Please enter at least one target URL')
                         return
                 
                 # Collect referral sources if referral type is selected
