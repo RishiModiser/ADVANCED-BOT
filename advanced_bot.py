@@ -18718,22 +18718,36 @@ class AutomationWorker(QObject):
             self.emit_log(f'Error during referral visit: {e}', 'ERROR')
             raise
     
-    async def handle_search_visit(self, page: Page, target_domain: str, keyword: str):
+    async def handle_search_visit(self, context: BrowserContext, target_domain: str, keyword: str):
         """Handle search visit - search on Google, find target domain, and click it.
         
         Fixed to prevent reload loops and ensure proper Google search behavior:
-        1. Wait for search box with proper selector
-        2. Handle consent popups first
-        3. Type character by character (not fill)
-        4. Wait for results properly
-        5. Find and click target domain
-        6. Start scrolling after click
+        1. Open Google in a NEW tab/page
+        2. Wait for search box with proper selector
+        3. Handle consent popups first
+        4. Type character by character (not fill)
+        5. Wait for results properly
+        6. Find and click target domain
+        7. Start scrolling after click
         """
-        self.emit_log(f'[INFO] Search visit with keyword: "{keyword}" for domain: "{target_domain}"')
+        from urllib.parse import urlparse
+        
+        # Normalize target_domain to extract just the domain (remove protocol if present)
+        if target_domain.startswith('http://') or target_domain.startswith('https://'):
+            parsed = urlparse(target_domain)
+            target_domain_clean = parsed.netloc if parsed.netloc else parsed.path.split('/')[0]
+        else:
+            target_domain_clean = target_domain.split('/')[0]  # Remove any path after domain
+        
+        self.emit_log(f'[INFO] Search visit with keyword: "{keyword}" for domain: "{target_domain_clean}"')
+        
+        # Create a NEW page/tab for Google search
+        self.emit_log('Creating new tab for Google search...')
+        page = await context.new_page()
         
         try:
-            # Navigate to Google
-            self.emit_log('Opening Google...')
+            # Navigate to Google in the new tab
+            self.emit_log('Opening Google in new tab...')
             await page.goto('https://www.google.com', wait_until='domcontentloaded', timeout=60000)
             await asyncio.sleep(random.uniform(2, 3))
             
@@ -18793,7 +18807,7 @@ class AutomationWorker(QObject):
             await asyncio.sleep(random.uniform(1, 2))
             
             # Try to find and click target domain in top 10 results
-            self.emit_log(f'Searching for target domain "{target_domain}" in search results...')
+            self.emit_log(f'Searching for target domain "{target_domain_clean}" in search results...')
             
             # Get all result links with better selector
             result_links = await page.query_selector_all('a[href]')
@@ -18803,7 +18817,7 @@ class AutomationWorker(QObject):
                 try:
                     href = await link.get_attribute('href')
                     # Check if target domain is in the link
-                    if href and target_domain.lower() in href.lower() and href.startswith('http'):
+                    if href and target_domain_clean.lower() in href.lower() and href.startswith('http'):
                         found_link = link
                         self.emit_log(f'✓ Found target domain in results: {href[:80]}...')
                         break
@@ -18830,29 +18844,38 @@ class AutomationWorker(QObject):
                 
                 # After clicking, normal scrolling behavior will be handled by the caller
                 self.emit_log('✓ Successfully navigated to target domain from search')
-                return True
+                return page  # Return the page object for further use
             else:
-                self.emit_log(f'⚠ Target domain "{target_domain}" not found in search results', 'WARNING')
+                self.emit_log(f'⚠ Target domain "{target_domain_clean}" not found in search results', 'WARNING')
                 # FALLBACK: If not found, at least try to navigate directly
-                self.emit_log(f'Attempting direct navigation to https://{target_domain}')
+                # Construct proper URL with protocol
+                fallback_url = target_domain if target_domain.startswith('http') else f'https://{target_domain_clean}'
+                self.emit_log(f'Attempting direct navigation to {fallback_url}')
                 try:
-                    await page.goto(f'https://{target_domain}', wait_until='domcontentloaded', timeout=30000)
+                    await page.goto(fallback_url, wait_until='domcontentloaded', timeout=30000)
                     await asyncio.sleep(random.uniform(2, 4))
                     self.emit_log('✓ Direct navigation successful (fallback)')
-                    return True
+                    return page  # Return the page object for further use
                 except:
-                    return False
+                    await page.close()  # Close the page if navigation fails
+                    return None
             
         except Exception as e:
             self.emit_log(f'Error during search visit: {e}', 'ERROR')
             # Try fallback navigation
             try:
-                self.emit_log(f'Attempting fallback navigation to https://{target_domain}')
-                await page.goto(f'https://{target_domain}', wait_until='domcontentloaded', timeout=30000)
+                # Construct proper URL with protocol
+                fallback_url = target_domain if target_domain.startswith('http') else f'https://{target_domain_clean}'
+                self.emit_log(f'Attempting fallback navigation to {fallback_url}')
+                await page.goto(fallback_url, wait_until='domcontentloaded', timeout=30000)
                 await asyncio.sleep(random.uniform(2, 4))
-                return True
+                return page  # Return the page object for further use
             except:
-                return False
+                try:
+                    await page.close()
+                except:
+                    pass
+                return None
     
     async def handle_interaction(self, page: Page, max_pages: int, enable_extra_pages: bool):
         """Handle advanced page interaction - click posts, explore pages, follow links with human behavior."""
@@ -19040,11 +19063,13 @@ class AutomationWorker(QObject):
                     await self.handle_referral_visit(page, target_url, referral_sources,
                                                     utm_medium, utm_campaign, utm_term, utm_content)
                 elif visit_type == 'search':
-                    # Search visit - find target domain in Google results
-                    found = await self.handle_search_visit(page, target_domain, search_keyword)
-                    if not found:
+                    # Search visit - opens Google in a NEW tab, searches, and clicks target domain
+                    search_page = await self.handle_search_visit(context, target_domain, search_keyword)
+                    if not search_page:
                         self.emit_log(f'Target domain not found in search for profile {visit_num}', 'WARNING')
                         return False
+                    # Replace page with the search result page for further interactions
+                    page = search_page
                 else:
                     # Direct visit
                     self.emit_log(f'[INFO] Direct visit to {target_url}')
@@ -19091,11 +19116,13 @@ class AutomationWorker(QObject):
                 await self.handle_referral_visit(page, target_url, referral_sources,
                                                 utm_medium, utm_campaign, utm_term, utm_content)
             elif visit_type == 'search':
-                # Search visit - find target domain in Google results
-                found = await self.handle_search_visit(page, target_domain, search_keyword)
-                if not found:
+                # Search visit - opens Google in a NEW tab, searches, and clicks target domain
+                search_page = await self.handle_search_visit(page.context, target_domain, search_keyword)
+                if not search_page:
                     self.emit_log(f'[Visit {visit_num}] Target domain not found in search', 'WARNING')
                     return False
+                # Replace page with the search result page for further interactions
+                page = search_page
             else:
                 # Direct visit
                 self.emit_log(f'[Visit {visit_num}] Direct visit to {target_url}')
