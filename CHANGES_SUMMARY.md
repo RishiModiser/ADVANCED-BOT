@@ -102,7 +102,7 @@ await asyncio.sleep(0.001)  # Minimal delay before restart (0.001 seconds)
 - Dimensions: 300x120 pixels
 - Format: SVG (Scalable Vector Graphics)
 - Color scheme: 
-  - Blue (#3498db, #2ecc71, #27ae60) for growth bars
+  - Blue/Green gradient (#3498db, #2ecc71, #27ae60) for growth bars (traffic growth visualization)
   - Red (#e74c3c) for growth arrow
   - Gray (#2c3e50, #7f8c8d) for text
 
