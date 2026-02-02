@@ -21168,6 +21168,11 @@ class AppGUI(QMainWindow):
             
             if rpa_mode_enabled:
                 # RPA Mode: Only RPA script and proxy are used
+                # Sync visual workflow builder to JSON editor before reading the script
+                # This ensures that any steps added via the visual builder are included
+                if self.workflow_steps:
+                    self.sync_visual_to_json()
+                
                 rpa_script_text = self.script_editor.toPlainText().strip()
                 if not rpa_script_text:
                     QMessageBox.warning(self, 'Input Error', 'RPA Mode is enabled but no RPA script is provided. Please enter an RPA script in the RPA Script Creator tab.')
