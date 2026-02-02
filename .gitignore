@@ -50,3 +50,4 @@ validate_implementation.py
 test_ui_changes.py
 example_useragents.txt
 example_cookies.json
+test_rpa_*.py
