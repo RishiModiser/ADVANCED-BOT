@@ -15,12 +15,9 @@ import logging
 import asyncio
 import uuid
 import subprocess
-import shutil
-import platform
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pathlib import Path
-from enum import Enum
 
 # Check for required dependencies before importing them
 def check_dependencies():
