@@ -19351,14 +19351,14 @@ class AutomationWorker(QObject):
             self.finished_signal.emit()
     
     async def run_rpa_mode(self):
-        """Execute RPA script mode with thread maintenance and visible browsers."""
+        """Execute RPA script mode with concurrent visible browsers that auto-restart."""
         try:
             self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             self.emit_log('RPA MODE: Executing RPA script with visible browsers')
             self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             
             rpa_script = self.config.get('rpa_script', {})
-            num_threads = self.config.get('threads', 1)
+            num_concurrent = self.config.get('threads', 1)
             
             # Check proxy configuration
             proxy_manager = self.browser_manager.proxy_manager
@@ -19371,12 +19371,18 @@ class AutomationWorker(QObject):
             else:
                 self.emit_log('Proxy disabled, using direct connection')
             
+            # Check imported useragents
+            if self.browser_manager.imported_useragents:
+                self.emit_log(f'✓ Imported useragents loaded: {len(self.browser_manager.imported_useragents)} user agents available')
+            else:
+                self.emit_log('Using generated user agents (no imported user agents)')
+            
             # Force visible browser for RPA mode
             original_headless = self.browser_manager.headless
             self.browser_manager.headless = False  # Always visible for RPA mode
             
-            self.emit_log(f'Starting {num_threads} concurrent visible browser(s)...')
-            self.emit_log('Thread maintenance enabled: Will automatically restart closed browsers')
+            self.emit_log(f'Starting {num_concurrent} concurrent visible browser(s)...')
+            self.emit_log('Auto-restart enabled: Will automatically replace closed browsers')
             
             # Initialize browser
             success = await self.browser_manager.initialize()
@@ -19389,84 +19395,81 @@ class AutomationWorker(QObject):
             thread_counter = 0
             
             async def run_rpa_thread(thread_num):
-                """Run a single RPA thread with automatic restart on failure."""
+                """Run a single RPA thread with automatic continuous restart."""
                 nonlocal thread_counter
-                max_retries = 3
-                retry_count = 0
                 
-                while self.running and retry_count < max_retries:
+                # Continuous loop - runs indefinitely until stopped or no more proxies
+                while self.running:
                     context = None
                     try:
                         # Check if proxies are available (if proxy mode enabled)
                         if proxy_manager.proxy_enabled:
                             remaining = proxy_manager.get_remaining_proxies()
                             if remaining <= 0:
-                                self.emit_log(f'[Thread {thread_num}] No more proxies available, stopping', 'INFO')
+                                self.emit_log(f'[Concurrent {thread_num}] No more proxies available, stopping', 'INFO')
                                 break
-                            self.emit_log(f'[Thread {thread_num}] Starting (Proxies remaining: {remaining})')
+                            self.emit_log(f'[Concurrent {thread_num}] Starting (Proxies remaining: {remaining})')
                         
                         # Create browser context (proxy will be assigned automatically by create_context)
-                        self.emit_log(f'[Thread {thread_num}] Creating visible browser context...')
+                        self.emit_log(f'[Concurrent {thread_num}] Creating visible browser context...')
                         context = await self.browser_manager.create_context(use_proxy=proxy_manager.proxy_enabled)
                         
                         if not context:
-                            self.emit_log(f'[Thread {thread_num}] Failed to create context, retrying...', 'WARNING')
-                            retry_count += 1
+                            self.emit_log(f'[Concurrent {thread_num}] Failed to create context, retrying in 2s...', 'WARNING')
                             await asyncio.sleep(2)
                             continue
                         
                         # Execute RPA script
                         script_executor = ScriptExecutor(self.log_manager)
-                        self.emit_log(f'[Thread {thread_num}] Executing RPA script...')
+                        self.emit_log(f'[Concurrent {thread_num}] Executing RPA script...')
                         success = await script_executor.execute_script(rpa_script, context)
                         
                         if success:
-                            self.emit_log(f'[Thread {thread_num}] ✓ RPA script completed successfully')
+                            self.emit_log(f'[Concurrent {thread_num}] ✓ RPA script completed successfully')
                         else:
-                            self.emit_log(f'[Thread {thread_num}] ✗ RPA script had errors', 'WARNING')
-                        
-                        # Reset retry count on success
-                        retry_count = 0
+                            self.emit_log(f'[Concurrent {thread_num}] ✗ RPA script had errors', 'WARNING')
                         
                     except Exception as e:
-                        self.emit_log(f'[Thread {thread_num}] Error: {e}', 'ERROR')
-                        retry_count += 1
+                        self.emit_log(f'[Concurrent {thread_num}] Error: {e}', 'ERROR')
                         
                         # If proxy failed, try next proxy
                         if 'proxy' in str(e).lower() or 'net::ERR' in str(e):
-                            self.emit_log(f'[Thread {thread_num}] Proxy failure detected, will use next proxy', 'WARNING')
+                            self.emit_log(f'[Concurrent {thread_num}] Proxy failure detected, will use next proxy', 'WARNING')
                     
                     finally:
                         if context:
-                            await context.close()
+                            try:
+                                await context.close()
+                            except:
+                                pass  # Context might already be closed
                         
-                        # Thread maintenance: Restart if still running, not at max retries, and proxies available
-                        should_restart = self.running and retry_count < max_retries
+                        # Auto-restart: Check if we should continue
+                        should_restart = self.running
                         if proxy_manager.proxy_enabled and proxy_manager.get_remaining_proxies() <= 0:
                             should_restart = False
-                            self.emit_log(f'[Thread {thread_num}] No more proxies, stopping thread', 'INFO')
+                            self.emit_log(f'[Concurrent {thread_num}] No more proxies, stopping concurrent browser', 'INFO')
                         
                         if should_restart:
-                            self.emit_log(f'[Thread {thread_num}] Browser closed, restarting thread...', 'INFO')
-                            await asyncio.sleep(0.001)  # Minimal delay before restart (0.001 seconds)
-                        elif retry_count >= max_retries:
-                            self.emit_log(f'[Thread {thread_num}] Max retries reached, stopping thread', 'ERROR')
+                            self.emit_log(f'[Concurrent {thread_num}] Browser closed, immediately restarting...', 'INFO')
+                            await asyncio.sleep(0.1)  # Small delay before restart
                 
-                self.emit_log(f'[Thread {thread_num}] Thread finished')
+                self.emit_log(f'[Concurrent {thread_num}] Concurrent browser stopped')
             
             try:
-                # Start all threads immediately without delay
-                for i in range(num_threads):
+                # Start all concurrent browsers immediately
+                for i in range(num_concurrent):
                     thread_counter += 1
                     task = asyncio.create_task(run_rpa_thread(thread_counter))
                     active_tasks.append(task)
-                    # No delay - instances should start immediately
+                    # Small delay between browser starts to avoid resource contention
+                    await asyncio.sleep(0.5)
                 
                 # Wait for all threads to complete
-                self.emit_log(f'All {num_threads} threads started, maintaining thread count...')
+                self.emit_log(f'✓ All {num_concurrent} concurrent browsers started and running')
+                self.emit_log('Browsers will automatically restart if closed. Press STOP to end automation.')
                 await asyncio.gather(*active_tasks, return_exceptions=True)
                 
-                self.emit_log('✓ All RPA threads completed')
+                self.emit_log('✓ All concurrent browsers stopped')
                     
             finally:
                 await self.browser_manager.close()
@@ -20217,11 +20220,11 @@ class AppGUI(QMainWindow):
         traffic_layout.addLayout(max_time_layout)
         
         # Threads (concurrent browsers) - Fixed to open multiple profiles simultaneously
-        traffic_layout.addWidget(QLabel('THREAD:'))
+        traffic_layout.addWidget(QLabel('Concurrent:'))
         self.threads_input = QSpinBox()
         self.threads_input.setRange(1, 1000)
         self.threads_input.setValue(1)
-        self.threads_input.setToolTip('Number of threads/concurrent browser profiles to open simultaneously. Example: 50 = opens 50 profiles at once')
+        self.threads_input.setToolTip('Number of concurrent browser profiles to open simultaneously. Example: 50 = opens 50 profiles at once')
         traffic_layout.addWidget(self.threads_input)
         
         traffic_layout.addWidget(QLabel('Content Interaction % (0-100):'))
