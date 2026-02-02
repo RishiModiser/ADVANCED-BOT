@@ -21098,7 +21098,7 @@ class AppGUI(QMainWindow):
         logs_group.setLayout(logs_layout)
         layout.addWidget(logs_group)
         
-        # HumanEx Bot Logo
+        # HumanEx Logo
         logo_widget = QWidget()
         logo_layout = QVBoxLayout(logo_widget)
         logo_layout.setContentsMargins(20, 20, 20, 10)
@@ -21121,7 +21121,7 @@ class AppGUI(QMainWindow):
                 logo_label.setAlignment(Qt.AlignCenter)
         except Exception as e:
             # Fallback to text-based logo if SVG loading fails
-            logo_text = QLabel('🚀 HumanEx Bot')
+            logo_text = QLabel('🚀 HumanEx')
             logo_text.setFont(QFont('Arial', 16, QFont.Bold))
             logo_text.setAlignment(Qt.AlignCenter)
             logo_text.setStyleSheet('color: #2c3e50; padding: 10px;')
