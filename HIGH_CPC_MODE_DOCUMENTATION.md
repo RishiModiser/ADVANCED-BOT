@@ -123,7 +123,7 @@ The HIGH CPC mode integrates with existing bot configuration:
 ### Main Functions
 
 1. **`execute_high_cpc_mode()`** - Main execution function
-   - Location: `advanced_bot.py`, line ~19023
+   - Location: `advanced_bot.py`, in `AutomationWorker` class
    - Handles all 5 tabs and orchestrates the entire flow
 
 2. **`_fill_checkout_form()`** - Helper for form filling
@@ -135,6 +135,7 @@ The HIGH CPC mode integrates with existing bot configuration:
    - Implements safety checks and error handling
 
 4. **`toggle_high_cpc_inputs()`** - UI toggle function
+   - Location: `advanced_bot.py`, in `AppGUI` class
    - Enables/disables input fields based on checkbox state
 
 ### Configuration Keys

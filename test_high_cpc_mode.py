@@ -4,10 +4,6 @@ Test HIGH CPC/CPM Mode configuration and basic validation.
 """
 
 import sys
-from pathlib import Path
-
-# Import the module
-sys.path.insert(0, str(Path(__file__).parent))
 
 
 def test_high_cpc_config():
