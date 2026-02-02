@@ -19504,18 +19504,17 @@ class AutomationWorker(QObject):
                         
                         if should_restart:
                             self.emit_log(f'[Concurrent {thread_num}] Browser closed, immediately restarting...', 'INFO')
-                            await asyncio.sleep(0.1)  # Small delay before restart
+                            # Immediate restart - no delay to maintain N concurrent visible browsers
                 
                 self.emit_log(f'[Concurrent {thread_num}] Concurrent browser stopped')
             
             try:
-                # Start all concurrent browsers immediately
+                # Start all concurrent browsers immediately (no delay)
                 for i in range(num_concurrent):
                     thread_counter += 1
                     task = asyncio.create_task(run_rpa_thread(thread_counter))
                     active_tasks.append(task)
-                    # Small delay between browser starts to avoid resource contention
-                    await asyncio.sleep(0.5)
+                    # No delay - start all browsers immediately to maintain N concurrent
                 
                 # Wait for all threads to complete
                 self.emit_log(f'✓ All {num_concurrent} concurrent browsers started and running')
@@ -19695,13 +19694,20 @@ class AutomationWorker(QObject):
                                 await asyncio.sleep(1)
                                 continue
                         else:
-                            # No proxy mode - we've completed initial batch
-                            self.emit_log('Initial batch completed (no proxy rotation mode)')
-                            break
+                            # No proxy mode - keep spawning workers continuously to maintain N concurrent
+                            # This maintains N visible browsers in taskbar at all times
+                            self.emit_log('No active workers, spawning new batch to maintain concurrent count...')
+                            await asyncio.sleep(0.1)
+                            continue
                     
-                    # Wait for at least one worker to finish before checking again
+                    # Maintain exactly N concurrent browsers - check frequently and spawn immediately
+                    # Short sleep to prevent busy-wait, but fast enough to maintain concurrent count
                     if active_workers:
-                        done, pending = await asyncio.wait(active_workers, return_when=asyncio.FIRST_COMPLETED)
+                        # Wait briefly for any worker completion, then immediately check and spawn
+                        done, pending = await asyncio.wait(active_workers, timeout=0.1, return_when=asyncio.FIRST_COMPLETED)
+                    else:
+                        # Very short pause before checking again
+                        await asyncio.sleep(0.1)
                 
                 # Wait for all remaining workers to finish
                 if active_workers:
