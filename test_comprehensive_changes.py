@@ -91,14 +91,14 @@ def test_time_units():
     return True
 
 def test_thread_concurrent_label():
-    """Test THREAD/CONCURRENT label."""
-    print("\n=== Testing THREAD/CONCURRENT Label ===")
+    """Test Concurrent label."""
+    print("\n=== Testing Concurrent Label ===")
     
     with open('advanced_bot.py', 'r') as f:
         content = f.read()
     
-    assert 'THREAD/CONCURRENT' in content, "THREAD/CONCURRENT label not found"
-    print("✓ THREAD/CONCURRENT label found")
+    assert "'Concurrent:'" in content or "Concurrent:" in content, "Concurrent label not found"
+    print("✓ Concurrent label found")
     
     # Should not have old label
     assert 'Number of Profiles to Open:' not in content, "Old label still present"
@@ -131,9 +131,9 @@ def test_rpa_mode_enhancements():
     with open('advanced_bot.py', 'r') as f:
         content = f.read()
     
-    # Test for thread maintenance
-    assert 'thread maintenance' in content.lower(), "Thread maintenance not found"
-    print("✓ Thread maintenance logic added")
+    # Test for auto-restart/thread maintenance
+    assert 'auto-restart' in content.lower() or 'thread maintenance' in content.lower(), "Auto-restart/Thread maintenance not found"
+    print("✓ Auto-restart logic added")
     
     # Test for proxy fallback
     assert 'proxy failure' in content.lower() or 'proxy failed' in content.lower(), "Proxy fallback not found"
