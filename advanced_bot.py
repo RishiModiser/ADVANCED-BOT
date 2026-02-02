@@ -19020,6 +19020,364 @@ class AutomationWorker(QObject):
         except Exception as e:
             self.emit_log(f'Error during interaction: {e}', 'WARNING')
     
+    async def execute_high_cpc_mode(self, profile_num, high_cpc_url, target_domain, stay_time, 
+                                    consent_manager, platform='windows'):
+        """Execute HIGH CPC/CPM Mode with 4 High CPC tabs and 1 Target Domain tab.
+        
+        Args:
+            profile_num: Profile number for logging
+            high_cpc_url: High CPC website URL
+            target_domain: Target domain URL
+            stay_time: Total stay time on target domain in seconds
+            consent_manager: ConsentManager instance for cookie handling
+            platform: Platform to use (windows/android)
+        """
+        try:
+            self.emit_log(f'━━━ Profile {profile_num} | HIGH CPC/CPM Mode | Platform: {platform} ━━━')
+            
+            # Create browser context
+            self.emit_log(f'Creating browser context for HIGH CPC mode...')
+            context = await self.browser_manager.create_context(platform)
+            if not context:
+                self.emit_log(f'Failed to create browser context', 'ERROR')
+                return False
+            
+            try:
+                high_cpc_tabs = []
+                
+                # Open High CPC URL in 4 tabs
+                self.emit_log(f'Opening High CPC URL in 4 tabs: {high_cpc_url[:50]}...')
+                for i in range(4):
+                    page = await context.new_page()
+                    high_cpc_tabs.append(page)
+                    self.emit_log(f'Tab {i+1}: Loading High CPC URL...')
+                    await page.goto(high_cpc_url, wait_until='domcontentloaded', timeout=30000)
+                    await asyncio.sleep(0.5)
+                
+                self.emit_log('All 4 tabs loaded, starting cookie handling...')
+                
+                # Tab 1: Handle cookies and move to next tab immediately
+                self.emit_log('Tab 1: Checking for cookie popup...')
+                tab1_handled = await consent_manager.handle_consents(high_cpc_tabs[0])
+                if tab1_handled:
+                    self.emit_log('Tab 1: Cookie popup accepted')
+                await asyncio.sleep(0.5)
+                
+                # Tab 2: Wait up to 20 seconds for cookie popup
+                self.emit_log('Tab 2: Waiting for cookie popup (up to 20 seconds)...')
+                try:
+                    # Wait for page to properly reload
+                    await asyncio.sleep(2)
+                    # Try to handle consent with timeout
+                    tab2_handled = await asyncio.wait_for(
+                        consent_manager.handle_consents(high_cpc_tabs[1]),
+                        timeout=20
+                    )
+                    if tab2_handled:
+                        self.emit_log('Tab 2: Cookie popup accepted')
+                    else:
+                        self.emit_log('Tab 2: No cookie popup found, moving on')
+                except asyncio.TimeoutError:
+                    self.emit_log('Tab 2: No cookie popup appeared within 20 seconds')
+                await asyncio.sleep(0.5)
+                
+                # Tab 3: Wait up to 20 seconds for cookie popup
+                self.emit_log('Tab 3: Waiting for cookie popup (up to 20 seconds)...')
+                try:
+                    await asyncio.sleep(2)
+                    tab3_handled = await asyncio.wait_for(
+                        consent_manager.handle_consents(high_cpc_tabs[2]),
+                        timeout=20
+                    )
+                    if tab3_handled:
+                        self.emit_log('Tab 3: Cookie popup accepted')
+                    else:
+                        self.emit_log('Tab 3: No cookie popup found, moving on')
+                except asyncio.TimeoutError:
+                    self.emit_log('Tab 3: No cookie popup appeared within 20 seconds')
+                await asyncio.sleep(0.5)
+                
+                # Tab 4: Handle cookies and perform shopping interactions
+                self.emit_log('Tab 4: Starting shopping interaction flow...')
+                try:
+                    # Wait for page to fully reload
+                    await asyncio.sleep(2)
+                    
+                    # Handle cookie popup if present (10 seconds timeout)
+                    try:
+                        tab4_handled = await asyncio.wait_for(
+                            consent_manager.handle_consents(high_cpc_tabs[3]),
+                            timeout=10
+                        )
+                        if tab4_handled:
+                            self.emit_log('Tab 4: Cookie popup accepted')
+                    except asyncio.TimeoutError:
+                        self.emit_log('Tab 4: No cookie popup within 10 seconds, proceeding...')
+                    
+                    # Shopping interaction flow
+                    self.emit_log('Tab 4: Performing shopping interactions...')
+                    
+                    # Try to find and click product/add to bag buttons
+                    product_selectors = [
+                        'button:has-text("Add to Bag")',
+                        'button:has-text("Add to Cart")',
+                        'button:has-text("Shop Now")',
+                        'button:has-text("Buy Now")',
+                        'a:has-text("Shop Now")',
+                        '[data-testid*="add-to-cart"]',
+                        '.add-to-cart',
+                        '.add-to-bag'
+                    ]
+                    
+                    # Try to click a product button
+                    clicked = False
+                    for selector in product_selectors:
+                        try:
+                            elements = await high_cpc_tabs[3].query_selector_all(selector)
+                            if elements:
+                                visible_element = None
+                                for elem in elements:
+                                    if await elem.is_visible():
+                                        visible_element = elem
+                                        break
+                                
+                                if visible_element:
+                                    await HumanBehavior.random_delay(1000, 2000)
+                                    await visible_element.click()
+                                    self.emit_log(f'Tab 4: Clicked button: {selector[:30]}...')
+                                    clicked = True
+                                    await asyncio.sleep(2)
+                                    break
+                        except Exception:
+                            continue
+                    
+                    if clicked:
+                        # Try to go to cart
+                        cart_selectors = [
+                            'a:has-text("Cart")',
+                            'a:has-text("Bag")',
+                            '[data-testid*="cart"]',
+                            '.cart-link',
+                            'button:has-text("View Cart")',
+                            'button:has-text("View Bag")'
+                        ]
+                        
+                        for selector in cart_selectors:
+                            try:
+                                element = await high_cpc_tabs[3].query_selector(selector)
+                                if element and await element.is_visible():
+                                    await HumanBehavior.random_delay(1000, 2000)
+                                    await element.click()
+                                    self.emit_log('Tab 4: Navigated to cart')
+                                    await asyncio.sleep(2)
+                                    break
+                            except Exception:
+                                continue
+                        
+                        # Try to proceed to checkout
+                        checkout_selectors = [
+                            'button:has-text("Checkout")',
+                            'a:has-text("Checkout")',
+                            'button:has-text("Proceed to Checkout")',
+                            '[data-testid*="checkout"]',
+                            '.checkout-button'
+                        ]
+                        
+                        for selector in checkout_selectors:
+                            try:
+                                element = await high_cpc_tabs[3].query_selector(selector)
+                                if element and await element.is_visible():
+                                    await HumanBehavior.random_delay(1000, 2000)
+                                    await element.click()
+                                    self.emit_log('Tab 4: Proceeded to checkout')
+                                    await asyncio.sleep(2)
+                                    break
+                            except Exception:
+                                continue
+                        
+                        # Fill checkout form with random data
+                        self.emit_log('Tab 4: Filling checkout form with random data...')
+                        await self._fill_checkout_form(high_cpc_tabs[3])
+                    else:
+                        self.emit_log('Tab 4: No shopping buttons found, skipping shopping flow')
+                    
+                except Exception as e:
+                    self.emit_log(f'Tab 4 shopping interaction error: {e}', 'WARNING')
+                
+                # Open Target Domain in 5th tab
+                self.emit_log(f'Opening Target Domain in 5th tab: {target_domain[:50]}...')
+                target_page = await context.new_page()
+                await target_page.goto(target_domain, wait_until='domcontentloaded', timeout=30000)
+                await asyncio.sleep(2)
+                
+                # Perform scrolling and clicking on Target Domain
+                self.emit_log(f'Starting Target Domain interaction (stay time: {stay_time} seconds)...')
+                start_time = time.time()
+                half_time = stay_time / 2
+                
+                # Initial scroll and clicks
+                await HumanBehavior.scroll_page(target_page, depth_percent=random.randint(40, 80))
+                await asyncio.sleep(random.uniform(1, 2))
+                
+                # Perform 1-2 random clicks
+                num_clicks = random.randint(1, 2)
+                self.emit_log(f'Performing {num_clicks} initial random clicks...')
+                await self._perform_random_clicks(target_page, num_clicks)
+                
+                # Wait until half time
+                elapsed = time.time() - start_time
+                remaining_to_half = half_time - elapsed
+                if remaining_to_half > 0:
+                    self.emit_log(f'Waiting until half-time ({half_time:.0f}s)...')
+                    await asyncio.sleep(remaining_to_half)
+                
+                # Perform 1-2 more random clicks at half-time
+                num_clicks = random.randint(1, 2)
+                self.emit_log(f'Half-time reached, performing {num_clicks} more clicks...')
+                await HumanBehavior.scroll_page(target_page, depth_percent=random.randint(30, 70))
+                await asyncio.sleep(random.uniform(1, 2))
+                await self._perform_random_clicks(target_page, num_clicks)
+                
+                # Wait for remaining time
+                elapsed = time.time() - start_time
+                remaining_time = stay_time - elapsed
+                if remaining_time > 0:
+                    self.emit_log(f'Waiting for remaining time ({remaining_time:.0f}s)...')
+                    # Continue scrolling during remaining time
+                    while time.time() - start_time < stay_time:
+                        await HumanBehavior.scroll_page(target_page, depth_percent=random.randint(20, 60))
+                        wait_time = min(5, stay_time - (time.time() - start_time))
+                        if wait_time > 0:
+                            await asyncio.sleep(wait_time)
+                
+                self.emit_log('Stay time completed, closing all tabs...')
+                
+                # Close all tabs
+                for i, tab in enumerate(high_cpc_tabs):
+                    try:
+                        await tab.close()
+                        self.emit_log(f'Closed High CPC Tab {i+1}')
+                    except Exception:
+                        pass
+                
+                try:
+                    await target_page.close()
+                    self.emit_log('Closed Target Domain tab')
+                except Exception:
+                    pass
+                
+                self.emit_log(f'✓ HIGH CPC/CPM Mode Profile {profile_num} completed successfully')
+                return True
+                
+            finally:
+                # Always close context
+                await context.close()
+                
+        except Exception as e:
+            self.emit_log(f'HIGH CPC/CPM Mode error: {e}', 'ERROR')
+            return False
+    
+    async def _fill_checkout_form(self, page: Page):
+        """Fill checkout form with random data."""
+        try:
+            # Random data generation
+            names = ['John Smith', 'Jane Doe', 'Bob Johnson', 'Alice Williams', 'Charlie Brown']
+            addresses = ['123 Main St', '456 Oak Ave', '789 Pine Rd', '321 Elm Street', '654 Maple Drive']
+            cities = ['New York', 'Los Angeles', 'Chicago', 'Houston', 'Phoenix']
+            states = ['NY', 'CA', 'IL', 'TX', 'AZ']
+            postal_codes = ['10001', '90001', '60601', '77001', '85001']
+            countries = ['United States', 'USA', 'US']
+            phones = ['555-0101', '555-0102', '555-0103', '555-0104', '555-0105']
+            
+            # Common form field selectors
+            form_fields = {
+                'name': ['input[name*="name"]', '#name', '[placeholder*="Name"]', '[name*="firstName"]', '[name*="lastName"]'],
+                'address': ['input[name*="address"]', '#address', '[placeholder*="Address"]', '[name*="street"]'],
+                'city': ['input[name*="city"]', '#city', '[placeholder*="City"]'],
+                'state': ['input[name*="state"]', '#state', '[placeholder*="State"]', 'select[name*="state"]'],
+                'postal': ['input[name*="postal"]', 'input[name*="zip"]', '#postal', '#zip', '[placeholder*="Postal"]', '[placeholder*="ZIP"]'],
+                'country': ['input[name*="country"]', '#country', 'select[name*="country"]'],
+                'phone': ['input[name*="phone"]', '#phone', '[placeholder*="Phone"]', 'input[type="tel"]']
+            }
+            
+            # Try to fill each field
+            for field_type, selectors in form_fields.items():
+                for selector in selectors:
+                    try:
+                        elements = await page.query_selector_all(selector)
+                        for element in elements:
+                            if await element.is_visible():
+                                await HumanBehavior.random_delay(500, 1000)
+                                
+                                # Select appropriate random data
+                                if field_type == 'name':
+                                    data = random.choice(names)
+                                elif field_type == 'address':
+                                    data = random.choice(addresses)
+                                elif field_type == 'city':
+                                    data = random.choice(cities)
+                                elif field_type == 'state':
+                                    data = random.choice(states)
+                                elif field_type == 'postal':
+                                    data = random.choice(postal_codes)
+                                elif field_type == 'country':
+                                    data = random.choice(countries)
+                                elif field_type == 'phone':
+                                    data = random.choice(phones)
+                                else:
+                                    continue
+                                
+                                await element.fill(data)
+                                self.emit_log(f'Filled {field_type} field with: {data}')
+                                await asyncio.sleep(0.5)
+                                break
+                    except Exception:
+                        continue
+            
+        except Exception as e:
+            self.emit_log(f'Form filling error: {e}', 'WARNING')
+    
+    async def _perform_random_clicks(self, page: Page, num_clicks: int):
+        """Perform random clicks on clickable elements."""
+        try:
+            # Find clickable elements
+            clickable_selectors = ['a', 'button', '[role="button"]', '[onclick]']
+            all_clickable = []
+            
+            for selector in clickable_selectors:
+                try:
+                    elements = await page.query_selector_all(selector)
+                    for elem in elements:
+                        if await elem.is_visible():
+                            all_clickable.append(elem)
+                except Exception:
+                    continue
+            
+            if not all_clickable:
+                self.emit_log('No clickable elements found')
+                return
+            
+            # Perform random clicks
+            for i in range(min(num_clicks, len(all_clickable))):
+                try:
+                    element = random.choice(all_clickable)
+                    
+                    # Check if element is still attached and visible
+                    if await element.is_visible():
+                        await HumanBehavior.random_delay(1000, 2000)
+                        await element.click(timeout=3000)
+                        self.emit_log(f'Performed random click {i+1}/{num_clicks}')
+                        await asyncio.sleep(random.uniform(1, 2))
+                        
+                        # Remove clicked element from list
+                        all_clickable.remove(element)
+                except Exception as e:
+                    self.emit_log(f'Click attempt {i+1} skipped: {str(e)[:50]}', 'WARNING')
+                    continue
+                    
+        except Exception as e:
+            self.emit_log(f'Random clicks error: {e}', 'WARNING')
+    
     
     async def execute_single_visit(self, visit_num, url_list, platforms, visit_type, 
                                    search_keyword, target_domain, referral_sources,
@@ -19185,9 +19543,20 @@ class AutomationWorker(QObject):
                                      random_time_enabled, stay_time, min_time_spend, max_time_spend, enable_consent,
                                      enable_interaction, enable_extra_pages, max_pages,
                                      consent_manager, enable_highlight=False,
-                                     utm_campaign='', utm_medium='social', utm_term='', utm_content=''):
+                                     utm_campaign='', utm_medium='social', utm_term='', utm_content='',
+                                     high_cpc_enabled=False, high_cpc_url='', high_cpc_target='', high_cpc_stay_time=180):
         """Execute a single browser profile with one page."""
         try:
+            # Check if HIGH CPC/CPM Mode is enabled
+            if high_cpc_enabled and high_cpc_url and high_cpc_target:
+                # Execute HIGH CPC/CPM Mode instead of normal mode
+                platform = random.choice(platforms)
+                return await self.execute_high_cpc_mode(
+                    profile_num, high_cpc_url, high_cpc_target, 
+                    high_cpc_stay_time, consent_manager, platform
+                )
+            
+            # Normal mode execution (existing code)
             # Select random platform for this profile
             platform = random.choice(platforms)
             
@@ -19574,8 +19943,19 @@ class AutomationWorker(QObject):
             enable_popups = self.config.get('enable_popups', True)
             enable_text_highlight = self.config.get('enable_text_highlight', False)
             
+            # HIGH CPC/CPM Mode configuration
+            high_cpc_enabled = self.config.get('high_cpc_enabled', False)
+            high_cpc_url = self.config.get('high_cpc_url', '')
+            high_cpc_target = self.config.get('high_cpc_target', '')
+            high_cpc_stay_time = self.config.get('high_cpc_stay_time', 180)
+            
             
             self.emit_log(f'Configuration: {len(url_list)} URLs, {num_threads} concurrent threads')
+            if high_cpc_enabled:
+                self.emit_log('✓ HIGH CPC/CPM Mode enabled')
+                self.emit_log(f'  High CPC URL: {high_cpc_url[:50]}...')
+                self.emit_log(f'  Target Domain: {high_cpc_target[:50]}...')
+                self.emit_log(f'  Target Stay Time: {high_cpc_stay_time} seconds')
             if random_time_enabled:
                 self.emit_log(f'Time per profile: Random between {min_time_spend}-{max_time_spend} seconds with human scrolling')
             else:
@@ -19649,7 +20029,8 @@ class AutomationWorker(QObject):
                             random_time_enabled, stay_time, min_time_spend, max_time_spend, enable_consent,
                             enable_interaction, enable_extra_pages, max_pages,
                             consent_manager, enable_text_highlight,
-                            utm_campaign, utm_medium, utm_term, utm_content
+                            utm_campaign, utm_medium, utm_term, utm_content,
+                            high_cpc_enabled, high_cpc_url, high_cpc_target, high_cpc_stay_time
                         )
                         
                         if result:
@@ -20313,6 +20694,58 @@ class AppGUI(QMainWindow):
         traffic_group.setLayout(traffic_layout)
         layout.addWidget(traffic_group)
         
+        # HIGH CPC/CPM Mode Section
+        self.high_cpc_group = QGroupBox('💰 HIGH CPC/CPM Mode')
+        high_cpc_layout = QVBoxLayout()
+        high_cpc_layout.setSpacing(10)
+        
+        # Enable checkbox
+        self.high_cpc_enabled = QCheckBox('✅ Enable HIGH CPC/CPM Mode')
+        self.high_cpc_enabled.setChecked(False)
+        self.high_cpc_enabled.setToolTip('Enable advanced CPC/CPM mode with multi-tab High CPC website interaction')
+        self.high_cpc_enabled.toggled.connect(self.toggle_high_cpc_inputs)
+        high_cpc_layout.addWidget(self.high_cpc_enabled)
+        
+        # High CPC Website URL
+        high_cpc_layout.addWidget(QLabel('High CPC Website URL:'))
+        self.high_cpc_url_input = QLineEdit()
+        self.high_cpc_url_input.setPlaceholderText('https://high-cpc-website.com')
+        self.high_cpc_url_input.setEnabled(False)
+        high_cpc_layout.addWidget(self.high_cpc_url_input)
+        
+        # Target Domain URL
+        high_cpc_layout.addWidget(QLabel('Target Domain URL:'))
+        self.high_cpc_target_input = QLineEdit()
+        self.high_cpc_target_input.setPlaceholderText('https://target-domain.com')
+        self.high_cpc_target_input.setEnabled(False)
+        high_cpc_layout.addWidget(self.high_cpc_target_input)
+        
+        # Stay Time
+        stay_time_cpc_layout = QHBoxLayout()
+        stay_time_cpc_layout.addWidget(QLabel('Target Stay Time (seconds):'))
+        self.high_cpc_stay_time_input = QSpinBox()
+        self.high_cpc_stay_time_input.setRange(30, 3600)
+        self.high_cpc_stay_time_input.setValue(180)  # 3 minutes default
+        self.high_cpc_stay_time_input.setSuffix(' sec')
+        self.high_cpc_stay_time_input.setToolTip('Total time to spend on Target Domain')
+        self.high_cpc_stay_time_input.setEnabled(False)
+        stay_time_cpc_layout.addWidget(self.high_cpc_stay_time_input)
+        stay_time_cpc_layout.addStretch()
+        high_cpc_layout.addLayout(stay_time_cpc_layout)
+        
+        # Info label
+        info_label = QLabel('ℹ️ This mode will:\n'
+                           '1. Open High CPC URL in 4 tabs with cookie handling\n'
+                           '2. Perform shopping interaction in Tab 4 (add to bag, checkout, form filling)\n'
+                           '3. Open Target Domain in 5th tab with scrolling and clicks\n'
+                           '4. Close all tabs after stay time completes')
+        info_label.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
+        info_label.setWordWrap(True)
+        high_cpc_layout.addWidget(info_label)
+        
+        self.high_cpc_group.setLayout(high_cpc_layout)
+        layout.addWidget(self.high_cpc_group)
+        
         # Platform Selection
         platform_group = QGroupBox('💻 Platform')
         platform_layout = QVBoxLayout()
@@ -20587,6 +21020,12 @@ class AppGUI(QMainWindow):
         if min_time > max_time:
             # Auto-adjust max to match min if min becomes greater
             self.max_time_input.setValue(min_time)
+    
+    def toggle_high_cpc_inputs(self, enabled: bool):
+        """Toggle HIGH CPC/CPM mode input fields."""
+        self.high_cpc_url_input.setEnabled(enabled)
+        self.high_cpc_target_input.setEnabled(enabled)
+        self.high_cpc_stay_time_input.setEnabled(enabled)
     
     def create_proxy_tab(self) -> QWidget:
         """Create proxy settings tab."""
@@ -21460,6 +21899,11 @@ class AppGUI(QMainWindow):
                     'enable_text_highlight': self.enable_text_highlight.isChecked(),
                     'imported_useragents': self.imported_useragents,
                     'imported_cookies': self.imported_cookies,
+                    # HIGH CPC/CPM Mode configuration
+                    'high_cpc_enabled': self.high_cpc_enabled.isChecked(),
+                    'high_cpc_url': self.high_cpc_url_input.text().strip(),
+                    'high_cpc_target': self.high_cpc_target_input.text().strip(),
+                    'high_cpc_stay_time': self.high_cpc_stay_time_input.value(),
                 }
             
             # Update UI
