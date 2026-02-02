@@ -17150,8 +17150,8 @@ class HumanBehavior:
         
         Args:
             page: The page to scroll
-            depth_percent: Scroll depth percentage (0-100)
-            position: Scroll position - 'Top', 'Intermediate', or 'Bottom'
+            depth_percent: Scroll depth percentage (0-100) - how much to scroll relative to the starting position
+            position: Scroll position - 'Top' (scroll down from top), 'Intermediate' (scroll from middle), or 'Bottom' (scroll up from bottom)
         """
         try:
             if depth_percent is None:
@@ -17161,37 +17161,48 @@ class HumanBehavior:
             page_height = await page.evaluate('document.documentElement.scrollHeight')
             viewport_height = await page.evaluate('window.innerHeight')
             
-            # Calculate initial position based on position parameter
+            # Calculate initial position and target based on position parameter
             if position == 'Top':
+                # Start from top (0%) and scroll down to depth_percent
                 start_position = 0
+                target_scroll = int(page_height * (depth_percent / 100))
+                scroll_direction = 1  # scroll down
             elif position == 'Bottom':
-                start_position = int(page_height * 0.7)  # Start from 70% down
+                # Start from bottom and scroll up by depth_percent
+                start_position = page_height - viewport_height  # Start at actual bottom
+                # For Bottom, depth_percent means how much to scroll UP from bottom
+                # e.g., depth=50 means scroll up to 50% from bottom (which is 50% of page)
+                target_scroll = int(page_height * ((100 - depth_percent) / 100))
+                scroll_direction = -1  # scroll up
             else:  # Intermediate
-                start_position = int(page_height * 0.3)  # Start from 30% down
+                # Start from 30% and scroll down to start + depth_percent
+                start_position = int(page_height * 0.3)
+                target_scroll = int(page_height * ((30 + depth_percent * 0.7) / 100))  # Scale to remaining 70%
+                scroll_direction = 1  # scroll down
             
-            # Scroll to start position first if not at top
-            if start_position > 0:
-                await page.evaluate(f'''
-                    window.scrollTo({{
-                        top: {start_position},
-                        behavior: 'smooth'
-                    }})
-                ''')
-                await asyncio.sleep(0.5)
+            # Scroll to start position first
+            await page.evaluate(f'''
+                window.scrollTo({{
+                    top: {start_position},
+                    behavior: 'smooth'
+                }})
+            ''')
+            await asyncio.sleep(0.5)
             
-            target_scroll = int(page_height * (depth_percent / 100))
-            
-            # Scroll in steps based on viewport height with variable speed
             current_position = start_position
-            scroll_direction = 1  # 1 for down, -1 for up
             
-            while current_position < target_scroll:
+            # Scroll in steps towards target with variable speed
+            while (scroll_direction == 1 and current_position < target_scroll) or \
+                  (scroll_direction == -1 and current_position > target_scroll):
                 # Random step size based on viewport (more realistic)
                 step = int(viewport_height * random.uniform(0.3, 0.8)) * scroll_direction
                 next_position = current_position + step
                 
-                # Clamp to valid range
-                next_position = max(0, min(next_position, target_scroll))
+                # Clamp to valid range based on direction
+                if scroll_direction == 1:  # scrolling down
+                    next_position = max(start_position, min(next_position, target_scroll))
+                else:  # scrolling up
+                    next_position = max(target_scroll, min(next_position, start_position))
                 
                 # ENHANCED: Add mouse movement during scroll (simulating user moving mouse while scrolling)
                 try:
@@ -21193,6 +21204,7 @@ class AppGUI(QMainWindow):
                 config = {
                     'rpa_mode': True,
                     'rpa_script': rpa_script,
+                    'threads': self.threads_input.value(),  # Number of concurrent browsers
                     'proxy_enabled': self.proxy_enabled_check.isChecked(),
                     'proxy_type': self.proxy_type_combo.currentText(),
                     'proxy_list': self.proxy_list_input.toPlainText(),
