@@ -20695,6 +20695,27 @@ class AppGUI(QMainWindow):
         self.action_toolbox = QListWidget()
         self.action_toolbox.setDragEnabled(True)
         self.action_toolbox.setMaximumWidth(200)
+        self.action_toolbox.setStyleSheet("""
+            QListWidget {
+                background-color: #f8f9fa;
+                border: 1px solid #dee2e6;
+                border-radius: 5px;
+                padding: 5px;
+            }
+            QListWidget::item {
+                padding: 8px;
+                margin: 2px;
+                border-radius: 3px;
+                background-color: white;
+            }
+            QListWidget::item:hover {
+                background-color: #e9ecef;
+            }
+            QListWidget::item:selected {
+                background-color: #007bff;
+                color: white;
+            }
+        """)
         
         # Add action items with emojis - UPDATED NAMES
         actions = [
