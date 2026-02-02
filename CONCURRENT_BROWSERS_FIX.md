@@ -11,7 +11,8 @@ The user reported the following issues with RPA mode:
 
 ## Changes Made
 
-### 1. UI Label Change (Line 20220)
+### 1. UI Label Change (advanced_bot.py, around line 20220)
+**Note**: Line numbers are approximate and current as of February 2026
 **Before:**
 ```python
 traffic_layout.addWidget(QLabel('THREAD:'))
@@ -25,7 +26,7 @@ traffic_layout.addWidget(QLabel('Concurrent:'))
 - Changed the label from "THREAD:" to "Concurrent:" to better reflect what the setting does
 - Updated tooltip text to be more descriptive
 
-### 2. RPA Mode Concurrent Browser Logic (Lines 19353-19477)
+### 2. RPA Mode Concurrent Browser Logic (run_rpa_mode function)
 
 #### Key Changes:
 
@@ -62,9 +63,9 @@ traffic_layout.addWidget(QLabel('Concurrent:'))
 ### 3. Imported Useragents Already Working
 
 The imported useragents functionality was already implemented correctly:
-- `BrowserManager.__init__` initializes `self.imported_useragents = []` (Line 18329)
-- `AutomationTask.__init__` passes imported useragents to browser manager (Line 18562)
-- `BrowserManager.create_context` uses imported useragents if available (Lines 18394-18396)
+- `BrowserManager.__init__` initializes `self.imported_useragents = []`
+- `AutomationTask.__init__` passes imported useragents to browser manager
+- `BrowserManager.create_context` uses imported useragents if available
 
 **Added Enhancement**: Now logs when imported useragents are loaded, so users can confirm they're being used
 

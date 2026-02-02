@@ -112,8 +112,10 @@ def test_concurrent_terminology():
     rpa_mode_section = content[rpa_mode_start:rpa_mode_end]
     
     # Should use 'Concurrent' in log messages
+    # We expect at least 3 different log messages using 'Concurrent' terminology
+    MIN_EXPECTED_CONCURRENT_LOGS = 3
     concurrent_count = rpa_mode_section.count('[Concurrent ')
-    assert concurrent_count >= 3, f"Not enough 'Concurrent' log messages: {concurrent_count}"
+    assert concurrent_count >= MIN_EXPECTED_CONCURRENT_LOGS, f"Not enough 'Concurrent' log messages: {concurrent_count}"
     print(f"✓ Found {concurrent_count} log messages using 'Concurrent' terminology")
     
     # Should not use old '[Thread ' terminology in RPA mode
