@@ -17,7 +17,7 @@ This implementation addresses all requirements from the problem statement, focus
 **Result:** All QSpinBox inputs now have visible, styled up/down arrows
 
 ### 2. Instant Instance Thread Management ✅
-**Requirement:** Remove delays so instances open immediately (within 0.001ms)
+**Requirement:** Remove delays so instances open immediately (within 0.001 seconds)
 
 **Implementation:**
 - Removed 0.5s delay between thread starts
