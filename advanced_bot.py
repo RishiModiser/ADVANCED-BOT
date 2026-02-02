@@ -18631,22 +18631,35 @@ class AutomationWorker(QObject):
             target_url_with_utm = target_url
         
         self.emit_log(f'[INFO] Referral source selected: {referrer.capitalize()}')
-        self.emit_log(f'Using referral URL pattern: {referrer_url}')
+        self.emit_log(f'Using referral source pattern: {referrer}')
         
         try:
-            # First, briefly visit the referrer page to establish referrer chain
-            self.emit_log(f'Opening referrer: {referrer_url}')
-            await page.goto(referrer_url, wait_until='domcontentloaded', timeout=30000)
-            await asyncio.sleep(random.uniform(2, 4))
+            # FIXED: Instead of visiting referrer URL directly (which causes redirects),
+            # we navigate directly to target with referer header to simulate coming from that source
+            # This avoids ERR_TOO_MANY_REDIRECTS from incomplete referrer URLs
             
-            # Human-like idle and scroll on referrer
-            await HumanBehavior.scroll_page(page, random.randint(20, 40))
-            await asyncio.sleep(random.uniform(1, 3))
+            self.emit_log(f'Navigating to target with {referrer.capitalize()} as referrer...')
             
             # Navigate to target URL with referer header set and UTM parameters
-            # This simulates clicking a link from the referral source
-            self.emit_log(f'Navigating to target from {referrer.capitalize()} referral...')
-            await page.goto(target_url_with_utm, wait_until='domcontentloaded', timeout=30000, referer=referrer_url)
+            # This simulates clicking a link from the referral source without the redirect loop
+            try:
+                await page.goto(
+                    target_url_with_utm, 
+                    wait_until='domcontentloaded', 
+                    timeout=60000,  # Increased timeout
+                    referer=referrer_url
+                )
+                self.emit_log(f'✓ Successfully navigated to target with {referrer.capitalize()} referrer')
+            except Exception as nav_error:
+                # Handle navigation errors gracefully
+                error_msg = str(nav_error)
+                if 'ERR_TOO_MANY_REDIRECTS' in error_msg or 'net::ERR' in error_msg:
+                    self.emit_log(f'⚠ Navigation error: {error_msg[:100]}... Attempting direct visit with referrer header', 'WARNING')
+                    # Fallback: Try direct navigation without the problematic referrer URL
+                    await page.goto(target_url_with_utm, wait_until='domcontentloaded', timeout=60000)
+                    self.emit_log(f'✓ Fallback navigation successful')
+                else:
+                    raise
             
             # CRITICAL FIX: Add proper wait after navigation to prevent immediate close
             await asyncio.sleep(random.uniform(3, 5))
@@ -19037,7 +19050,14 @@ class AutomationWorker(QObject):
             else:
                 # Direct visit
                 self.emit_log(f'[Visit {visit_num}] Direct visit to {target_url}')
-                await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
+                try:
+                    await page.goto(target_url, wait_until='domcontentloaded', timeout=60000)
+                    # CRITICAL FIX: Add wait after direct navigation to prevent immediate close
+                    await asyncio.sleep(random.uniform(3, 5))
+                    self.emit_log(f'[Visit {visit_num}] ✓ Successfully loaded page')
+                except Exception as nav_error:
+                    self.emit_log(f'[Visit {visit_num}] Navigation error: {nav_error}', 'ERROR')
+                    raise
             
             # Handle consents if enabled
             if consent_manager and enable_consent:
@@ -19646,9 +19666,47 @@ class AppGUI(QMainWindow):
                 border-radius: 4px;
                 padding: 5px;
                 background-color: white;
+                color: #000000;
             }
             QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
                 border: 2px solid #3498db;
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 25px;
+                border-left: 1px solid #d0d0d0;
+                border-top-right-radius: 4px;
+                border-bottom-right-radius: 4px;
+                background-color: #f0f0f0;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border: 2px solid #666;
+                width: 6px;
+                height: 6px;
+                border-width: 0 2px 2px 0;
+                transform: rotate(45deg);
+            }
+            QComboBox QAbstractItemView {
+                background-color: white;
+                color: #000000;
+                selection-background-color: #3498db;
+                selection-color: white;
+                border: 1px solid #d0d0d0;
+                outline: 0;
+            }
+            QComboBox QAbstractItemView::item {
+                min-height: 25px;
+                padding: 5px;
+            }
+            QComboBox QAbstractItemView::item:selected {
+                background-color: #3498db;
+                color: white;
+            }
+            QComboBox QAbstractItemView::item:hover {
+                background-color: #5dade2;
+                color: white;
             }
         """)
         
@@ -19719,10 +19777,11 @@ class AppGUI(QMainWindow):
         title.setStyleSheet('color: white; padding: 0;')
         title_layout.addWidget(title)
         
-        subtitle = QLabel('Advanced Human Behaviour Simulation')
+        subtitle = QLabel('Advanced Human\nBehaviour Simulation')
         subtitle.setFont(QFont('Arial', 9))
         subtitle.setAlignment(Qt.AlignCenter)
         subtitle.setStyleSheet('color: #95a5a6; padding: 0;')
+        subtitle.setWordWrap(True)
         title_layout.addWidget(subtitle)
         
         title_widget.setStyleSheet('background-color: #1a252f;')
