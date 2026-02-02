@@ -66,7 +66,8 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QRadioButton, QButtonGroup, QGridLayout, QStackedWidget
 )
 from PySide6.QtCore import Qt, QThread, Signal, QObject
-from PySide6.QtGui import QFont, QColor, QPalette
+from PySide6.QtGui import QFont, QColor, QPalette, QPixmap, QPainter
+from PySide6.QtSvg import QSvgRenderer
 
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Playwright
 
@@ -17147,8 +17148,14 @@ class HumanBehavior:
         await asyncio.sleep(delay)
     
     @staticmethod
-    async def scroll_page(page: Page, depth_percent: int = None):
-        """Scroll page with enhanced human-like behavior - viewport-based, random direction, pauses, mouse movement."""
+    async def scroll_page(page: Page, depth_percent: int = None, position: str = 'Intermediate'):
+        """Scroll page with enhanced human-like behavior - viewport-based, random direction, pauses, mouse movement.
+        
+        Args:
+            page: The page to scroll
+            depth_percent: Scroll depth percentage (0-100)
+            position: Scroll position - 'Top', 'Intermediate', or 'Bottom'
+        """
         try:
             if depth_percent is None:
                 depth_percent = random.randint(30, 100)
@@ -17156,10 +17163,29 @@ class HumanBehavior:
             # Get page and viewport info
             page_height = await page.evaluate('document.documentElement.scrollHeight')
             viewport_height = await page.evaluate('window.innerHeight')
+            
+            # Calculate initial position based on position parameter
+            if position == 'Top':
+                start_position = 0
+            elif position == 'Bottom':
+                start_position = int(page_height * 0.7)  # Start from 70% down
+            else:  # Intermediate
+                start_position = int(page_height * 0.3)  # Start from 30% down
+            
+            # Scroll to start position first if not at top
+            if start_position > 0:
+                await page.evaluate(f'''
+                    window.scrollTo({{
+                        top: {start_position},
+                        behavior: 'smooth'
+                    }})
+                ''')
+                await asyncio.sleep(0.5)
+            
             target_scroll = int(page_height * (depth_percent / 100))
             
             # Scroll in steps based on viewport height with variable speed
-            current_position = 0
+            current_position = start_position
             scroll_direction = 1  # 1 for down, -1 for up
             
             while current_position < target_scroll:
@@ -17766,9 +17792,10 @@ class ScriptExecutor:
                     elif step_type == 'scroll':
                         if self.current_page:
                             depth = step.get('depth', None)
+                            position = step.get('position', 'Intermediate')
                             # Human-like scroll with natural behavior
-                            await HumanBehavior.scroll_page(self.current_page, depth)
-                            self.log_manager.log(f'✓ Step {idx + 1}: Scrolled to depth {depth}%')
+                            await HumanBehavior.scroll_page(self.current_page, depth, position)
+                            self.log_manager.log(f'✓ Step {idx + 1}: Scrolled to depth {depth}% from {position}')
                         else:
                             self.log_manager.log(f'✗ Step {idx + 1}: No page available', 'ERROR')
                     
@@ -20190,7 +20217,7 @@ class AppGUI(QMainWindow):
         traffic_layout.addLayout(max_time_layout)
         
         # Threads (concurrent browsers) - Fixed to open multiple profiles simultaneously
-        traffic_layout.addWidget(QLabel('Thread:'))
+        traffic_layout.addWidget(QLabel('THREAD:'))
         self.threads_input = QSpinBox()
         self.threads_input.setRange(1, 1000)
         self.threads_input.setValue(1)
@@ -20980,6 +21007,66 @@ class AppGUI(QMainWindow):
         logs_group.setLayout(logs_layout)
         layout.addWidget(logs_group)
         
+        # HumanEx Bot Logo
+        logo_widget = QWidget()
+        logo_layout = QVBoxLayout(logo_widget)
+        logo_layout.setContentsMargins(20, 20, 20, 10)
+        logo_layout.setSpacing(8)
+        
+        # Logo image label
+        logo_label = QLabel()
+        
+        try:
+            # Try to load and render the SVG logo
+            logo_path = Path(__file__).parent / 'assets' / 'humanex_logo.svg'
+            if logo_path.exists():
+                renderer = QSvgRenderer(str(logo_path))
+                pixmap = QPixmap(300, 120)
+                pixmap.fill(Qt.transparent)
+                painter = QPainter(pixmap)
+                renderer.render(painter)
+                painter.end()
+                logo_label.setPixmap(pixmap)
+                logo_label.setAlignment(Qt.AlignCenter)
+        except Exception as e:
+            # Fallback to text-based logo if SVG loading fails
+            logo_text = QLabel('🚀 HumanEx Bot')
+            logo_text.setFont(QFont('Arial', 16, QFont.Bold))
+            logo_text.setAlignment(Qt.AlignCenter)
+            logo_text.setStyleSheet('color: #2c3e50; padding: 10px;')
+            logo_layout.addWidget(logo_text)
+            
+            subtitle_text = QLabel('Advanced Human Behaviour Simulation')
+            subtitle_text.setFont(QFont('Arial', 10))
+            subtitle_text.setAlignment(Qt.AlignCenter)
+            subtitle_text.setStyleSheet('color: #7f8c8d;')
+            logo_layout.addWidget(subtitle_text)
+        else:
+            logo_layout.addWidget(logo_label)
+        
+        logo_widget.setStyleSheet('background-color: #f8f9fa; border-radius: 5px;')
+        layout.addWidget(logo_widget)
+        
+        # Footer section
+        footer_widget = QWidget()
+        footer_layout = QVBoxLayout(footer_widget)
+        footer_layout.setContentsMargins(15, 10, 15, 15)
+        footer_layout.setSpacing(5)
+        
+        version_label = QLabel('v5.0 • 2026')
+        version_label.setAlignment(Qt.AlignCenter)
+        version_label.setStyleSheet('color: #7f8c8d; font-size: 11px;')
+        footer_layout.addWidget(version_label)
+        
+        credit_label = QLabel('Made with ❤ by <a href="https://asadwebdev.com" style="color: #3498db; text-decoration: none;">CODEWITHASAD</a>')
+        credit_label.setAlignment(Qt.AlignCenter)
+        credit_label.setStyleSheet('color: #7f8c8d; font-size: 10px;')
+        credit_label.setOpenExternalLinks(True)
+        credit_label.setTextFormat(Qt.RichText)
+        footer_layout.addWidget(credit_label)
+        
+        layout.addWidget(footer_widget)
+        
         return widget
     
     def start_automation(self):
@@ -21422,12 +21509,19 @@ class AppGUI(QMainWindow):
                 self.step_config_layout.addRow('Max Duration (ms):', max_duration_input)
         
         elif step_type == 'scroll':
-            # Scroll configuration with type and speed
+            # Scroll configuration with type, position and speed
             scroll_type_combo = QComboBox()
             scroll_type_combo.addItems(['Smooth', 'Auto'])
             scroll_type_combo.setCurrentText(config.get('scroll_type', 'Smooth'))
             scroll_type_combo.currentTextChanged.connect(lambda text: self.update_step_config(step, 'scroll_type', text))
             self.step_config_layout.addRow('Scroll Type:', scroll_type_combo)
+            
+            # Position option (Top, Intermediate, Bottom)
+            position_combo = QComboBox()
+            position_combo.addItems(['Top', 'Intermediate', 'Bottom'])
+            position_combo.setCurrentText(config.get('position', 'Intermediate'))
+            position_combo.currentTextChanged.connect(lambda text: self.update_step_config(step, 'position', text))
+            self.step_config_layout.addRow('Position:', position_combo)
             
             depth_input = QSpinBox()
             depth_input.setRange(0, 100)

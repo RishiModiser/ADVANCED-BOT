@@ -1,0 +1,46 @@
+<svg width="300" height="120" viewBox="0 0 300 120" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="300" height="120" fill="#f8f9fa"/>
+  
+  <!-- Traffic growth chart bars (representing growth) -->
+  <g transform="translate(20, 70)">
+    <!-- Bar 1 - shortest -->
+    <rect x="0" y="20" width="15" height="20" fill="#3498db" rx="2"/>
+    <!-- Bar 2 -->
+    <rect x="20" y="15" width="15" height="25" fill="#3498db" rx="2"/>
+    <!-- Bar 3 -->
+    <rect x="40" y="8" width="15" height="32" fill="#2ecc71" rx="2"/>
+    <!-- Bar 4 -->
+    <rect x="60" y="3" width="15" height="37" fill="#2ecc71" rx="2"/>
+    <!-- Bar 5 - tallest -->
+    <rect x="80" y="-5" width="15" height="45" fill="#27ae60" rx="2"/>
+    
+    <!-- Upward arrow indicating growth -->
+    <path d="M 100 5 L 110 -5 L 120 5" stroke="#e74c3c" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="110" y1="-5" x2="110" y2="20" stroke="#e74c3c" stroke-width="3" stroke-linecap="round"/>
+  </g>
+  
+  <!-- Text: HumanEx Bot -->
+  <text x="150" y="45" font-family="Arial, sans-serif" font-size="28" font-weight="bold" fill="#2c3e50">
+    HumanEx Bot
+  </text>
+  
+  <!-- Subtitle: Advanced Human Behaviour Simulation -->
+  <text x="150" y="70" font-family="Arial, sans-serif" font-size="12" fill="#7f8c8d">
+    Advanced Human Behaviour Simulation
+  </text>
+  
+  <!-- Decorative human icon -->
+  <g transform="translate(155, 85)">
+    <!-- Head -->
+    <circle cx="0" cy="0" r="4" fill="#3498db"/>
+    <!-- Body -->
+    <line x1="0" y1="4" x2="0" y2="12" stroke="#3498db" stroke-width="2" stroke-linecap="round"/>
+    <!-- Arms -->
+    <line x1="0" y1="7" x2="-4" y2="10" stroke="#3498db" stroke-width="2" stroke-linecap="round"/>
+    <line x1="0" y1="7" x2="4" y2="10" stroke="#3498db" stroke-width="2" stroke-linecap="round"/>
+    <!-- Legs -->
+    <line x1="0" y1="12" x2="-3" y2="17" stroke="#3498db" stroke-width="2" stroke-linecap="round"/>
+    <line x1="0" y1="12" x2="3" y2="17" stroke="#3498db" stroke-width="2" stroke-linecap="round"/>
+  </g>
+</svg>
