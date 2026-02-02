@@ -17145,13 +17145,16 @@ class HumanBehavior:
         await asyncio.sleep(delay)
     
     @staticmethod
-    async def scroll_page(page: Page, depth_percent: int = None, position: str = 'Intermediate'):
+    async def scroll_page(page: Page, depth_percent: int = None, position: str = 'Intermediate', scroll_type: str = 'Smooth', min_speed: int = 100, max_speed: int = 500):
         """Scroll page with enhanced human-like behavior - viewport-based, random direction, pauses, mouse movement.
         
         Args:
             page: The page to scroll
             depth_percent: Scroll depth percentage (0-100) - how much to scroll relative to the starting position
             position: Scroll position - 'Top' (scroll down from top), 'Intermediate' (scroll from middle), or 'Bottom' (scroll up from bottom)
+            scroll_type: Type of scroll - 'Smooth' or 'Auto'
+            min_speed: Minimum speed (pause duration in ms) between scroll steps
+            max_speed: Maximum speed (pause duration in ms) between scroll steps
         """
         try:
             if depth_percent is None:
@@ -17213,18 +17216,20 @@ class HumanBehavior:
                 except:
                     pass
                 
-                # Use smooth scrolling behavior
+                # Use scroll behavior based on scroll_type
+                scroll_behavior = 'smooth' if scroll_type == 'Smooth' else 'auto'
                 await page.evaluate(f'''
                     window.scrollTo({{
                         top: {next_position},
-                        behavior: 'smooth'
+                        behavior: '{scroll_behavior}'
                     }})
                 ''')
                 
                 current_position = next_position
                 
-                # Variable pause between scrolls (human reading)
-                await asyncio.sleep(random.uniform(0.3, 0.8))
+                # Variable pause between scrolls (human reading) using min_speed and max_speed
+                # Convert ms to seconds for asyncio.sleep
+                await asyncio.sleep(random.uniform(min_speed / 1000, max_speed / 1000))
                 
                 # Occasionally scroll back up a bit (human-like behavior)
                 if random.random() < BACK_SCROLL_CHANCE and current_position > viewport_height:
@@ -17781,8 +17786,9 @@ class ScriptExecutor:
                     
                     elif step_type == 'navigate':
                         url = step.get('url', '')
+                        timeout = step.get('timeout', 30000)
                         if self.current_page:
-                            await self.current_page.goto(url, wait_until='domcontentloaded', timeout=30000)
+                            await self.current_page.goto(url, wait_until='domcontentloaded', timeout=timeout)
                             self.log_manager.log(f'✓ Step {idx + 1}: Navigated to {url}')
                         else:
                             self.log_manager.log(f'✗ Step {idx + 1}: No page available', 'ERROR')
@@ -17799,11 +17805,22 @@ class ScriptExecutor:
                     
                     elif step_type == 'scroll':
                         if self.current_page:
-                            depth = step.get('depth', None)
+                            depth = step.get('depth', 50)
                             position = step.get('position', 'Intermediate')
+                            scroll_type = step.get('scroll_type', 'Smooth')
+                            min_speed = step.get('min_speed', 100)
+                            max_speed = step.get('max_speed', 500)
+                            
                             # Human-like scroll with natural behavior
-                            await HumanBehavior.scroll_page(self.current_page, depth, position)
-                            self.log_manager.log(f'✓ Step {idx + 1}: Scrolled to depth {depth}% from {position}')
+                            await HumanBehavior.scroll_page(
+                                self.current_page, 
+                                depth, 
+                                position, 
+                                scroll_type=scroll_type,
+                                min_speed=min_speed,
+                                max_speed=max_speed
+                            )
+                            self.log_manager.log(f'✓ Step {idx + 1}: Scrolled to depth {depth}% from {position} ({scroll_type} type)')
                         else:
                             self.log_manager.log(f'✗ Step {idx + 1}: No page available', 'ERROR')
                     
@@ -21219,16 +21236,31 @@ class AppGUI(QMainWindow):
             # Check if RPA mode is enabled
             rpa_mode_enabled = self.enable_rpa_mode.isChecked()
             
+            # Auto-enable RPA mode if workflow steps exist but RPA mode is not enabled
+            if not rpa_mode_enabled and self.workflow_steps:
+                reply = QMessageBox.question(
+                    self, 'Enable RPA Mode?',
+                    'You have workflow steps in the RPA Script Creator but RPA Mode is not enabled.\n\n'
+                    'Would you like to enable RPA Mode to execute your workflow steps?',
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                
+                if reply == QMessageBox.Yes:
+                    self.enable_rpa_mode.setChecked(True)
+                    rpa_mode_enabled = True
+                else:
+                    # User chose not to enable RPA mode, continue with normal mode
+                    pass
+            
             if rpa_mode_enabled:
                 # RPA Mode: Only RPA script and proxy are used
                 # Sync visual workflow builder to JSON editor before reading the script
                 # This ensures that any steps added via the visual builder are included
-                if self.workflow_steps:
-                    self.sync_visual_to_json()
+                self.sync_visual_to_json()
                 
                 rpa_script_text = self.script_editor.toPlainText().strip()
                 if not rpa_script_text:
-                    QMessageBox.warning(self, 'Input Error', 'RPA Mode is enabled but no RPA script is provided. Please enter an RPA script in the RPA Script Creator tab.')
+                    QMessageBox.warning(self, 'Input Error', 'RPA Mode is enabled but no RPA script is provided.\n\nPlease add actions to workflow steps in the RPA Script Creator tab or enter a script in the JSON Editor.')
                     return
                 
                 # Validate RPA script JSON

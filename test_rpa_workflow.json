@@ -1,0 +1,41 @@
+{
+  "name": "Test RPA Workflow",
+  "description": "Test script to validate RPA Script Creator functionality",
+  "steps": [
+    {
+      "type": "newPage",
+      "description": "Create a new browser page"
+    },
+    {
+      "type": "navigate",
+      "url": "https://example.com",
+      "timeout": 30000,
+      "description": "Navigate to example.com with 30s timeout"
+    },
+    {
+      "type": "wait",
+      "duration": 2000,
+      "mode": "Fixed",
+      "description": "Wait 2 seconds"
+    },
+    {
+      "type": "scroll",
+      "depth": 50,
+      "position": "Intermediate",
+      "scroll_type": "Smooth",
+      "min_speed": 100,
+      "max_speed": 500,
+      "description": "Scroll to 50% with smooth scrolling"
+    },
+    {
+      "type": "wait",
+      "duration": 2000,
+      "mode": "Fixed",
+      "description": "Wait 2 seconds"
+    },
+    {
+      "type": "closePage",
+      "description": "Close the page"
+    }
+  ]
+}
