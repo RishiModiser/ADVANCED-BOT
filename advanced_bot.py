@@ -19551,6 +19551,8 @@ class AutomationWorker(QObject):
             
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             self.emit_log(f'Starting worker pool: {num_threads} concurrent threads')
+            if proxy_manager.proxy_enabled and proxy_manager.get_proxy_count() > 0:
+                self.emit_log(f'Worker pool will continue until all {proxy_manager.get_proxy_count()} proxies are consumed')
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             
             # Keep spawning workers until stopped or proxies exhausted
@@ -19576,13 +19578,26 @@ class AutomationWorker(QObject):
                         active_workers.append(task)
                         await asyncio.sleep(0.5)  # Small delay between spawns
                     
-                    # Wait a bit before checking again
+                    # If no active workers and no more proxies/work to do, break
+                    if not active_workers:
+                        if proxy_manager.proxy_enabled:
+                            # Only break if truly no more proxies
+                            if proxy_manager.get_remaining_proxies() <= 0:
+                                self.emit_log('All work completed (no proxies remaining)')
+                                break
+                            else:
+                                # This shouldn't happen, but if it does, log it and continue
+                                self.emit_log('Warning: No active workers but proxies remain - retrying...', 'WARNING')
+                                await asyncio.sleep(1)
+                                continue
+                        else:
+                            # No proxy mode - we've completed initial batch
+                            self.emit_log('Initial batch completed (no proxy rotation mode)')
+                            break
+                    
+                    # Wait for at least one worker to finish before checking again
                     if active_workers:
-                        # Wait for at least one worker to finish
                         done, pending = await asyncio.wait(active_workers, return_when=asyncio.FIRST_COMPLETED)
-                    else:
-                        # No workers left to spawn
-                        break
                 
                 # Wait for all remaining workers to finish
                 if active_workers:
