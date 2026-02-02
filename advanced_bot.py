@@ -19387,7 +19387,12 @@ class AutomationWorker(QObject):
             self.finished_signal.emit()
     
     async def run_rpa_mode(self):
-        """Execute RPA script mode with concurrent visible browsers that auto-restart."""
+        """Execute RPA script mode with concurrent visible browsers that auto-restart.
+        
+        Maintains exactly N visible browsers in taskbar at all times.
+        When any browser closes (crash, manual close, proxy fail, script complete),
+        immediately spawns a new browser to maintain the count.
+        """
         try:
             self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             self.emit_log('RPA MODE: Executing RPA script with visible browsers')
@@ -19418,7 +19423,8 @@ class AutomationWorker(QObject):
             self.browser_manager.headless = False  # Always visible for RPA mode
             
             self.emit_log(f'Starting {num_concurrent} concurrent visible browser(s)...')
-            self.emit_log('Auto-restart enabled: Will automatically replace closed browsers')
+            self.emit_log('Auto-restart enabled: Will automatically replace closed browsers IMMEDIATELY')
+            self.emit_log(f'✓ Taskbar will ALWAYS show {num_concurrent} visible browsers')
             
             # Initialize browser
             success = await self.browser_manager.initialize()
@@ -19426,84 +19432,125 @@ class AutomationWorker(QObject):
                 self.emit_log('Failed to initialize browser', 'ERROR')
                 return
             
-            # Track running threads
-            active_tasks = []
-            thread_counter = 0
+            # Track active browser tasks
+            active_browser_tasks = set()
+            browser_counter = 0
             
-            async def run_rpa_thread(thread_num):
-                """Run a single RPA thread with automatic continuous restart."""
-                nonlocal thread_counter
-                
-                # Continuous loop - runs indefinitely until stopped or no more proxies
-                while self.running:
-                    context = None
-                    try:
-                        # Check if proxies are available (if proxy mode enabled)
-                        if proxy_manager.proxy_enabled:
-                            remaining = proxy_manager.get_remaining_proxies()
-                            if remaining <= 0:
-                                self.emit_log(f'[Concurrent {thread_num}] No more proxies available, stopping', 'INFO')
-                                break
-                            self.emit_log(f'[Concurrent {thread_num}] Starting (Proxies remaining: {remaining})')
-                        
-                        # Create browser context (proxy will be assigned automatically by create_context)
-                        self.emit_log(f'[Concurrent {thread_num}] Creating visible browser context...')
-                        context = await self.browser_manager.create_context(use_proxy=proxy_manager.proxy_enabled)
-                        
-                        if not context:
-                            self.emit_log(f'[Concurrent {thread_num}] Failed to create context, retrying in 2s...', 'WARNING')
-                            await asyncio.sleep(2)
-                            continue
-                        
-                        # Execute RPA script
-                        script_executor = ScriptExecutor(self.log_manager)
-                        self.emit_log(f'[Concurrent {thread_num}] Executing RPA script...')
-                        success = await script_executor.execute_script(rpa_script, context)
-                        
-                        if success:
-                            self.emit_log(f'[Concurrent {thread_num}] ✓ RPA script completed successfully')
-                        else:
-                            self.emit_log(f'[Concurrent {thread_num}] ✗ RPA script had errors', 'WARNING')
-                        
-                    except Exception as e:
-                        self.emit_log(f'[Concurrent {thread_num}] Error: {e}', 'ERROR')
-                        
-                        # If proxy failed, try next proxy
-                        if 'proxy' in str(e).lower() or 'net::ERR' in str(e):
-                            self.emit_log(f'[Concurrent {thread_num}] Proxy failure detected, will use next proxy', 'WARNING')
+            async def run_single_browser(browser_num):
+                """Run a single browser instance with RPA script execution."""
+                context = None
+                try:
+                    # Check if proxies are available (if proxy mode enabled)
+                    if proxy_manager.proxy_enabled:
+                        remaining = proxy_manager.get_remaining_proxies()
+                        if remaining <= 0:
+                            self.emit_log(f'[Browser {browser_num}] No more proxies available', 'INFO')
+                            return False
+                        self.emit_log(f'[Browser {browser_num}] Starting (Proxies remaining: {remaining})')
+                    else:
+                        self.emit_log(f'[Browser {browser_num}] Starting visible browser...')
                     
-                    finally:
-                        if context:
-                            try:
-                                await context.close()
-                            except:
-                                pass  # Context might already be closed
-                        
-                        # Auto-restart: Check if we should continue
-                        should_restart = self.running
-                        if proxy_manager.proxy_enabled and proxy_manager.get_remaining_proxies() <= 0:
-                            should_restart = False
-                            self.emit_log(f'[Concurrent {thread_num}] No more proxies, stopping concurrent browser', 'INFO')
-                        
-                        if should_restart:
-                            self.emit_log(f'[Concurrent {thread_num}] Browser closed, immediately restarting...', 'INFO')
-                            await asyncio.sleep(0.1)  # Small delay before restart
-                
-                self.emit_log(f'[Concurrent {thread_num}] Concurrent browser stopped')
+                    # Create browser context (proxy will be assigned automatically)
+                    context = await self.browser_manager.create_context(use_proxy=proxy_manager.proxy_enabled)
+                    
+                    if not context:
+                        self.emit_log(f'[Browser {browser_num}] Failed to create context', 'WARNING')
+                        return False
+                    
+                    # Execute RPA script
+                    script_executor = ScriptExecutor(self.log_manager)
+                    self.emit_log(f'[Browser {browser_num}] ✓ Visible browser opened - Executing RPA script...')
+                    success = await script_executor.execute_script(rpa_script, context)
+                    
+                    if success:
+                        self.emit_log(f'[Browser {browser_num}] ✓ RPA script completed successfully')
+                    else:
+                        self.emit_log(f'[Browser {browser_num}] ✗ RPA script had errors', 'WARNING')
+                    
+                    return True
+                    
+                except Exception as e:
+                    self.emit_log(f'[Browser {browser_num}] Error: {e}', 'ERROR')
+                    
+                    # If proxy failed, log it
+                    if 'proxy' in str(e).lower() or 'net::ERR' in str(e):
+                        self.emit_log(f'[Browser {browser_num}] Proxy failure detected', 'WARNING')
+                    
+                    return False
+                    
+                finally:
+                    if context:
+                        try:
+                            await context.close()
+                            self.emit_log(f'[Browser {browser_num}] Browser closed')
+                        except:
+                            pass  # Context might already be closed
             
             try:
-                # Start all concurrent browsers immediately
-                for i in range(num_concurrent):
-                    thread_counter += 1
-                    task = asyncio.create_task(run_rpa_thread(thread_counter))
-                    active_tasks.append(task)
-                    # Small delay between browser starts to avoid resource contention
-                    await asyncio.sleep(0.5)
+                # Main loop: maintain N concurrent browsers at all times
+                self.emit_log(f'━━━ STARTING {num_concurrent} VISIBLE BROWSERS ━━━')
                 
-                # Wait for all threads to complete
-                self.emit_log(f'✓ All {num_concurrent} concurrent browsers started and running')
-                self.emit_log('Browsers will automatically restart if closed. Press STOP to end automation.')
-                await asyncio.gather(*active_tasks, return_exceptions=True)
+                # Start initial set of browsers
+                for i in range(num_concurrent):
+                    if not self.running:
+                        break
+                    browser_counter += 1
+                    task = asyncio.create_task(run_single_browser(browser_counter))
+                    active_browser_tasks.add(task)
+                    # No delay between starts - open immediately
+                
+                self.emit_log(f'✓ All {num_concurrent} concurrent browsers started and visible in taskbar')
+                self.emit_log(f'✓ Pool manager active: Will maintain {num_concurrent} visible browsers at ALL times')
+                self.emit_log('✓ Any closed browser will be IMMEDIATELY replaced with a new one')
+                
+                # Monitor and replace browsers as they complete/crash
+                while self.running and active_browser_tasks:
+                    # Wait for at least one browser to finish
+                    done, pending = await asyncio.wait(
+                        active_browser_tasks,
+                        return_when=asyncio.FIRST_COMPLETED
+                    )
+                    
+                    # Remove completed tasks
+                    for task in done:
+                        active_browser_tasks.discard(task)
+                        result = task.result() if not task.cancelled() else False
+                        
+                        # Immediately spawn replacement if still running and conditions met
+                        if self.running:
+                            # Check if we can spawn more browsers
+                            can_spawn = True
+                            if proxy_manager.proxy_enabled:
+                                if proxy_manager.get_remaining_proxies() <= 0:
+                                    can_spawn = False
+                                    self.emit_log('⚠ No more proxies available - not replacing closed browser', 'WARNING')
+                            
+                            if can_spawn:
+                                browser_counter += 1
+                                new_task = asyncio.create_task(run_single_browser(browser_counter))
+                                active_browser_tasks.add(new_task)
+                                self.emit_log(f'✓ Browser closed detected - IMMEDIATELY spawned replacement browser #{browser_counter}')
+                                self.emit_log(f'✓ Active browsers in taskbar: {len(active_browser_tasks)}/{num_concurrent}')
+                    
+                    # If we have fewer than N browsers and should continue, spawn more
+                    while len(active_browser_tasks) < num_concurrent and self.running:
+                        # Check if we can spawn more
+                        can_spawn = True
+                        if proxy_manager.proxy_enabled:
+                            if proxy_manager.get_remaining_proxies() <= 0:
+                                can_spawn = False
+                                break
+                        
+                        if can_spawn:
+                            browser_counter += 1
+                            new_task = asyncio.create_task(run_single_browser(browser_counter))
+                            active_browser_tasks.add(new_task)
+                            self.emit_log(f'✓ Spawned additional browser #{browser_counter} to maintain {num_concurrent} concurrent')
+                
+                # Wait for remaining browsers to finish
+                if active_browser_tasks:
+                    self.emit_log(f'Waiting for {len(active_browser_tasks)} remaining browser(s) to finish...')
+                    await asyncio.gather(*active_browser_tasks, return_exceptions=True)
                 
                 self.emit_log('✓ All concurrent browsers stopped')
                     
@@ -19638,8 +19685,10 @@ class AutomationWorker(QObject):
             
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             self.emit_log(f'Starting worker pool: {num_threads} concurrent threads')
+            self.emit_log(f'✓ Taskbar will show {num_threads} visible browsers at all times')
             if proxy_manager.proxy_enabled and proxy_manager.get_proxy_count() > 0:
                 self.emit_log(f'Worker pool will continue until all {proxy_manager.get_proxy_count()} proxies are consumed')
+            self.emit_log(f'✓ Any closed browser will be IMMEDIATELY replaced with a new one')
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             
             # Keep spawning workers until stopped or proxies exhausted
@@ -19656,6 +19705,7 @@ class AutomationWorker(QObject):
                     active_workers = [w for w in active_workers if not w.done()]
                     
                     # Spawn new workers if below thread limit
+                    initial_worker_count = len(active_workers)
                     while len(active_workers) < num_threads and self.running:
                         # Check proxies again before spawning
                         if proxy_manager.proxy_enabled and proxy_manager.get_remaining_proxies() <= 0:
@@ -19664,6 +19714,12 @@ class AutomationWorker(QObject):
                         task = asyncio.create_task(worker_task())
                         active_workers.append(task)
                         # No delay - instances should start immediately
+                    
+                    # Log if we spawned replacement workers
+                    spawned = len(active_workers) - initial_worker_count
+                    if spawned > 0:
+                        self.emit_log(f'✓ Browser(s) closed detected - IMMEDIATELY spawned {spawned} replacement browser(s)')
+                        self.emit_log(f'✓ Active browsers in taskbar: {len(active_workers)}/{num_threads}')
                     
                     # If no active workers and no more proxies/work to do, break
                     if not active_workers:
