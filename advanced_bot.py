@@ -20690,7 +20690,17 @@ class AppGUI(QMainWindow):
         # Left: Action Toolbox
         toolbox_panel = QWidget()
         toolbox_layout = QVBoxLayout(toolbox_panel)
-        toolbox_layout.addWidget(QLabel('Action Toolbox'))
+        
+        toolbox_label = QLabel('Action Toolbox')
+        toolbox_label.setStyleSheet("""
+            QLabel {
+                font-weight: bold;
+                font-size: 14px;
+                color: #2c3e50;
+                padding: 5px 0;
+            }
+        """)
+        toolbox_layout.addWidget(toolbox_label)
         
         self.action_toolbox = QListWidget()
         self.action_toolbox.setDragEnabled(True)
@@ -20737,13 +20747,44 @@ class AppGUI(QMainWindow):
         # Center: Workflow List
         workflow_panel = QWidget()
         workflow_layout = QVBoxLayout(workflow_panel)
-        workflow_layout.addWidget(QLabel('Workflow Steps'))
+        
+        workflow_label = QLabel('Workflow Steps')
+        workflow_label.setStyleSheet("""
+            QLabel {
+                font-weight: bold;
+                font-size: 14px;
+                color: #2c3e50;
+                padding: 5px 0;
+            }
+        """)
+        workflow_layout.addWidget(workflow_label)
         
         self.workflow_list = QListWidget()
         self.workflow_list.setAcceptDrops(True)
         self.workflow_list.setDragDropMode(QAbstractItemView.InternalMove)
         self.workflow_list.itemClicked.connect(self.on_workflow_item_clicked)
         self.workflow_list.model().rowsMoved.connect(self.sync_visual_to_json)
+        self.workflow_list.setStyleSheet("""
+            QListWidget {
+                background-color: #f8f9fa;
+                border: 1px solid #dee2e6;
+                border-radius: 5px;
+                padding: 5px;
+            }
+            QListWidget::item {
+                padding: 8px;
+                margin: 2px;
+                border-radius: 3px;
+                background-color: white;
+            }
+            QListWidget::item:hover {
+                background-color: #e9ecef;
+            }
+            QListWidget::item:selected {
+                background-color: #007bff;
+                color: white;
+            }
+        """)
         
         workflow_layout.addWidget(self.workflow_list)
         
@@ -20768,7 +20809,17 @@ class AppGUI(QMainWindow):
         # Right: Step Configuration
         config_panel = QWidget()
         config_layout = QVBoxLayout(config_panel)
-        config_layout.addWidget(QLabel('Step Configuration'))
+        
+        config_label = QLabel('Step Configuration')
+        config_label.setStyleSheet("""
+            QLabel {
+                font-weight: bold;
+                font-size: 14px;
+                color: #2c3e50;
+                padding: 5px 0;
+            }
+        """)
+        config_layout.addWidget(config_label)
         
         self.step_config_widget = QWidget()
         self.step_config_layout = QFormLayout(self.step_config_widget)
@@ -20826,7 +20877,16 @@ class AppGUI(QMainWindow):
         json_widget = QWidget()
         json_layout = QVBoxLayout(json_widget)
         
-        json_layout.addWidget(QLabel('RPA Script Editor (JSON):'))
+        json_editor_label = QLabel('RPA Script Editor (JSON):')
+        json_editor_label.setStyleSheet("""
+            QLabel {
+                font-weight: bold;
+                font-size: 14px;
+                color: #2c3e50;
+                padding: 5px 0;
+            }
+        """)
+        json_layout.addWidget(json_editor_label)
         
         self.script_editor = QTextEdit()
         self.script_editor.setPlaceholderText('''Example script:
@@ -20841,6 +20901,16 @@ class AppGUI(QMainWindow):
     {"type": "closePage"}
   ]
 }''')
+        self.script_editor.setStyleSheet("""
+            QTextEdit {
+                background-color: #f8f9fa;
+                border: 1px solid #dee2e6;
+                border-radius: 5px;
+                padding: 10px;
+                font-family: 'Courier New', monospace;
+                font-size: 12px;
+            }
+        """)
         self.script_editor.textChanged.connect(self.sync_json_to_visual)
         json_layout.addWidget(self.script_editor)
         
