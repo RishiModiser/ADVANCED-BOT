@@ -18299,6 +18299,8 @@ class BrowserManager:
         self.proxy_manager = ProxyManager()
         self.headless = False
         self.active_contexts = []  # Track all active persistent contexts for cleanup
+        self.imported_useragents = []  # Store imported useragents
+        self.imported_cookies = []  # Store imported cookies
     
     async def initialize(self):
         """Initialize Playwright only (no browser launch with persistent contexts)."""
@@ -18361,6 +18363,13 @@ class BrowserManager:
             self.fingerprint_manager.platform = platform
             fingerprint = self.fingerprint_manager.generate_fingerprint(proxy_location)
             
+            # Use imported useragent if available, otherwise use generated one
+            if self.imported_useragents:
+                user_agent = random.choice(self.imported_useragents)
+                self.log_manager.log(f'✓ Using imported user agent')
+            else:
+                user_agent = fingerprint['user_agent']
+            
             # Create unique profile directory
             user_data_dir = Path(f"profiles/profile_{random.randint(1000, 9999)}")
             user_data_dir.mkdir(parents=True, exist_ok=True)
@@ -18368,19 +18377,20 @@ class BrowserManager:
             self.log_manager.log(f'━━━ Creating Browser Persistent Context ━━━')
             self.log_manager.log(f'Platform: {platform}')
             self.log_manager.log(f'Profile: {user_data_dir}')
-            self.log_manager.log(f'User Agent: {fingerprint["user_agent"][:60]}...')
+            self.log_manager.log(f'User Agent: {user_agent[:60]}...')
             self.log_manager.log(f'Timezone: {fingerprint["timezone"]}, Locale: {fingerprint["locale"]}')
             if proxy_location:
                 self.log_manager.log(f'✓ Fingerprint MATCHED to proxy location: {proxy_location["country"]}')
             
             # Build context options for launch_persistent_context
             context_options = {
-                'user_agent': fingerprint['user_agent'],
+                'user_agent': user_agent,
                 'viewport': fingerprint['viewport'],
                 'locale': fingerprint['locale'],
                 'timezone_id': fingerprint['timezone'],
                 'headless': self.headless,
                 'channel': 'chrome',  # Use real Chrome instead of Chromium
+                'ignore_default_args': ['--enable-automation'],  # Remove automation flag
                 'args': [
                     '--disable-blink-features=AutomationControlled',
                     '--disable-dev-shm-usage',
@@ -18449,6 +18459,14 @@ class BrowserManager:
             # Store proxy location for later use (e.g., displaying in browser)
             context._proxy_location = proxy_location
             
+            # Inject imported cookies if available
+            if self.imported_cookies:
+                try:
+                    await context.add_cookies(self.imported_cookies)
+                    self.log_manager.log(f'✓ Injected {len(self.imported_cookies)} imported cookies')
+                except Exception as cookie_error:
+                    self.log_manager.log(f'⚠ Failed to inject cookies: {cookie_error}', 'WARNING')
+            
             self.log_manager.log('✓ Browser persistent context created successfully')
             self.log_manager.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             return context
@@ -18513,6 +18531,9 @@ class AutomationWorker(QObject):
         self.log_manager = log_manager
         self.running = False
         self.browser_manager = BrowserManager(log_manager)
+        # Pass imported useragents and cookies to browser manager
+        self.browser_manager.imported_useragents = config.get('imported_useragents', [])
+        self.browser_manager.imported_cookies = config.get('imported_cookies', [])
     
     def emit_log(self, message: str, level: str = 'INFO'):
         """Emit log to GUI."""
@@ -19400,19 +19421,19 @@ class AutomationWorker(QObject):
                         
                         if should_restart:
                             self.emit_log(f'[Thread {thread_num}] Browser closed, restarting thread...', 'INFO')
-                            await asyncio.sleep(1)  # Brief pause before restart
+                            await asyncio.sleep(0.001)  # Minimal delay before restart (0.001 seconds)
                         elif retry_count >= max_retries:
                             self.emit_log(f'[Thread {thread_num}] Max retries reached, stopping thread', 'ERROR')
                 
                 self.emit_log(f'[Thread {thread_num}] Thread finished')
             
             try:
-                # Start all threads
+                # Start all threads immediately without delay
                 for i in range(num_threads):
                     thread_counter += 1
                     task = asyncio.create_task(run_rpa_thread(thread_counter))
                     active_tasks.append(task)
-                    await asyncio.sleep(0.5)  # Small delay between thread starts
+                    # No delay - instances should start immediately
                 
                 # Wait for all threads to complete
                 self.emit_log(f'All {num_threads} threads started, maintaining thread count...')
@@ -19576,7 +19597,7 @@ class AutomationWorker(QObject):
                         
                         task = asyncio.create_task(worker_task())
                         active_workers.append(task)
-                        await asyncio.sleep(0.5)  # Small delay between spawns
+                        # No delay - instances should start immediately
                     
                     # If no active workers and no more proxies/work to do, break
                     if not active_workers:
@@ -19640,6 +19661,9 @@ class AppGUI(QMainWindow):
         self.confidence_input.setValue(0.7)
         # Create a reusable proxy manager for counting
         self._proxy_count_manager = ProxyManager()
+        # Initialize storage for imported useragents and cookies
+        self.imported_useragents = []
+        self.imported_cookies = []
         self.init_ui()
     
     def init_ui(self):
@@ -19722,6 +19746,46 @@ class AppGUI(QMainWindow):
             QComboBox QAbstractItemView::item:hover {
                 background-color: #5dade2;
                 color: white;
+            }
+            QSpinBox::up-button, QDoubleSpinBox::up-button {
+                subcontrol-origin: border;
+                subcontrol-position: top right;
+                width: 20px;
+                border-left: 1px solid #d0d0d0;
+                border-bottom: 1px solid #d0d0d0;
+                border-top-right-radius: 4px;
+                background-color: #f0f0f0;
+            }
+            QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover {
+                background-color: #e0e0e0;
+            }
+            QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+                image: none;
+                border: 2px solid #666;
+                width: 6px;
+                height: 6px;
+                border-width: 2px 2px 0 0;
+                transform: rotate(-45deg);
+            }
+            QSpinBox::down-button, QDoubleSpinBox::down-button {
+                subcontrol-origin: border;
+                subcontrol-position: bottom right;
+                width: 20px;
+                border-left: 1px solid #d0d0d0;
+                border-top: 1px solid #d0d0d0;
+                border-bottom-right-radius: 4px;
+                background-color: #f0f0f0;
+            }
+            QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
+                background-color: #e0e0e0;
+            }
+            QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
+                image: none;
+                border: 2px solid #666;
+                width: 6px;
+                height: 6px;
+                border-width: 0 0 2px 2px;
+                transform: rotate(-45deg);
             }
         """)
         
@@ -20808,6 +20872,58 @@ class AppGUI(QMainWindow):
         control_group.setLayout(control_layout)
         layout.addWidget(control_group)
         
+        # Import Settings Group
+        import_group = QGroupBox('📥 Import Settings')
+        import_layout = QVBoxLayout()
+        import_layout.setSpacing(15)
+        
+        # Import Useragents
+        useragent_layout = QHBoxLayout()
+        useragent_layout.addWidget(QLabel('User Agents:'))
+        self.useragent_file_label = QLabel('No file selected')
+        self.useragent_file_label.setStyleSheet('color: #666; font-style: italic;')
+        useragent_layout.addWidget(self.useragent_file_label)
+        useragent_layout.addStretch()
+        import_useragent_btn = QPushButton('📁 Import User Agents')
+        import_useragent_btn.clicked.connect(self.import_useragents)
+        import_useragent_btn.setStyleSheet('background-color: #2196F3; color: white; padding: 10px; font-weight: bold;')
+        useragent_layout.addWidget(import_useragent_btn)
+        import_layout.addLayout(useragent_layout)
+        
+        # Clear Useragents button
+        clear_useragent_btn = QPushButton('🗑️ Clear User Agents')
+        clear_useragent_btn.clicked.connect(self.clear_useragents)
+        clear_useragent_btn.setStyleSheet('background-color: #9E9E9E; color: white; padding: 8px;')
+        import_layout.addWidget(clear_useragent_btn)
+        
+        # Import Cookies
+        cookies_layout = QHBoxLayout()
+        cookies_layout.addWidget(QLabel('Cookies:'))
+        self.cookies_file_label = QLabel('No file selected')
+        self.cookies_file_label.setStyleSheet('color: #666; font-style: italic;')
+        cookies_layout.addWidget(self.cookies_file_label)
+        cookies_layout.addStretch()
+        import_cookies_btn = QPushButton('📁 Import Cookies')
+        import_cookies_btn.clicked.connect(self.import_cookies)
+        import_cookies_btn.setStyleSheet('background-color: #FF9800; color: white; padding: 10px; font-weight: bold;')
+        cookies_layout.addWidget(import_cookies_btn)
+        import_layout.addLayout(cookies_layout)
+        
+        # Clear Cookies button
+        clear_cookies_btn = QPushButton('🗑️ Clear Cookies')
+        clear_cookies_btn.clicked.connect(self.clear_cookies)
+        clear_cookies_btn.setStyleSheet('background-color: #9E9E9E; color: white; padding: 8px;')
+        import_layout.addWidget(clear_cookies_btn)
+        
+        # Info label
+        info_label = QLabel('ℹ️ Imported user agents and cookies will be used across all instances and proxies')
+        info_label.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
+        info_label.setWordWrap(True)
+        import_layout.addWidget(info_label)
+        
+        import_group.setLayout(import_layout)
+        layout.addWidget(import_group)
+        
         # Instructions Group
         instructions_group = QGroupBox('ℹ️ Instructions')
         instructions_layout = QVBoxLayout()
@@ -20897,6 +21013,8 @@ class AppGUI(QMainWindow):
                     'proxy_type': self.proxy_type_combo.currentText(),
                     'proxy_list': self.proxy_list_input.toPlainText(),
                     'headless': False,  # Always visible
+                    'imported_useragents': self.imported_useragents,
+                    'imported_cookies': self.imported_cookies,
                 }
                 
                 self.log_manager.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
@@ -21050,6 +21168,8 @@ class AppGUI(QMainWindow):
                     'enable_consent': self.enable_consent.isChecked(),
                     'enable_popups': self.enable_popups.isChecked(),
                     'enable_text_highlight': self.enable_text_highlight.isChecked(),
+                    'imported_useragents': self.imported_useragents,
+                    'imported_cookies': self.imported_cookies,
                 }
             
             # Update UI
@@ -21481,6 +21601,100 @@ class AppGUI(QMainWindow):
             'input': {'selector': '', 'text': ''}
         }
         return defaults.get(step_type, {})
+    
+    def import_useragents(self):
+        """Import user agents from a text file."""
+        try:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self,
+                'Import User Agents',
+                '',
+                'Text Files (*.txt);;All Files (*)'
+            )
+            
+            if file_path:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    useragents = [line.strip() for line in f if line.strip()]
+                
+                if useragents:
+                    self.imported_useragents = useragents
+                    self.useragent_file_label.setText(f'{len(useragents)} user agents loaded')
+                    self.useragent_file_label.setStyleSheet('color: #4CAF50; font-weight: bold;')
+                    self.log_manager.log(f'✓ Imported {len(useragents)} user agents from {file_path}')
+                    QMessageBox.information(self, 'Success', f'Successfully imported {len(useragents)} user agents!')
+                else:
+                    QMessageBox.warning(self, 'Empty File', 'The selected file contains no user agents.')
+        except Exception as e:
+            QMessageBox.critical(self, 'Error', f'Failed to import user agents: {str(e)}')
+            self.log_manager.log(f'Failed to import user agents: {str(e)}', 'ERROR')
+    
+    def clear_useragents(self):
+        """Clear imported user agents."""
+        if self.imported_useragents:
+            reply = QMessageBox.question(
+                self,
+                'Confirm Clear',
+                f'Clear {len(self.imported_useragents)} imported user agents?',
+                QMessageBox.Yes | QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                self.imported_useragents = []
+                self.useragent_file_label.setText('No file selected')
+                self.useragent_file_label.setStyleSheet('color: #666; font-style: italic;')
+                self.log_manager.log('✓ Cleared imported user agents')
+                QMessageBox.information(self, 'Success', 'User agents cleared successfully!')
+        else:
+            QMessageBox.information(self, 'Info', 'No user agents to clear.')
+    
+    def import_cookies(self):
+        """Import cookies from a JSON file."""
+        try:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self,
+                'Import Cookies',
+                '',
+                'JSON Files (*.json);;All Files (*)'
+            )
+            
+            if file_path:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    cookies = json.load(f)
+                
+                # Validate cookies format
+                if isinstance(cookies, list):
+                    self.imported_cookies = cookies
+                    self.cookies_file_label.setText(f'{len(cookies)} cookies loaded')
+                    self.cookies_file_label.setStyleSheet('color: #4CAF50; font-weight: bold;')
+                    self.log_manager.log(f'✓ Imported {len(cookies)} cookies from {file_path}')
+                    QMessageBox.information(self, 'Success', f'Successfully imported {len(cookies)} cookies!')
+                else:
+                    QMessageBox.warning(self, 'Invalid Format', 'Cookies file must contain a JSON array.')
+        except json.JSONDecodeError as e:
+            QMessageBox.critical(self, 'Error', f'Invalid JSON format: {str(e)}')
+            self.log_manager.log(f'Failed to import cookies (invalid JSON): {str(e)}', 'ERROR')
+        except Exception as e:
+            QMessageBox.critical(self, 'Error', f'Failed to import cookies: {str(e)}')
+            self.log_manager.log(f'Failed to import cookies: {str(e)}', 'ERROR')
+    
+    def clear_cookies(self):
+        """Clear imported cookies."""
+        if self.imported_cookies:
+            reply = QMessageBox.question(
+                self,
+                'Confirm Clear',
+                f'Clear {len(self.imported_cookies)} imported cookies?',
+                QMessageBox.Yes | QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                self.imported_cookies = []
+                self.cookies_file_label.setText('No file selected')
+                self.cookies_file_label.setStyleSheet('color: #666; font-style: italic;')
+                self.log_manager.log('✓ Cleared imported cookies')
+                QMessageBox.information(self, 'Success', 'Cookies cleared successfully!')
+        else:
+            QMessageBox.information(self, 'Info', 'No cookies to clear.')
     
     # ========================================================================
     

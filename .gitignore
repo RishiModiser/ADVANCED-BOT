@@ -47,3 +47,6 @@ playwright-state/
 # Test files
 test_components.py
 validate_implementation.py
+test_ui_changes.py
+example_useragents.txt
+example_cookies.json

@@ -152,6 +152,10 @@ The application provides a modern, fully responsive GUI with improved navigation
    - Real-time status display
    - Step-by-step usage instructions
    - Centralized control panel
+   - **📥 Import Settings** (NEW in v5.2)
+     - **Import User Agents** - Load custom user agents from text file
+     - **Import Cookies** - Load cookies from JSON file
+     - Both work seamlessly with all instances and proxies
 
 6. **📋 Logs** (NEW in v5)
    - Dedicated full-screen log viewer
@@ -178,7 +182,19 @@ The application provides a modern, fully responsive GUI with improved navigation
 
 ## 🔧 Features
 
-### 🆕 New Features (Latest Update - v5.1)
+### 🆕 New Features (Latest Update - v5.2)
+
+#### UI & Performance Improvements
+- **Spinner Arrows** - Visible up/down arrows on all numeric inputs (QSpinBox) for better UX
+- **Instant Instance Management** - Zero delays between thread starts (previously 0.5s delay removed)
+- **Immediate Restart** - Instance restart time reduced from 1s to 0.001s for near-instant recovery
+- **Stealth Mode** - Removed "Chrome is being controlled by automated test software" banner
+- **Import User Agents** - Load custom user agents from text file, automatically rotated across instances
+- **Import Cookies** - Load cookies from JSON file, automatically injected into all browser contexts
+
+For detailed information, see [UI_IMPROVEMENTS.md](UI_IMPROVEMENTS.md)
+
+### Features from v5.1
 
 #### Proxy Geolocation & Display
 - **Automatic proxy location fetching** before browser launch
