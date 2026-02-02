@@ -18423,6 +18423,7 @@ class BrowserManager:
                     '--disable-dev-shm-usage',
                     '--no-sandbox',
                     '--disable-infobars',
+                    '--test-type',  # Suppress warning about --no-sandbox flag
                     '--disable-automation',
                     '--disable-web-security',
                     '--disable-features=IsolateOrigins,site-per-process'
