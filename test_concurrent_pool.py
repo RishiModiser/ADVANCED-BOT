@@ -151,7 +151,7 @@ async def test_immediate_replacement():
     if active_tasks:
         await asyncio.gather(*active_tasks)
     
-    avg_replacement_time = sum(replacement_times) / len(replacement_times)
+    avg_replacement_time = sum(replacement_times) / len(replacement_times) if replacement_times else 0
     
     print(f"Completed {len(replacement_times)} browser replacements")
     print(f"Average replacement time: {avg_replacement_time:.4f}s")

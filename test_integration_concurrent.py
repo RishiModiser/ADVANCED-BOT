@@ -49,6 +49,7 @@ async def simulate_rpa_mode_scenario():
     
     async def run_single_browser(browser_num, should_fail=False):
         """Simulate a single browser running RPA script."""
+        context = None
         try:
             print(f"  [Browser {browser_num}] Opening visible browser...")
             
@@ -252,7 +253,7 @@ async def simulate_normal_mode_scenario():
         # Wait for at least one to complete
         if active_workers:
             done, pending = await asyncio.wait(active_workers, return_when=asyncio.FIRST_COMPLETED)
-            completed_count += len([d for d in done if not d.cancelled()])
+            completed_count += sum(1 for d in done if not d.cancelled())
             print()
     
     # Wait for remaining
