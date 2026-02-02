@@ -19404,7 +19404,13 @@ class AutomationWorker(QObject):
             self.finished_signal.emit()
     
     async def run_rpa_mode(self):
-        """Execute RPA script mode with concurrent visible browsers that auto-restart."""
+        """Execute RPA script mode with concurrent visible browsers that auto-restart.
+        
+        Maintains exactly N concurrent visible browsers in taskbar at all times:
+        - Starts N browsers immediately with no delays
+        - When any browser closes (manual/proxy failure/any reason), immediately restarts
+        - Ensures N browsers are always visible in taskbar, not just in logs
+        """
         try:
             self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             self.emit_log('RPA MODE: Executing RPA script with visible browsers')
@@ -19435,7 +19441,9 @@ class AutomationWorker(QObject):
             self.browser_manager.headless = False  # Always visible for RPA mode
             
             self.emit_log(f'Starting {num_concurrent} concurrent visible browser(s)...')
-            self.emit_log('Auto-restart enabled: Will automatically replace closed browsers')
+            self.emit_log(f'✓ Maintaining exactly {num_concurrent} browsers in taskbar at all times')
+            self.emit_log('✓ Zero-delay startup: All browsers start immediately')
+            self.emit_log('✓ Instant restart: Browsers restart immediately when closed (no delays)')
             
             # Initialize browser
             success = await self.browser_manager.initialize()
@@ -19534,8 +19542,12 @@ class AutomationWorker(QObject):
     async def run_normal_mode(self):
         """Execute normal automation mode with worker pool pattern.
         
-        Maintains N concurrent browsers at all times, replacing any that close,
-        until all proxies are consumed or user stops.
+        Maintains exactly N concurrent visible browsers in taskbar at all times:
+        - Worker pool spawns N concurrent browser workers
+        - When any worker completes or fails, immediately spawns replacement
+        - Checks every 0.1s to maintain exactly N concurrent visible browsers
+        - Continues until all proxies consumed (proxy mode) or user stops
+        - In no-proxy mode, continuously maintains N browsers until stopped
         """
         try:
             # Get configuration
@@ -19654,8 +19666,12 @@ class AutomationWorker(QObject):
             
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             self.emit_log(f'Starting worker pool: {num_threads} concurrent threads')
+            self.emit_log(f'✓ Maintaining exactly {num_threads} visible browsers in taskbar at all times')
+            self.emit_log(f'✓ Instant replacement: New browser spawns immediately when one closes')
             if proxy_manager.proxy_enabled and proxy_manager.get_proxy_count() > 0:
-                self.emit_log(f'Worker pool will continue until all {proxy_manager.get_proxy_count()} proxies are consumed')
+                self.emit_log(f'✓ Proxy mode: Will continue until all {proxy_manager.get_proxy_count()} proxies consumed')
+            else:
+                self.emit_log(f'✓ No-proxy mode: Will run continuously until stopped')
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             
             # Keep spawning workers until stopped or proxies exhausted
