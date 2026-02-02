@@ -19808,7 +19808,6 @@ class AppGUI(QMainWindow):
                 width: 6px;
                 height: 6px;
                 border-width: 0 2px 2px 0;
-                transform: rotate(45deg);
             }
             QComboBox QAbstractItemView {
                 background-color: white;
@@ -19848,7 +19847,6 @@ class AppGUI(QMainWindow):
                 width: 6px;
                 height: 6px;
                 border-width: 2px 2px 0 0;
-                transform: rotate(-45deg);
             }
             QSpinBox::down-button, QDoubleSpinBox::down-button {
                 subcontrol-origin: border;
@@ -19868,7 +19866,6 @@ class AppGUI(QMainWindow):
                 width: 6px;
                 height: 6px;
                 border-width: 0 0 2px 2px;
-                transform: rotate(-45deg);
             }
         """)
         
@@ -20914,7 +20911,6 @@ class AppGUI(QMainWindow):
                 width: 6px;
                 height: 6px;
                 border-width: 0 2px 2px 0;
-                transform: rotate(45deg);
             }
             QComboBox QAbstractItemView {
                 background-color: white;
