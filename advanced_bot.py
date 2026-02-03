@@ -16908,7 +16908,18 @@ SEARCH_ENGINES = {
     },
     'Yahoo': {
         'url': 'https://www.yahoo.com',
-        'search_box_selectors': ['input[name="p"]', '#yschsp'],
+        'search_box_selectors': [
+            'input[name="p"]',           # Desktop main search input
+            '#yschsp',                    # Desktop search helper
+            'input#ybar-sbq',             # Desktop search bar query  
+            'input[type="search"]',       # Generic search input (mobile/responsive)
+            'input[placeholder*="earch"]',# Search input by placeholder text
+            'input[aria-label*="earch"]', # Search input by aria-label
+            'input.search-box',           # Search box class
+            'form[role="search"] input',  # Input within search form
+            '#header-search-input',       # Mobile header search
+            '.mobile-search input'        # Mobile search container
+        ],
         'results_selector': ['#web', '.searchCenterMiddle'],
         'result_links_selector': '#web a[href], .searchCenterMiddle a[href]'
     },
