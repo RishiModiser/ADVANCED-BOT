@@ -6,6 +6,11 @@ This test verifies that the logging messages appear in the correct order.
 
 import re
 
+# Constants for function extraction
+FUNCTION_CHUNK_SIZE = 3000
+LARGE_FUNCTION_CHUNK_SIZE = 5000
+MIN_REQUIRED_STEPS = 8
+
 def test_search_visit_logging_sequence():
     """Test that search visit logs appear in the correct order."""
     print("Testing search visit logging sequence...")
@@ -23,8 +28,8 @@ def test_search_visit_logging_sequence():
     
     func_start = func_match.start()
     
-    # Extract a reasonable chunk of the function (next 2000 chars)
-    func_content = content[func_start:func_start + 3000]
+    # Extract a reasonable chunk of the function
+    func_content = content[func_start:func_start + FUNCTION_CHUNK_SIZE]
     
     # Check that "Processing URL" is NOT at the top before visit_type branching
     lines = func_content.split('\n')
@@ -89,7 +94,7 @@ def test_handle_search_visit_flow():
     
     func_start = func_match.start()
     # Extract a large chunk to cover the entire function
-    func_content = content[func_start:func_start + 5000]
+    func_content = content[func_start:func_start + LARGE_FUNCTION_CHUNK_SIZE]
     
     # Check the order of operations
     order_checks = [
@@ -112,7 +117,7 @@ def test_handle_search_visit_flow():
             positions.append((match.start(), desc, pattern))
     
     # Verify they're in order
-    if len(positions) >= 8:  # At least 8 of the key steps should be present
+    if len(positions) >= MIN_REQUIRED_STEPS:  # At least 8 of the key steps should be present
         print(f"✓ Found {len(positions)}/{len(order_checks)} expected steps")
         
         # Check if they're in ascending order
