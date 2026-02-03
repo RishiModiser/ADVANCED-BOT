@@ -1,0 +1,77 @@
+{
+  "name": "New Features Demo Script",
+  "description": "Demonstrates all new RPA actions including loops, conditionals, and browser controls",
+  "steps": [
+    {
+      "type": "newPage",
+      "comment": "Open a new tab"
+    },
+    {
+      "type": "navigate",
+      "url": "https://example.com",
+      "timeout": 30000,
+      "comment": "Navigate to example.com"
+    },
+    {
+      "type": "wait",
+      "duration": 2000,
+      "comment": "Wait 2 seconds"
+    },
+    {
+      "type": "refresh",
+      "comment": "NEW: Refresh the webpage"
+    },
+    {
+      "type": "wait",
+      "duration": 1000
+    },
+    {
+      "type": "scroll",
+      "depth": 50,
+      "position": "Intermediate",
+      "scroll_type": "Smooth"
+    },
+    {
+      "type": "if",
+      "selector": "h1",
+      "condition": "element.is_visible()",
+      "comment": "NEW: Conditional execution - check if h1 is visible"
+    },
+    {
+      "type": "forLoopTimes",
+      "iterations": 3,
+      "comment": "NEW: Loop 3 times"
+    },
+    {
+      "type": "wait",
+      "duration": 1000
+    },
+    {
+      "type": "newPage",
+      "comment": "Open another tab"
+    },
+    {
+      "type": "navigate",
+      "url": "https://www.wikipedia.org",
+      "timeout": 30000
+    },
+    {
+      "type": "forLoopElements",
+      "selector": "a",
+      "max_items": 5,
+      "comment": "NEW: Loop over first 5 links"
+    },
+    {
+      "type": "closeTab",
+      "comment": "NEW: Close the current tab"
+    },
+    {
+      "type": "wait",
+      "duration": 2000
+    },
+    {
+      "type": "closePage",
+      "comment": "Close the remaining page"
+    }
+  ]
+}
