@@ -19309,45 +19309,85 @@ class AutomationWorker(QObject):
         page = await context.new_page()
         
         try:
-            # Navigate to search engine in the new tab with networkidle for stable loading
-            self.emit_log(f'Opening {search_engine} in new tab...')
-            try:
-                # Try with networkidle first (more stable, waits for network to be idle)
-                await page.goto(engine_config['url'], wait_until='networkidle', timeout=60000)
-            except:
-                # Fallback to domcontentloaded if networkidle fails
-                self.emit_log(f'Retrying with domcontentloaded...')
-                await page.goto(engine_config['url'], wait_until='domcontentloaded', timeout=60000)
-            
-            # Wait longer to ensure page is fully stable and loaded
-            await asyncio.sleep(random.uniform(3, 5))
-            self.emit_log(f'✓ {search_engine} page loaded successfully')
-            
-            # Handle consent popups first
-            self.emit_log('Checking for consent dialogs...')
-            try:
-                # Try to find and click "Accept all" button on consent
-                accept_buttons = await page.query_selector_all('button')
-                for button in accept_buttons:
+            # Special handling for Google - use Chrome's native CTRL+K search method
+            if search_engine == 'Google':
+                self.emit_log('Using Chrome native search method for Google (CTRL+K)...')
+                
+                # Navigate to blank page first
+                self.emit_log('Opening blank page...')
+                await page.goto('about:blank', wait_until='domcontentloaded', timeout=10000)
+                await asyncio.sleep(random.uniform(0.5, 1.0))
+                
+                # Press CTRL+K to activate Chrome's omnibox search
+                self.emit_log('Pressing CTRL+K to activate Chrome search...')
+                await page.keyboard.press('Control+K')
+                await asyncio.sleep(random.uniform(0.3, 0.5))
+                
+                # Type keyword character by character (human-like)
+                self.emit_log(f'Typing search keyword: "{keyword}" character by character...')
+                for char in keyword:
+                    await page.keyboard.type(char)
+                    await asyncio.sleep(random.uniform(0.08, 0.15))
+                
+                # Press Enter to execute search
+                self.emit_log('Pressing Enter to search...')
+                await asyncio.sleep(random.uniform(0.5, 1.0))
+                await page.keyboard.press('Enter')
+                
+                # Wait for navigation to Google search results
+                self.emit_log('Waiting for Google search results page to load...')
+                try:
+                    await page.wait_for_load_state('networkidle', timeout=30000)
+                except:
                     try:
-                        text = await button.inner_text()
-                        if text and any(word in text.lower() for word in ['accept', 'agree', 'accept all', 'i agree', 'consent']):
-                            await button.click()
-                            self.emit_log('✓ Clicked consent button')
-                            # Wait longer after consent for page to stabilize
-                            await asyncio.sleep(random.uniform(3, 4))
-                            # Wait for any navigation that might occur after consent
-                            try:
-                                await page.wait_for_load_state('networkidle', timeout=10000)
-                            except:
-                                await asyncio.sleep(2)
-                            break
+                        await page.wait_for_load_state('domcontentloaded', timeout=15000)
                     except:
-                        continue
-            except Exception as e:
-                self.emit_log(f'No consent needed or error: {e}', 'INFO')
-            
-            # Wait for search box to appear - try multiple selectors with retries
+                        pass
+                
+                # Additional wait for page to stabilize
+                await asyncio.sleep(random.uniform(2, 3))
+                self.emit_log('✓ Google search completed using CTRL+K method')
+            else:
+                # Traditional method for other search engines
+                # Navigate to search engine in the new tab with networkidle for stable loading
+                self.emit_log(f'Opening {search_engine} in new tab...')
+                try:
+                    # Try with networkidle first (more stable, waits for network to be idle)
+                    await page.goto(engine_config['url'], wait_until='networkidle', timeout=60000)
+                except:
+                    # Fallback to domcontentloaded if networkidle fails
+                    self.emit_log(f'Retrying with domcontentloaded...')
+                    await page.goto(engine_config['url'], wait_until='domcontentloaded', timeout=60000)
+                
+                # Wait longer to ensure page is fully stable and loaded
+                await asyncio.sleep(random.uniform(3, 5))
+                self.emit_log(f'✓ {search_engine} page loaded successfully')
+                
+                # Handle consent popups first
+                self.emit_log('Checking for consent dialogs...')
+                try:
+                    # Try to find and click "Accept all" button on consent
+                    accept_buttons = await page.query_selector_all('button')
+                    for button in accept_buttons:
+                        try:
+                            text = await button.inner_text()
+                            if text and any(word in text.lower() for word in ['accept', 'agree', 'accept all', 'i agree', 'consent']):
+                                await button.click()
+                                self.emit_log('✓ Clicked consent button')
+                                # Wait longer after consent for page to stabilize
+                                await asyncio.sleep(random.uniform(3, 4))
+                                # Wait for any navigation that might occur after consent
+                                try:
+                                    await page.wait_for_load_state('networkidle', timeout=10000)
+                                except:
+                                    await asyncio.sleep(2)
+                                break
+                        except:
+                            continue
+                except Exception as e:
+                    self.emit_log(f'No consent needed or error: {e}', 'INFO')
+                
+                # Wait for search box to appear - try multiple selectors with retries
             self.emit_log('Waiting for search box...')
             search_selector = None
             max_retries = 3
