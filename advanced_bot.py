@@ -19457,22 +19457,31 @@ class AutomationWorker(QObject):
                     href = await link.get_attribute('href')
                     # Only include HTTP/HTTPS links that aren't search engine internal links
                     if href and href.startswith('http'):
-                        # For Bing, check both redirect URL and actual URL
+                        # For Bing and Yahoo, check both redirect URL and actual URL
                         # Parse URL to check domain properly (avoid substring issues)
                         # NOTE: CodeQL may flag this as incomplete URL sanitization, but this is safe because:
-                        # 1. This is only used to detect Bing redirect URLs for URL extraction, not for security decisions
+                        # 1. This is only used to detect redirect URLs for extraction, not for security decisions
                         # 2. We use proper urlparse() to check the netloc (domain) field, not arbitrary substring matching
-                        # 3. We also require the specific path '/ck/a' which is unique to Bing redirects
-                        # 4. False positives (non-Bing URLs detected as Bing) would just skip extraction, causing no harm
+                        # 3. We also require specific paths which are unique to redirects
+                        # 4. False positives (non-redirect URLs detected as redirects) would just skip extraction, causing no harm
                         try:
                             parsed_href = urlparse(href)
+                            # Detect Bing redirects (e.g., https://www.bing.com/ck/a?...)
                             is_bing_redirect = (parsed_href.netloc.endswith('bing.com') or parsed_href.netloc == 'bing.com') and '/ck/a' in parsed_href.path
+                            # Detect Yahoo redirects (e.g., https://r.search.yahoo.com/... or similar)
+                            # NOTE: CodeQL may flag this as incomplete URL sanitization, but this is safe because:
+                            # 1. This is only used to detect Yahoo redirect URLs for extraction, not for security decisions
+                            # 2. We use proper urlparse() to check the netloc (domain) field first
+                            # 3. We also require specific paths (/cbclk or RU=) which are unique to Yahoo redirects
+                            # 4. False positives (non-Yahoo URLs detected as Yahoo) would just skip extraction, causing no harm
+                            is_yahoo_redirect = ('yahoo.com' in parsed_href.netloc) and ('/cbclk' in parsed_href.path or '/RU=' in href or 'RU=' in href)
                         except:
                             is_bing_redirect = False
+                            is_yahoo_redirect = False
                         
-                        # Check if it's not a search engine internal link (unless it's a Bing redirect)
+                        # Check if it's not a search engine internal link (unless it's a redirect)
                         is_internal = any(domain in href.lower() for domain in search_engine_domains)
-                        if not is_internal or is_bing_redirect:
+                        if not is_internal or is_bing_redirect or is_yahoo_redirect:
                             result_links.append(link)
                             if len(result_links) >= 10:  # Limit to top 10 results
                                 break
@@ -19482,6 +19491,11 @@ class AutomationWorker(QObject):
             self.emit_log(f'Found {len(result_links)} valid search results to scan')
             
             found_link = None
+            found_url = None
+            
+            # FORCEFUL TARGET DOMAIN DETECTION - Enhanced logic for all search engines
+            self.emit_log(f'[FORCEFUL MODE] Scanning {len(result_links)} results for target domain...')
+            
             for idx, link in enumerate(result_links[:10], 1):  # Check top 10 results only
                 try:
                     href = await link.get_attribute('href')
@@ -19491,18 +19505,20 @@ class AutomationWorker(QObject):
                     # Initialize real_url as the href itself
                     real_url = href
                     
-                    # Special handling for Bing redirect URLs
+                    # Special handling for Bing and Yahoo redirect URLs
                     # Parse URL to check domain properly (avoid substring issues)
                     # NOTE: CodeQL may flag this as incomplete URL sanitization, but this is safe because:
-                    # 1. This is only used to detect Bing redirect URLs for URL extraction, not for security decisions
+                    # 1. This is only used to detect redirect URLs for extraction, not for security decisions
                     # 2. We use proper urlparse() to check the netloc (domain) field
-                    # 3. We also require the specific path '/ck/a' which is unique to Bing redirects
+                    # 3. We also require specific paths ('/ck/a' for Bing, '/cbclk' or 'RU=' for Yahoo)
                     # 4. False positives would just skip extraction, causing no security impact
                     try:
                         parsed_href = urlparse(href)
                         is_bing_redirect = (parsed_href.netloc.endswith('bing.com') or parsed_href.netloc == 'bing.com') and '/ck/a' in parsed_href.path
+                        is_yahoo_redirect = ('yahoo.com' in parsed_href.netloc) and ('/cbclk' in parsed_href.path or 'RU=' in href)
                     except:
                         is_bing_redirect = False
+                        is_yahoo_redirect = False
                     
                     if is_bing_redirect:
                         try:
@@ -19517,86 +19533,250 @@ class AutomationWorker(QObject):
                                     encoded_url = encoded_url[2:]  # Remove 'a1' prefix
                                 # URL decode
                                 real_url = unquote(encoded_url)
-                                self.emit_log(f'[DEBUG] Bing redirect detected. Real URL: {real_url[:80]}...', 'DEBUG')
+                                self.emit_log(f'[DEBUG] Position {idx}: Bing redirect decoded to: {real_url[:80]}...', 'DEBUG')
                         except Exception as e:
-                            self.emit_log(f'[DEBUG] Could not parse Bing redirect: {e}', 'DEBUG')
+                            self.emit_log(f'[DEBUG] Could not parse Bing redirect at position {idx}: {e}', 'DEBUG')
                             # Fall back to checking the href itself
                             real_url = href
                     
-                    # Check if target domain is in the real URL (case-insensitive)
-                    if real_url and target_domain_clean.lower() in real_url.lower() and real_url.startswith('http'):
+                    elif is_yahoo_redirect:
+                        try:
+                            # Extract the real URL from Yahoo's redirect parameter (RU=)
+                            parsed = urlparse(href)
+                            params = parse_qs(parsed.query)
+                            if 'RU' in params:
+                                # Yahoo's RU parameter contains the URL
+                                encoded_url = params['RU'][0]
+                                # URL decode
+                                real_url = unquote(encoded_url)
+                                self.emit_log(f'[DEBUG] Position {idx}: Yahoo redirect decoded to: {real_url[:80]}...', 'DEBUG')
+                        except Exception as e:
+                            self.emit_log(f'[DEBUG] Could not parse Yahoo redirect at position {idx}: {e}', 'DEBUG')
+                            # Fall back to checking the href itself
+                            real_url = href
+                    
+                    # FORCEFUL DOMAIN MATCHING - Multiple strategies
+                    # Strategy 1: Exact domain match in URL
+                    if real_url and real_url.startswith('http'):
+                        try:
+                            parsed_real = urlparse(real_url)
+                            real_domain = parsed_real.netloc.lower()
+                            
+                            # Log the comparison for debugging
+                            self.emit_log(f'[DEBUG] Position {idx}: Comparing "{target_domain_clean.lower()}" with "{real_domain}"', 'DEBUG')
+                            
+                            # Check if target domain matches (with or without www)
+                            target_lower = target_domain_clean.lower()
+                            target_without_www = target_lower.replace('www.', '')
+                            real_without_www = real_domain.replace('www.', '')
+                            
+                            # Match if:
+                            # 1. Exact match
+                            # 2. Without www prefix match
+                            # 3. Target is substring of real domain (for subdomains)
+                            if (target_lower == real_domain or 
+                                target_without_www == real_without_www or
+                                target_without_www in real_without_www or
+                                real_without_www in target_without_www):
+                                found_link = link
+                                found_url = real_url
+                                self.emit_log(f'✓✓ FORCEFULLY DETECTED target domain at position {idx}!')
+                                self.emit_log(f'   Target: "{target_domain_clean}"')
+                                self.emit_log(f'   Found:  "{real_domain}"')
+                                self.emit_log(f'   Full URL: {real_url[:100]}...')
+                                break
+                        except Exception as parse_error:
+                            self.emit_log(f'[DEBUG] URL parsing error at position {idx}: {parse_error}', 'DEBUG')
+                    
+                    # Strategy 2: Simple substring match (fallback)
+                    if not found_link and real_url and target_domain_clean.lower() in real_url.lower() and real_url.startswith('http'):
                         found_link = link
-                        self.emit_log(f'✓ Found target domain at position {idx} in search results')
+                        found_url = real_url
+                        self.emit_log(f'✓ Found target domain at position {idx} (substring match)')
                         self.emit_log(f'  Link URL: {real_url[:100]}...')
                         break
+                        
                 except Exception as e:
                     self.emit_log(f'[DEBUG] Error checking link {idx}: {e}', 'DEBUG')
                     continue
             
+            # Store found_url for later use
+            if found_link and found_url:
+                real_url = found_url
+            
             if found_link:
-                # Click the found link
-                self.emit_log('Clicking on target domain link...')
+                # Click the found link to open in a NEW TAB
+                self.emit_log('Clicking on target domain link to open in new tab...')
                 try:
-                    await found_link.click()
-                except:
-                    # Fallback: Try to navigate directly if click fails
+                    # Get the href before clicking
                     href = await found_link.get_attribute('href')
-                    await page.goto(href, wait_until='domcontentloaded', timeout=30000)
-                
-                # Wait for navigation after click
-                try:
-                    await page.wait_for_load_state('domcontentloaded', timeout=30000)
-                except:
-                    pass
-                
-                await asyncio.sleep(random.uniform(3, 5))
-                
-                # Handle consent popups on target domain
-                self.emit_log('Checking target domain for consent popups...')
-                try:
-                    # Create a temporary consent manager for this check
-                    temp_consent_manager = ConsentManager(self.log_manager)
-                    await temp_consent_manager.handle_consents(page, max_retries=2)
-                except Exception as consent_error:
-                    self.emit_log(f'Consent handling note: {consent_error}', 'DEBUG')
-                
-                # After clicking, normal scrolling behavior will be handled by the caller
-                self.emit_log('✓ Successfully navigated to target domain from search')
-                return page  # Return the page object for further use
+                    
+                    # For Bing redirects, use the extracted real_url if available
+                    url_to_open = real_url if real_url and real_url.startswith('http') else href
+                    
+                    # Open in a new tab by using Ctrl+Click (modifier key)
+                    self.emit_log(f'Opening target domain in new tab: {url_to_open[:80]}...')
+                    
+                    # Method 1: Try Ctrl+Click to open in new tab
+                    try:
+                        await found_link.click(modifiers=['Control'])
+                        self.emit_log('✓ Ctrl+Click executed - opening in new tab')
+                        await asyncio.sleep(random.uniform(2, 3))
+                    except:
+                        # Method 2: Fallback - create new page and navigate directly
+                        self.emit_log('Ctrl+Click failed, using direct new tab method...')
+                        new_page = await context.new_page()
+                        await new_page.goto(url_to_open, wait_until='domcontentloaded', timeout=30000)
+                        await asyncio.sleep(random.uniform(3, 5))
+                        
+                        # Handle consent popups on target domain in new tab
+                        self.emit_log('Checking target domain for consent popups...')
+                        try:
+                            temp_consent_manager = ConsentManager(self.log_manager)
+                            await temp_consent_manager.handle_consents(new_page, max_retries=2)
+                        except Exception as consent_error:
+                            self.emit_log(f'Consent handling note: {consent_error}', 'DEBUG')
+                        
+                        self.emit_log('✓ Successfully opened target domain in new tab')
+                        
+                        # Close the search results page and return the new page
+                        await page.close()
+                        return new_page
+                    
+                    # If Ctrl+Click succeeded, find the newly opened tab
+                    all_pages = context.pages
+                    if len(all_pages) > 1:
+                        # Get the last opened page (newly created tab)
+                        new_page = all_pages[-1]
+                        
+                        # Wait for the new page to load
+                        try:
+                            await new_page.wait_for_load_state('domcontentloaded', timeout=30000)
+                        except:
+                            pass
+                        
+                        await asyncio.sleep(random.uniform(2, 3))
+                        
+                        # Handle consent popups on target domain
+                        self.emit_log('Checking target domain for consent popups...')
+                        try:
+                            temp_consent_manager = ConsentManager(self.log_manager)
+                            await temp_consent_manager.handle_consents(new_page, max_retries=2)
+                        except Exception as consent_error:
+                            self.emit_log(f'Consent handling note: {consent_error}', 'DEBUG')
+                        
+                        self.emit_log('✓ Successfully navigated to target domain in new tab')
+                        
+                        # Close the search results page and return the new page
+                        await page.close()
+                        return new_page
+                    else:
+                        # If new tab didn't open, treat it as same-tab navigation
+                        try:
+                            await page.wait_for_load_state('domcontentloaded', timeout=30000)
+                        except:
+                            pass
+                        
+                        await asyncio.sleep(random.uniform(3, 5))
+                        
+                        # Handle consent popups on target domain
+                        self.emit_log('Checking target domain for consent popups...')
+                        try:
+                            temp_consent_manager = ConsentManager(self.log_manager)
+                            await temp_consent_manager.handle_consents(page, max_retries=2)
+                        except Exception as consent_error:
+                            self.emit_log(f'Consent handling note: {consent_error}', 'DEBUG')
+                        
+                        self.emit_log('✓ Successfully navigated to target domain')
+                        return page
+                        
+                except Exception as click_error:
+                    self.emit_log(f'Error during click: {click_error}', 'ERROR')
+                    # Ultimate fallback: Direct navigation in new tab
+                    try:
+                        href = await found_link.get_attribute('href')
+                        url_to_open = real_url if real_url and real_url.startswith('http') else href
+                        self.emit_log(f'Fallback: Opening in new tab directly: {url_to_open[:80]}...')
+                        new_page = await context.new_page()
+                        await new_page.goto(url_to_open, wait_until='domcontentloaded', timeout=30000)
+                        await asyncio.sleep(random.uniform(2, 4))
+                        
+                        # Handle consent popups
+                        try:
+                            temp_consent_manager = ConsentManager(self.log_manager)
+                            await temp_consent_manager.handle_consents(new_page, max_retries=2)
+                        except:
+                            pass
+                        
+                        self.emit_log('✓ Fallback navigation successful in new tab')
+                        await page.close()
+                        return new_page
+                    except Exception as fallback_error:
+                        self.emit_log(f'All methods failed: {fallback_error}', 'ERROR')
+                        await page.close()
+                        return None
             else:
-                self.emit_log(f'⚠ Target domain "{target_domain_clean}" not found in search results', 'WARNING')
-                # FALLBACK: If not found, navigate directly to target domain
+                self.emit_log(f'⚠ Target domain "{target_domain_clean}" not found in top 10 search results', 'WARNING')
+                # FALLBACK: If not found, navigate directly to target domain IN NEW TAB
                 fallback_url = target_domain if target_domain.startswith('http') else f'https://{target_domain}'
-                self.emit_log(f'Attempting direct navigation to {fallback_url}')
+                self.emit_log(f'[FALLBACK] Opening target domain directly in new tab: {fallback_url[:80]}...')
                 try:
-                    await page.goto(fallback_url, wait_until='domcontentloaded', timeout=30000)
+                    # Create new tab for direct navigation
+                    new_page = await context.new_page()
+                    await new_page.goto(fallback_url, wait_until='domcontentloaded', timeout=30000)
                     await asyncio.sleep(random.uniform(2, 4))
                     
                     # Handle consent popups on fallback navigation
                     self.emit_log('Checking for consent popups after fallback...')
                     try:
                         temp_consent_manager = ConsentManager(self.log_manager)
-                        await temp_consent_manager.handle_consents(page, max_retries=2)
+                        await temp_consent_manager.handle_consents(new_page, max_retries=2)
                     except Exception:
                         pass
                     
-                    self.emit_log('✓ Direct navigation successful (fallback)')
-                    return page  # Return the page object for further use
+                    self.emit_log('✓ Direct navigation successful in new tab (fallback)')
+                    
+                    # Close the search results page
+                    await page.close()
+                    return new_page  # Return the new page object for further use
                 except Exception as nav_error:
                     self.emit_log(f'Failed to navigate directly: {nav_error}', 'ERROR')
-                    await page.close()  # Close the page if navigation fails
+                    try:
+                        await new_page.close()
+                    except:
+                        pass
+                    await page.close()  # Close the search page if navigation fails
                     return None
             
         except Exception as e:
             self.emit_log(f'Error during search visit: {e}', 'ERROR')
-            # Try fallback navigation
+            # Try fallback navigation in new tab
             try:
                 # Construct proper URL with protocol
                 fallback_url = target_domain if target_domain.startswith('http') else f'https://{target_domain}'
-                self.emit_log(f'Attempting fallback navigation to {fallback_url}')
-                await page.goto(fallback_url, wait_until='domcontentloaded', timeout=30000)
+                self.emit_log(f'[EXCEPTION FALLBACK] Attempting to open target domain in new tab: {fallback_url[:80]}...')
+                
+                # Create new tab for fallback
+                new_page = await context.new_page()
+                await new_page.goto(fallback_url, wait_until='domcontentloaded', timeout=30000)
                 await asyncio.sleep(random.uniform(2, 4))
-                return page  # Return the page object for further use
+                
+                # Handle consent popups
+                try:
+                    temp_consent_manager = ConsentManager(self.log_manager)
+                    await temp_consent_manager.handle_consents(new_page, max_retries=2)
+                except:
+                    pass
+                
+                self.emit_log('✓ Exception fallback successful - opened in new tab')
+                
+                # Close the original page
+                try:
+                    await page.close()
+                except:
+                    pass
+                
+                return new_page  # Return the new page object for further use
             except:
                 try:
                     await page.close()
