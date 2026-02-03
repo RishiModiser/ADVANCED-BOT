@@ -22184,23 +22184,6 @@ class AppGUI(QMainWindow):
         layout.addWidget(consent_group)
         
         # RPA Mode (NEW FEATURE)
-        rpa_mode_group = QGroupBox('🧩 RPA Mode')
-        rpa_mode_layout = QVBoxLayout()
-        rpa_mode_layout.setSpacing(10)
-        
-        self.enable_rpa_mode = QCheckBox('✅ Enable RPA Mode Only')
-        self.enable_rpa_mode.setChecked(False)
-        self.enable_rpa_mode.stateChanged.connect(self.toggle_rpa_mode)
-        rpa_mode_layout.addWidget(self.enable_rpa_mode)
-        
-        rpa_info = QLabel('ℹ️ When enabled, only RPA script and proxy settings are active. All other features are disabled.')
-        rpa_info.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
-        rpa_info.setWordWrap(True)
-        rpa_mode_layout.addWidget(rpa_info)
-        
-        rpa_mode_group.setLayout(rpa_mode_layout)
-        layout.addWidget(rpa_mode_group)
-        
         layout.addStretch()
         
         scroll_area.setWidget(widget)
@@ -22749,6 +22732,24 @@ class AppGUI(QMainWindow):
         btn_layout.addWidget(sync_btn)
         
         main_layout.addLayout(btn_layout)
+        
+        # RPA MODE Configuration Group
+        rpa_mode_group = QGroupBox('🧩 RPA Mode Configuration')
+        rpa_mode_layout = QVBoxLayout()
+        rpa_mode_layout.setSpacing(10)
+        
+        self.enable_rpa_mode = QCheckBox('✅ Enable RPA Mode Only')
+        self.enable_rpa_mode.setChecked(False)
+        self.enable_rpa_mode.stateChanged.connect(self.toggle_rpa_mode)
+        rpa_mode_layout.addWidget(self.enable_rpa_mode)
+        
+        rpa_info = QLabel('ℹ️ When enabled:\n• Only RPA script and proxy settings are active\n• CONSENT_POPUP Handler is activated\n• PLATFORM settings are activated\n• HIGH CPC/CPM Visit is deactivated\n• All other features are disabled')
+        rpa_info.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
+        rpa_info.setWordWrap(True)
+        rpa_mode_layout.addWidget(rpa_info)
+        
+        rpa_mode_group.setLayout(rpa_mode_layout)
+        main_layout.addWidget(rpa_mode_group)
         
         # Initialize workflow data storage
         self.workflow_steps = []
