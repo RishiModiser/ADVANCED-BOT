@@ -19051,23 +19051,30 @@ class AutomationWorker(QObject):
                     page = await context.new_page()
                     high_cpc_tabs.append(page)
                     self.emit_log(f'Tab {i+1}: Loading High CPC URL...')
-                    await page.goto(high_cpc_url, wait_until='domcontentloaded', timeout=30000)
-                    await asyncio.sleep(0.5)
+                    await page.goto(high_cpc_url, wait_until='networkidle', timeout=60000)
+                    self.emit_log(f'Tab {i+1}: Fully loaded')
+                    await asyncio.sleep(1)
                 
-                self.emit_log('All 4 tabs loaded, starting cookie handling...')
+                self.emit_log('All 4 tabs fully loaded, starting cookie handling...')
                 
-                # Tab 1: Handle cookies and move to next tab immediately
+                # Tab 1: Select tab, wait for proper reload, handle cookies
+                self.emit_log('Tab 1: Selecting and waiting for proper reload...')
+                await high_cpc_tabs[0].bring_to_front()
+                await asyncio.sleep(2)  # Wait for proper reload
                 self.emit_log('Tab 1: Checking for cookie popup...')
                 tab1_handled = await consent_manager.handle_consents(high_cpc_tabs[0])
                 if tab1_handled:
                     self.emit_log('Tab 1: Cookie popup accepted')
+                else:
+                    self.emit_log('Tab 1: No cookie popup detected')
                 await asyncio.sleep(0.5)
                 
-                # Tab 2: Wait up to 20 seconds for cookie popup
+                # Tab 2: Select tab, wait for proper reload, wait up to 20 seconds for cookie popup
+                self.emit_log('Tab 2: Selecting and waiting for proper reload...')
+                await high_cpc_tabs[1].bring_to_front()
+                await asyncio.sleep(2)  # Wait for proper reload
                 self.emit_log('Tab 2: Waiting for cookie popup (up to 20 seconds)...')
                 try:
-                    # Wait for page to properly reload
-                    await asyncio.sleep(2)
                     # Try to handle consent with timeout
                     tab2_handled = await asyncio.wait_for(
                         consent_manager.handle_consents(high_cpc_tabs[1]),
@@ -19081,10 +19088,12 @@ class AutomationWorker(QObject):
                     self.emit_log('Tab 2: No cookie popup appeared within 20 seconds')
                 await asyncio.sleep(0.5)
                 
-                # Tab 3: Wait up to 20 seconds for cookie popup
+                # Tab 3: Select tab, wait for proper reload, wait up to 20 seconds for cookie popup
+                self.emit_log('Tab 3: Selecting and waiting for proper reload...')
+                await high_cpc_tabs[2].bring_to_front()
+                await asyncio.sleep(2)  # Wait for proper reload
                 self.emit_log('Tab 3: Waiting for cookie popup (up to 20 seconds)...')
                 try:
-                    await asyncio.sleep(2)
                     tab3_handled = await asyncio.wait_for(
                         consent_manager.handle_consents(high_cpc_tabs[2]),
                         timeout=20
@@ -19097,109 +19106,29 @@ class AutomationWorker(QObject):
                     self.emit_log('Tab 3: No cookie popup appeared within 20 seconds')
                 await asyncio.sleep(0.5)
                 
-                # Tab 4: Handle cookies and perform shopping interactions
+                # Tab 4: Select tab, wait for proper reload, handle cookies and perform shopping interactions
+                self.emit_log('Tab 4: Selecting and waiting for proper reload...')
+                await high_cpc_tabs[3].bring_to_front()
+                await asyncio.sleep(2)  # Wait for proper reload
                 self.emit_log('Tab 4: Starting shopping interaction flow...')
                 try:
-                    # Wait for page to fully reload
-                    await asyncio.sleep(2)
-                    
-                    # Handle cookie popup if present (10 seconds timeout)
+                    # Handle cookie popup if present (20 seconds timeout)
+                    self.emit_log('Tab 4: Waiting for cookie popup (up to 20 seconds)...')
                     try:
                         tab4_handled = await asyncio.wait_for(
                             consent_manager.handle_consents(high_cpc_tabs[3]),
-                            timeout=10
+                            timeout=20
                         )
                         if tab4_handled:
                             self.emit_log('Tab 4: Cookie popup accepted')
+                        else:
+                            self.emit_log('Tab 4: No cookie popup found, proceeding...')
                     except asyncio.TimeoutError:
-                        self.emit_log('Tab 4: No cookie popup within 10 seconds, proceeding...')
+                        self.emit_log('Tab 4: No cookie popup within 20 seconds, proceeding...')
                     
-                    # Shopping interaction flow
-                    self.emit_log('Tab 4: Performing shopping interactions...')
-                    
-                    # Try to find and click product/add to bag buttons
-                    product_selectors = [
-                        'button:has-text("Add to Bag")',
-                        'button:has-text("Add to Cart")',
-                        'button:has-text("Shop Now")',
-                        'button:has-text("Buy Now")',
-                        'a:has-text("Shop Now")',
-                        '[data-testid*="add-to-cart"]',
-                        '.add-to-cart',
-                        '.add-to-bag'
-                    ]
-                    
-                    # Try to click a product button
-                    clicked = False
-                    for selector in product_selectors:
-                        try:
-                            elements = await high_cpc_tabs[3].query_selector_all(selector)
-                            if elements:
-                                visible_element = None
-                                for elem in elements:
-                                    if await elem.is_visible():
-                                        visible_element = elem
-                                        break
-                                
-                                if visible_element:
-                                    await HumanBehavior.random_delay(1000, 2000)
-                                    await visible_element.click()
-                                    self.emit_log(f'Tab 4: Clicked button: {selector[:30]}...')
-                                    clicked = True
-                                    await asyncio.sleep(2)
-                                    break
-                        except Exception:
-                            continue
-                    
-                    if clicked:
-                        # Try to go to cart
-                        cart_selectors = [
-                            'a:has-text("Cart")',
-                            'a:has-text("Bag")',
-                            '[data-testid*="cart"]',
-                            '.cart-link',
-                            'button:has-text("View Cart")',
-                            'button:has-text("View Bag")'
-                        ]
-                        
-                        for selector in cart_selectors:
-                            try:
-                                element = await high_cpc_tabs[3].query_selector(selector)
-                                if element and await element.is_visible():
-                                    await HumanBehavior.random_delay(1000, 2000)
-                                    await element.click()
-                                    self.emit_log('Tab 4: Navigated to cart')
-                                    await asyncio.sleep(2)
-                                    break
-                            except Exception:
-                                continue
-                        
-                        # Try to proceed to checkout
-                        checkout_selectors = [
-                            'button:has-text("Checkout")',
-                            'a:has-text("Checkout")',
-                            'button:has-text("Proceed to Checkout")',
-                            '[data-testid*="checkout"]',
-                            '.checkout-button'
-                        ]
-                        
-                        for selector in checkout_selectors:
-                            try:
-                                element = await high_cpc_tabs[3].query_selector(selector)
-                                if element and await element.is_visible():
-                                    await HumanBehavior.random_delay(1000, 2000)
-                                    await element.click()
-                                    self.emit_log('Tab 4: Proceeded to checkout')
-                                    await asyncio.sleep(2)
-                                    break
-                            except Exception:
-                                continue
-                        
-                        # Fill checkout form with random data
-                        self.emit_log('Tab 4: Filling checkout form with random data...')
-                        await self._fill_checkout_form(high_cpc_tabs[3])
-                    else:
-                        self.emit_log('Tab 4: No shopping buttons found, skipping shopping flow')
+                    # AI-driven Shopping interaction flow
+                    self.emit_log('Tab 4: Performing AI-driven shopping interactions...')
+                    await self._ai_driven_shopping_flow(high_cpc_tabs[3])
                     
                 except Exception as e:
                     self.emit_log(f'Tab 4 shopping interaction error: {e}', 'WARNING')
@@ -19207,48 +19136,42 @@ class AutomationWorker(QObject):
                 # Open Target Domain in 5th tab
                 self.emit_log(f'Opening Target Domain in 5th tab: {target_domain[:50]}...')
                 target_page = await context.new_page()
-                await target_page.goto(target_domain, wait_until='domcontentloaded', timeout=30000)
+                await target_page.goto(target_domain, wait_until='networkidle', timeout=60000)
+                self.emit_log('Tab 5: Target Domain fully loaded')
                 await asyncio.sleep(2)
                 
-                # Perform scrolling and clicking on Target Domain
+                # Perform smooth scrolling and clicking on Target Domain
                 self.emit_log(f'Starting Target Domain interaction (stay time: {stay_time} seconds)...')
                 start_time = time.time()
                 half_time = stay_time / 2
                 
-                # Initial scroll and clicks
-                await HumanBehavior.scroll_page(target_page, depth_percent=random.randint(40, 80))
+                # Initial smooth scrolling (human-like behavior)
+                self.emit_log('Tab 5: Performing smooth scrolling...')
+                await HumanBehavior.scroll_page(target_page, depth_percent=random.randint(40, 80), 
+                                               scroll_type='Smooth', min_speed=200, max_speed=600)
                 await asyncio.sleep(random.uniform(1, 2))
                 
-                # Perform 1-2 random clicks
+                # Continue smooth scrolling until half-time
+                while time.time() - start_time < half_time:
+                    await HumanBehavior.scroll_page(target_page, depth_percent=random.randint(30, 70),
+                                                   scroll_type='Smooth', min_speed=200, max_speed=600)
+                    wait_time = min(random.uniform(3, 6), half_time - (time.time() - start_time))
+                    if wait_time > 0:
+                        await asyncio.sleep(wait_time)
+                
+                # At half-time: Perform 1-2 random clicks
                 num_clicks = random.randint(1, 2)
-                self.emit_log(f'Performing {num_clicks} initial random clicks...')
+                self.emit_log(f'Half-time reached! Performing {num_clicks} random clicks...')
                 await self._perform_random_clicks(target_page, num_clicks)
-                
-                # Wait until half time
-                elapsed = time.time() - start_time
-                remaining_to_half = half_time - elapsed
-                if remaining_to_half > 0:
-                    self.emit_log(f'Waiting until half-time ({half_time:.0f}s)...')
-                    await asyncio.sleep(remaining_to_half)
-                
-                # Perform 1-2 more random clicks at half-time
-                num_clicks = random.randint(1, 2)
-                self.emit_log(f'Half-time reached, performing {num_clicks} more clicks...')
-                await HumanBehavior.scroll_page(target_page, depth_percent=random.randint(30, 70))
                 await asyncio.sleep(random.uniform(1, 2))
-                await self._perform_random_clicks(target_page, num_clicks)
                 
-                # Wait for remaining time
-                elapsed = time.time() - start_time
-                remaining_time = stay_time - elapsed
-                if remaining_time > 0:
-                    self.emit_log(f'Waiting for remaining time ({remaining_time:.0f}s)...')
-                    # Continue scrolling during remaining time
-                    while time.time() - start_time < stay_time:
-                        await HumanBehavior.scroll_page(target_page, depth_percent=random.randint(20, 60))
-                        wait_time = min(5, stay_time - (time.time() - start_time))
-                        if wait_time > 0:
-                            await asyncio.sleep(wait_time)
+                # Continue smooth scrolling for remaining time
+                while time.time() - start_time < stay_time:
+                    await HumanBehavior.scroll_page(target_page, depth_percent=random.randint(20, 60),
+                                                   scroll_type='Smooth', min_speed=200, max_speed=600)
+                    wait_time = min(random.uniform(3, 6), stay_time - (time.time() - start_time))
+                    if wait_time > 0:
+                        await asyncio.sleep(wait_time)
                 
                 self.emit_log('Stay time completed, closing all tabs...')
                 
@@ -19275,6 +19198,409 @@ class AutomationWorker(QObject):
                 
         except Exception as e:
             self.emit_log(f'HIGH CPC/CPM Mode error: {e}', 'ERROR')
+            return False
+    
+    async def _ai_driven_shopping_flow(self, page: Page):
+        """AI-driven shopping flow: detect products, select size/color, add to cart, checkout."""
+        try:
+            self.emit_log('AI Shopping: Starting intelligent product detection...')
+            
+            # Step 1: Intelligently detect and select a product
+            product_clicked = await self._detect_and_select_product(page)
+            
+            if not product_clicked:
+                self.emit_log('AI Shopping: No product found, skipping shopping flow')
+                return
+            
+            # Wait for product page to load
+            await asyncio.sleep(2)
+            
+            # Step 2: Detect and select size if available
+            await self._detect_and_select_size(page)
+            
+            # Step 3: Detect and select color if available
+            await self._detect_and_select_color(page)
+            
+            # Step 4: Add to cart/bag
+            added_to_cart = await self._detect_and_add_to_cart(page)
+            
+            if not added_to_cart:
+                self.emit_log('AI Shopping: Could not add to cart, stopping flow')
+                return
+            
+            # Wait for cart action to complete
+            await asyncio.sleep(2)
+            
+            # Step 5: Navigate to cart
+            cart_opened = await self._detect_and_open_cart(page)
+            
+            if not cart_opened:
+                self.emit_log('AI Shopping: Could not open cart, stopping flow')
+                return
+            
+            # Wait for cart page to load
+            await asyncio.sleep(2)
+            
+            # Step 6: Proceed to checkout
+            checkout_opened = await self._detect_and_open_checkout(page)
+            
+            if not checkout_opened:
+                self.emit_log('AI Shopping: Could not proceed to checkout, stopping flow')
+                return
+            
+            # Wait for checkout page to load
+            await asyncio.sleep(2)
+            
+            # Step 7: Fill checkout form with random data
+            self.emit_log('AI Shopping: Filling checkout form with random data...')
+            await self._fill_checkout_form(page)
+            
+            self.emit_log('AI Shopping: Shopping flow completed successfully')
+            
+        except Exception as e:
+            self.emit_log(f'AI Shopping flow error: {e}', 'WARNING')
+    
+    async def _detect_and_select_product(self, page: Page) -> bool:
+        """Intelligently detect and select a product from the page."""
+        try:
+            self.emit_log('AI Shopping: Detecting products on page...')
+            
+            # Enhanced product link/card selectors (common e-commerce patterns)
+            product_selectors = [
+                'a[href*="/product"]',
+                'a[href*="/p/"]',
+                'a[href*="/item"]',
+                '.product-card a',
+                '.product-item a',
+                '.product a',
+                '[data-testid*="product"] a',
+                '[class*="product-link"]',
+                '[class*="ProductCard"] a',
+                'article a[href*="product"]',
+                '.grid a[href*="/"]',  # Grid layouts often contain products
+                '.product-grid a',
+                '[data-product-id] a',
+            ]
+            
+            # Try each selector to find product links
+            for selector in product_selectors:
+                try:
+                    elements = await page.query_selector_all(selector)
+                    visible_products = []
+                    
+                    for elem in elements:
+                        try:
+                            if await elem.is_visible():
+                                # Check if element has meaningful href
+                                href = await elem.get_attribute('href')
+                                if href and len(href) > 5:  # Basic validation
+                                    visible_products.append(elem)
+                        except:
+                            continue
+                    
+                    if visible_products:
+                        # Select a random product from visible ones
+                        product = random.choice(visible_products)
+                        await HumanBehavior.random_delay(1000, 2000)
+                        await product.click()
+                        self.emit_log(f'AI Shopping: Clicked product (selector: {selector[:40]}...)')
+                        return True
+                        
+                except Exception:
+                    continue
+            
+            # If no product links found, try generic clickable items
+            self.emit_log('AI Shopping: No product links found, trying alternative detection...')
+            generic_selectors = [
+                'img[alt*="product"]',
+                'img[src*="product"]',
+                '.card a',
+                '.item a',
+            ]
+            
+            for selector in generic_selectors:
+                try:
+                    elements = await page.query_selector_all(selector)
+                    if elements:
+                        for elem in elements:
+                            if await elem.is_visible():
+                                await HumanBehavior.random_delay(1000, 2000)
+                                await elem.click()
+                                self.emit_log(f'AI Shopping: Clicked item (alternative selector)')
+                                return True
+                except Exception:
+                    continue
+                    
+            return False
+            
+        except Exception as e:
+            self.emit_log(f'Product detection error: {e}', 'WARNING')
+            return False
+    
+    async def _detect_and_select_size(self, page: Page) -> bool:
+        """Detect and select a size option if available."""
+        try:
+            self.emit_log('AI Shopping: Checking for size options...')
+            
+            # Size selection patterns
+            size_selectors = [
+                'select[name*="size"]',
+                'select[id*="size"]',
+                'button:has-text("Size")',
+                '[data-testid*="size"]',
+                '.size-selector button',
+                '.size-options button',
+                '[class*="size"] button',
+                'input[type="radio"][name*="size"]',
+                'button[aria-label*="size"]',
+                'button[class*="Size"]',
+            ]
+            
+            for selector in size_selectors:
+                try:
+                    elements = await page.query_selector_all(selector)
+                    visible_elements = []
+                    
+                    for elem in elements:
+                        if await elem.is_visible():
+                            visible_elements.append(elem)
+                    
+                    if visible_elements:
+                        # Select random size
+                        size_elem = random.choice(visible_elements)
+                        await HumanBehavior.random_delay(500, 1000)
+                        
+                        # Check element type
+                        tag_name = await size_elem.evaluate('el => el.tagName')
+                        
+                        if tag_name.lower() == 'select':
+                            # Handle dropdown
+                            options = await size_elem.query_selector_all('option')
+                            if len(options) > 1:  # Skip first (placeholder)
+                                option = random.choice(options[1:])
+                                value = await option.get_attribute('value')
+                                if value:
+                                    await size_elem.select_option(value)
+                                    self.emit_log('AI Shopping: Selected size from dropdown')
+                                    return True
+                        else:
+                            # Handle button/radio
+                            await size_elem.click()
+                            self.emit_log('AI Shopping: Clicked size option')
+                            return True
+                            
+                except Exception:
+                    continue
+            
+            self.emit_log('AI Shopping: No size options found (may not be required)')
+            return False
+            
+        except Exception as e:
+            self.emit_log(f'Size selection error: {e}', 'WARNING')
+            return False
+    
+    async def _detect_and_select_color(self, page: Page) -> bool:
+        """Detect and select a color option if available."""
+        try:
+            self.emit_log('AI Shopping: Checking for color options...')
+            
+            # Color selection patterns
+            color_selectors = [
+                'select[name*="color"]',
+                'select[name*="colour"]',
+                'select[id*="color"]',
+                'button:has-text("Color")',
+                '[data-testid*="color"]',
+                '.color-selector button',
+                '.color-options button',
+                '[class*="color"] button',
+                '[class*="colour"] button',
+                'input[type="radio"][name*="color"]',
+                'button[aria-label*="color"]',
+                'button[class*="Color"]',
+                '.swatch',
+                '[class*="Swatch"]',
+            ]
+            
+            for selector in color_selectors:
+                try:
+                    elements = await page.query_selector_all(selector)
+                    visible_elements = []
+                    
+                    for elem in elements:
+                        if await elem.is_visible():
+                            visible_elements.append(elem)
+                    
+                    if visible_elements:
+                        # Select random color
+                        color_elem = random.choice(visible_elements)
+                        await HumanBehavior.random_delay(500, 1000)
+                        
+                        # Check element type
+                        tag_name = await color_elem.evaluate('el => el.tagName')
+                        
+                        if tag_name.lower() == 'select':
+                            # Handle dropdown
+                            options = await color_elem.query_selector_all('option')
+                            if len(options) > 1:  # Skip first (placeholder)
+                                option = random.choice(options[1:])
+                                value = await option.get_attribute('value')
+                                if value:
+                                    await color_elem.select_option(value)
+                                    self.emit_log('AI Shopping: Selected color from dropdown')
+                                    return True
+                        else:
+                            # Handle button/swatch/radio
+                            await color_elem.click()
+                            self.emit_log('AI Shopping: Clicked color option')
+                            return True
+                            
+                except Exception:
+                    continue
+            
+            self.emit_log('AI Shopping: No color options found (may not be required)')
+            return False
+            
+        except Exception as e:
+            self.emit_log(f'Color selection error: {e}', 'WARNING')
+            return False
+    
+    async def _detect_and_add_to_cart(self, page: Page) -> bool:
+        """Detect and click Add to Cart/Bag/Shop Now button."""
+        try:
+            self.emit_log('AI Shopping: Looking for Add to Cart button...')
+            
+            # Enhanced add to cart button selectors
+            cart_button_selectors = [
+                'button:has-text("Add to Cart")',
+                'button:has-text("Add to Bag")',
+                'button:has-text("Add To Cart")',
+                'button:has-text("Add To Bag")',
+                'button:has-text("Shop Now")',
+                'button:has-text("Buy Now")',
+                'a:has-text("Add to Cart")',
+                'a:has-text("Add to Bag")',
+                'a:has-text("Shop Now")',
+                '[data-testid*="add-to-cart"]',
+                '[data-testid*="add-to-bag"]',
+                '[id*="add-to-cart"]',
+                '[id*="add-to-bag"]',
+                '.add-to-cart',
+                '.add-to-bag',
+                'button[class*="AddToCart"]',
+                'button[class*="AddToBag"]',
+                'button[aria-label*="Add to cart"]',
+                'button[aria-label*="Add to bag"]',
+            ]
+            
+            for selector in cart_button_selectors:
+                try:
+                    elements = await page.query_selector_all(selector)
+                    
+                    for elem in elements:
+                        if await elem.is_visible():
+                            await HumanBehavior.random_delay(1000, 2000)
+                            await elem.click()
+                            self.emit_log(f'AI Shopping: Clicked Add to Cart button')
+                            return True
+                            
+                except Exception:
+                    continue
+            
+            self.emit_log('AI Shopping: No Add to Cart button found')
+            return False
+            
+        except Exception as e:
+            self.emit_log(f'Add to cart error: {e}', 'WARNING')
+            return False
+    
+    async def _detect_and_open_cart(self, page: Page) -> bool:
+        """Detect and open the shopping cart."""
+        try:
+            self.emit_log('AI Shopping: Looking for Cart link...')
+            
+            # Cart/Bag link selectors
+            cart_selectors = [
+                'a:has-text("Cart")',
+                'a:has-text("Bag")',
+                'a:has-text("View Cart")',
+                'a:has-text("View Bag")',
+                'button:has-text("Cart")',
+                'button:has-text("Bag")',
+                'button:has-text("View Cart")',
+                'button:has-text("View Bag")',
+                '[data-testid*="cart"]',
+                '[data-testid*="bag"]',
+                '[href*="/cart"]',
+                '[href*="/bag"]',
+                '.cart-link',
+                '.bag-link',
+                '[class*="cart"]',
+                '[aria-label*="cart"]',
+                '[aria-label*="bag"]',
+                'button[class*="Cart"]',
+                'a[class*="Cart"]',
+            ]
+            
+            for selector in cart_selectors:
+                try:
+                    element = await page.query_selector(selector)
+                    if element and await element.is_visible():
+                        await HumanBehavior.random_delay(1000, 2000)
+                        await element.click()
+                        self.emit_log('AI Shopping: Navigated to cart')
+                        return True
+                        
+                except Exception:
+                    continue
+            
+            self.emit_log('AI Shopping: No Cart link found')
+            return False
+            
+        except Exception as e:
+            self.emit_log(f'Open cart error: {e}', 'WARNING')
+            return False
+    
+    async def _detect_and_open_checkout(self, page: Page) -> bool:
+        """Detect and click Checkout button."""
+        try:
+            self.emit_log('AI Shopping: Looking for Checkout button...')
+            
+            # Checkout button selectors
+            checkout_selectors = [
+                'button:has-text("Checkout")',
+                'button:has-text("Check Out")',
+                'a:has-text("Checkout")',
+                'a:has-text("Check Out")',
+                'button:has-text("Proceed to Checkout")',
+                'a:has-text("Proceed to Checkout")',
+                'button:has-text("Continue to Checkout")',
+                '[data-testid*="checkout"]',
+                '[href*="/checkout"]',
+                '.checkout-button',
+                'button[class*="Checkout"]',
+                'a[class*="Checkout"]',
+                '[aria-label*="checkout"]',
+                '[id*="checkout"]',
+            ]
+            
+            for selector in checkout_selectors:
+                try:
+                    element = await page.query_selector(selector)
+                    if element and await element.is_visible():
+                        await HumanBehavior.random_delay(1000, 2000)
+                        await element.click()
+                        self.emit_log('AI Shopping: Proceeded to checkout')
+                        return True
+                        
+                except Exception:
+                    continue
+            
+            self.emit_log('AI Shopping: No Checkout button found')
+            return False
+            
+        except Exception as e:
+            self.emit_log(f'Open checkout error: {e}', 'WARNING')
             return False
     
     async def _fill_checkout_form(self, page: Page):
