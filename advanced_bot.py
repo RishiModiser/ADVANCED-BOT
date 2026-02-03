@@ -16920,8 +16920,15 @@ SEARCH_ENGINES = {
             '#header-search-input',       # Mobile header search
             '.mobile-search input'        # Mobile search container
         ],
-        'results_selector': ['#web', '.searchCenterMiddle'],
-        'result_links_selector': '#web a[href], .searchCenterMiddle a[href]'
+        'results_selector': [
+            '#web',                        # Desktop results container
+            '.searchCenterMiddle',         # Desktop search center
+            '#main',                       # Mobile main content
+            '.results',                    # Generic results container
+            '[role="main"]',               # Main content by aria role
+            '.compArticleList'             # Mobile article list
+        ],
+        'result_links_selector': '#web a[href], .searchCenterMiddle a[href], #main a[href], .results a[href]'
     },
     'DuckDuckGo': {
         'url': 'https://duckduckgo.com',
