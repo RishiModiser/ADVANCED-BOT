@@ -43,23 +43,32 @@ async def test_all_rpa_actions():
             # Test 5: Wait again
             {"type": "wait", "duration": 1000},
             
-            # Test 6: New Tab again
+            # Test 6: Refresh Webpage
+            {"type": "refresh"},
+            
+            # Test 7: Wait after refresh
+            {"type": "wait", "duration": 1000},
+            
+            # Test 8: New Tab again
             {"type": "newPage"},
             
-            # Test 7: Navigate in new tab
+            # Test 9: Navigate in new tab
             {"type": "navigate", "url": "https://www.wikipedia.org", "timeout": 30000},
             
-            # Test 8: Scroll in new tab
+            # Test 10: Scroll in new tab
             {"type": "scroll", "depth": 30, "position": "Top", "scroll_type": "Auto"},
             
-            # Test 9: Wait
+            # Test 11: Wait
             {"type": "wait", "duration": 2000},
             
-            # Test 10: Close current page
-            {"type": "closePage"},
+            # Test 12: Close Tab (closeTab)
+            {"type": "closeTab"},
             
-            # Test 11: Navigate back to first tab (should still be on example.com)
-            {"type": "wait", "duration": 1000}
+            # Test 13: Navigate back to first tab (should still be on example.com)
+            {"type": "wait", "duration": 1000},
+            
+            # Test 14: Close Page (closePage)
+            {"type": "closePage"}
         ]
     }
     
@@ -71,6 +80,14 @@ async def test_all_rpa_actions():
         "click": {"tested": False, "passed": False, "error": None},
         "input": {"tested": False, "passed": False, "error": None},
         "closePage": {"tested": False, "passed": False, "error": None},
+        "refresh": {"tested": False, "passed": False, "error": None},
+        "closeTab": {"tested": False, "passed": False, "error": None},
+        "if": {"tested": False, "passed": False, "error": None},
+        "forLoopElements": {"tested": False, "passed": False, "error": None},
+        "forLoopTimes": {"tested": False, "passed": False, "error": None},
+        "while": {"tested": False, "passed": False, "error": None},
+        "break": {"tested": False, "passed": False, "error": None},
+        "quitBrowser": {"tested": False, "passed": False, "error": None},
     }
     
     try:
@@ -150,6 +167,27 @@ async def test_all_rpa_actions():
                         else:
                             print(f"      ✗ No page to close")
                             results["closePage"]["error"] = "No page to close"
+                    
+                    elif step_type == 'refresh':
+                        results["refresh"]["tested"] = True
+                        if current_page:
+                            await current_page.reload(wait_until='domcontentloaded')
+                            print(f"      ✓ Page refreshed")
+                            results["refresh"]["passed"] = True
+                        else:
+                            print(f"      ✗ No page available")
+                            results["refresh"]["error"] = "No page available"
+                    
+                    elif step_type == 'closeTab':
+                        results["closeTab"]["tested"] = True
+                        if current_page:
+                            await current_page.close()
+                            current_page = None
+                            print(f"      ✓ Tab closed")
+                            results["closeTab"]["passed"] = True
+                        else:
+                            print(f"      ✗ No tab to close")
+                            results["closeTab"]["error"] = "No tab to close"
                     
                     else:
                         print(f"      ⚠ Unknown step type: {step_type}")

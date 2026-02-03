@@ -106,7 +106,15 @@ def test_action_mappings():
         '📜 Scroll': 'scroll',
         '🖱 Click Element': 'click',
         '⌨ Input Text': 'input',
-        '❌ Close Page': 'closePage'
+        '❌ Close Page': 'closePage',
+        '🔄 Refresh Webpage': 'refresh',
+        '🔀 Close Tab': 'closeTab',
+        '🔍 Statement If': 'if',
+        '🔁 For Loop Elements': 'forLoopElements',
+        '🔢 For Loop Times': 'forLoopTimes',
+        '♾️ While Loop': 'while',
+        '⛔ Exit Loop': 'break',
+        '🚪 Quit Browser': 'quitBrowser'
     }
     
     all_passed = True
@@ -123,6 +131,14 @@ def test_action_mappings():
             'Click Element': 'click',
             'Input Text': 'input',
             'Close Page': 'closePage',
+            'Refresh Webpage': 'refresh',
+            'Close Tab': 'closeTab',
+            'Statement If': 'if',
+            'For Loop Elements': 'forLoopElements',
+            'For Loop Times': 'forLoopTimes',
+            'While Loop': 'while',
+            'Exit Loop': 'break',
+            'Quit Browser': 'quitBrowser',
         }
         step_type = mapping.get(clean_name, 'unknown')
         
