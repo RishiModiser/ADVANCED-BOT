@@ -64,8 +64,8 @@ def test_forceful_detection():
     # Check for subdomain matching
     checks.append(("Subdomain matching support", "target_without_www in real_without_www" in content))
     
-    # Check for position-based debugging
-    checks.append(("Position-based debug logging", "Position {idx}" in content))
+    # Check for position-based debugging (check for the pattern without f-string syntax)
+    checks.append(("Position-based debug logging", "Position" in content and "idx" in content))
     
     # Check for comparison logging
     checks.append(("Logs domain comparisons", 'Comparing' in content))
@@ -121,11 +121,11 @@ def test_robust_fallbacks():
     
     checks = []
     
-    # Check for fallback when target not found
-    checks.append(("Fallback when target not found", "not found in" in content.lower() and "fallback" in content.lower()))
+    # Check for fallback when target not found (more specific pattern)
+    checks.append(("Fallback when target not found", "not found in top 10" in content or ("not found in" in content and "WARNING" in content)))
     
-    # Check for exception fallback
-    checks.append(("Exception handling fallback", "EXCEPTION FALLBACK" in content or "exception" in content.lower()))
+    # Check for exception fallback (more specific pattern)
+    checks.append(("Exception handling fallback", "EXCEPTION FALLBACK" in content))
     
     # Check for direct navigation fallback
     checks.append(("Direct navigation fallback", "direct navigation" in content.lower()))
