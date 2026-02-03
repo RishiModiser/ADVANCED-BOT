@@ -18421,16 +18421,52 @@ class ProxyGeolocation:
         except Exception:
             return None
     
+    async def _resolve_hostname_to_ip(self, hostname: str) -> Optional[str]:
+        """
+        Resolve a hostname to an IP address using DNS.
+        
+        Args:
+            hostname: Hostname to resolve (e.g., 'geo.g-w.info')
+        
+        Returns:
+            Resolved IP address as string, or None if resolution fails
+        """
+        import socket
+        try:
+            # Check if it's already an IP address (IPv4 or IPv6)
+            try:
+                socket.inet_aton(hostname)  # IPv4 check
+                return hostname  # Already an IP
+            except socket.error:
+                # Not IPv4, check IPv6
+                try:
+                    socket.inet_pton(socket.AF_INET6, hostname)
+                    return hostname  # Already an IPv6
+                except socket.error:
+                    pass  # Not an IP, proceed with DNS resolution
+            
+            # Resolve hostname to IP
+            ip = socket.gethostbyname(hostname)
+            logging.info(f'Resolved hostname {hostname} to IP {ip}')
+            return ip
+        except socket.gaierror as e:
+            logging.warning(f'Failed to resolve hostname {hostname}: {e}')
+            return None
+        except Exception as e:
+            logging.warning(f'Error resolving hostname {hostname}: {e}')
+            return None
+    
     async def fetch_location(self, proxy_config: Dict[str, str]) -> Dict[str, str]:
         """
         Fetch geolocation for a proxy using real geolocation API.
         Returns a dictionary with location info like country, city, timezone.
         
         Uses ip-api.com free API for accurate geolocation.
+        Supports both IP addresses and hostnames (hostnames are resolved to IPs first).
         """
         try:
-            ip = self.extract_ip_from_proxy(proxy_config)
-            if not ip:
+            host_or_ip = self.extract_ip_from_proxy(proxy_config)
+            if not host_or_ip:
                 return {
                     'ip': 'unknown',
                     'country': 'Unknown',
@@ -18438,9 +18474,17 @@ class ProxyGeolocation:
                     'timezone': 'UTC'
                 }
             
-            # Check cache
-            if ip in self.cache:
-                return self.cache[ip]
+            # Resolve hostname to IP if needed
+            ip = await self._resolve_hostname_to_ip(host_or_ip)
+            if not ip:
+                # If DNS resolution fails, use hostname as-is and try API
+                # (API might resolve it, or we fall back to mock data)
+                ip = host_or_ip
+            
+            # Check cache (use original host_or_ip as key to cache both hostname and IP results)
+            cache_key = host_or_ip
+            if cache_key in self.cache:
+                return self.cache[cache_key]
             
             # Try to fetch real geolocation data from ip-api.com (using HTTPS)
             if aiohttp is not None:
@@ -18461,7 +18505,7 @@ class ProxyGeolocation:
                                         'timezone': data.get('timezone', 'UTC')
                                     }
                                     # Cache the result
-                                    self.cache[ip] = location_info
+                                    self.cache[cache_key] = location_info
                                     return location_info
                 except Exception as api_error:
                     logging.warning(f'Failed to fetch real geolocation, using fallback: {api_error}')
@@ -18477,7 +18521,7 @@ class ProxyGeolocation:
             }
             
             # Cache the result
-            self.cache[ip] = location_info
+            self.cache[cache_key] = location_info
             return location_info
             
         except Exception as e:
