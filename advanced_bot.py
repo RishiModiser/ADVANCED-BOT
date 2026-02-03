@@ -18102,12 +18102,20 @@ class ScriptExecutor:
                 
                 try:
                     if step_type == 'newPage':
-                        # For first page in persistent context, use existing page
-                        if not self.current_page and context.pages:
-                            self.current_page = context.pages[0]
-                        else:
-                            self.current_page = await context.new_page()
-                        self.log_manager.log(f'✓ Step {idx + 1}: New page opened')
+                        # Always create a new page when newPage action is used
+                        # This ensures New Tab action works properly in RPA Script Creator
+                        try:
+                            # Check if context has existing pages
+                            if not self.current_page and context.pages:
+                                # For first page in persistent context, use existing page
+                                self.current_page = context.pages[0]
+                                self.log_manager.log(f'✓ Step {idx + 1}: Using existing page')
+                            else:
+                                # Create a new page/tab
+                                self.current_page = await context.new_page()
+                                self.log_manager.log(f'✓ Step {idx + 1}: New page/tab opened successfully')
+                        except Exception as e:
+                            self.log_manager.log(f'✗ Step {idx + 1}: Failed to create new page: {e}', 'ERROR')
                     
                     elif step_type == 'navigate':
                         url = step.get('url', '')
@@ -21436,6 +21444,88 @@ class AutomationWorker(QObject):
 
 
 # ============================================================================
+# CUSTOM WIDGETS FOR DRAG AND DROP
+# ============================================================================
+
+class WorkflowListWidget(QListWidget):
+    """Custom QListWidget that accepts drops from Action Toolbox."""
+    
+    def __init__(self, parent_gui, parent=None):
+        super().__init__(parent)
+        self.parent_gui = parent_gui
+        self.setAcceptDrops(True)
+        self.setDragDropMode(QAbstractItemView.DragDrop)
+        self.setDefaultDropAction(Qt.MoveAction)
+    
+    def dragEnterEvent(self, event):
+        """Accept drag events from action toolbox or internal reordering."""
+        if event.source() == self or event.source() == self.parent_gui.action_toolbox:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+    
+    def dragMoveEvent(self, event):
+        """Accept drag move events."""
+        if event.source() == self or event.source() == self.parent_gui.action_toolbox:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+    
+    def dropEvent(self, event):
+        """Handle drop event from action toolbox or internal reordering."""
+        if event.source() == self.parent_gui.action_toolbox:
+            # Drop from action toolbox - add new workflow step
+            current_item = self.parent_gui.action_toolbox.currentItem()
+            if current_item:
+                action_name = current_item.text()
+                step_type = self.parent_gui.action_to_step_type(action_name)
+                
+                # Create step with UUID
+                step = {
+                    'id': str(uuid.uuid4()),
+                    'type': step_type,
+                    'config': self.parent_gui.get_default_config(step_type)
+                }
+                
+                # Determine drop position
+                drop_position = self.indexAt(event.position().toPoint())
+                if drop_position.isValid():
+                    drop_row = drop_position.row()
+                    # Insert at drop position
+                    self.parent_gui.workflow_steps.insert(drop_row, step)
+                else:
+                    # Append to end
+                    drop_row = len(self.parent_gui.workflow_steps)
+                    self.parent_gui.workflow_steps.append(step)
+                
+                # Add to visual list at drop position
+                display_text = f"{action_name}"
+                list_item = QListWidgetItem(display_text)
+                list_item.setData(Qt.UserRole, step['id'])
+                self.insertItem(drop_row, list_item)
+                
+                # Sync to JSON
+                self.parent_gui.sync_visual_to_json()
+                
+                event.acceptProposedAction()
+        elif event.source() == self:
+            # Internal reordering - use default behavior
+            super().dropEvent(event)
+            # Rebuild workflow_steps list based on new order
+            new_workflow_steps = []
+            for i in range(self.count()):
+                item = self.item(i)
+                step_id = item.data(Qt.UserRole)
+                step = next((s for s in self.parent_gui.workflow_steps if s['id'] == step_id), None)
+                if step:
+                    new_workflow_steps.append(step)
+            self.parent_gui.workflow_steps = new_workflow_steps
+            self.parent_gui.sync_visual_to_json()
+        else:
+            event.ignore()
+
+
+# ============================================================================
 # MAIN GUI APPLICATION
 # ============================================================================
 
@@ -22239,24 +22329,6 @@ class AppGUI(QMainWindow):
         consent_group.setLayout(consent_layout)
         layout.addWidget(consent_group)
         
-        # RPA Mode (NEW FEATURE)
-        rpa_mode_group = QGroupBox('🧩 RPA Mode')
-        rpa_mode_layout = QVBoxLayout()
-        rpa_mode_layout.setSpacing(10)
-        
-        self.enable_rpa_mode = QCheckBox('✅ Enable RPA Mode Only')
-        self.enable_rpa_mode.setChecked(False)
-        self.enable_rpa_mode.stateChanged.connect(self.toggle_rpa_mode)
-        rpa_mode_layout.addWidget(self.enable_rpa_mode)
-        
-        rpa_info = QLabel('ℹ️ When enabled, only RPA script and proxy settings are active. All other features are disabled.')
-        rpa_info.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
-        rpa_info.setWordWrap(True)
-        rpa_mode_layout.addWidget(rpa_info)
-        
-        rpa_mode_group.setLayout(rpa_mode_layout)
-        layout.addWidget(rpa_mode_group)
-        
         layout.addStretch()
         
         scroll_area.setWidget(widget)
@@ -22269,11 +22341,21 @@ class AppGUI(QMainWindow):
         self.max_pages_input.setEnabled(enabled)
     
     def toggle_rpa_mode(self, state):
-        """Enable/disable other features based on RPA mode checkbox state."""
+        """Enable/disable other features based on RPA mode checkbox state.
+        
+        When RPA MODE is enabled:
+        - Activates CONSENT_POPUP Handler (enable_consent, enable_popups)
+        - Activates PLATFORM selection (platform_desktop_check, platform_android_check)
+        - Disables all other traffic/behavior settings
+        
+        When RPA MODE is disabled:
+        - Deactivates HIGH CPC/CPM Visit mode
+        - Re-enables all settings
+        """
         # PySide6 stateChanged emits int (0=unchecked, 2=checked), compare with enum or value
         rpa_mode_enabled = state in (Qt.Checked, Qt.Checked.value)
         
-        # When RPA mode is enabled, disable all other features EXCEPT proxy and threads
+        # When RPA mode is enabled, disable all other features EXCEPT proxy, threads, consent handlers, and platform
         # When disabled, enable all features
         disable_features = rpa_mode_enabled
         
@@ -22287,14 +22369,30 @@ class AppGUI(QMainWindow):
         self.threads_input.setEnabled(True)  # Always enabled
         self.content_ratio_input.setEnabled(not disable_features)
         
-        # Disable/enable platform settings
-        self.platform_desktop_check.setEnabled(not disable_features)
-        self.platform_android_check.setEnabled(not disable_features)
+        # REQUIREMENT: Keep platform settings ENABLED when RPA mode is ON (ACTIVE)
+        self.platform_desktop_check.setEnabled(True)  # Always enabled - ACTIVE in RPA mode
+        self.platform_android_check.setEnabled(True)  # Always enabled - ACTIVE in RPA mode
         
         # Disable/enable visit type settings
         self.visit_direct_radio.setEnabled(not disable_features)
         self.visit_referral_radio.setEnabled(not disable_features)
         self.visit_search_radio.setEnabled(not disable_features)
+        
+        # REQUIREMENT: Disable HIGH CPC/CPM Visit when RPA mode is disabled or enabled
+        # When RPA mode is enabled, HIGH CPC should be disabled
+        # When RPA mode is disabled, HIGH CPC is restored to user's previous choice
+        if rpa_mode_enabled:
+            # Store the current state before disabling
+            if not hasattr(self, '_high_cpc_previous_state'):
+                self._high_cpc_previous_state = self.visit_high_cpc_radio.isChecked()
+            # Disable HIGH CPC/CPM Visit mode when RPA is enabled
+            self.visit_high_cpc_radio.setEnabled(False)
+            if self.visit_high_cpc_radio.isChecked():
+                # Uncheck it and switch to direct visit
+                self.visit_direct_radio.setChecked(True)
+        else:
+            # Re-enable HIGH CPC/CPM Visit mode when RPA is disabled
+            self.visit_high_cpc_radio.setEnabled(True)
         
         # Disable/enable URL input
         self.url_input.setEnabled(not disable_features)
@@ -22303,8 +22401,20 @@ class AppGUI(QMainWindow):
         # Disable/enable behavior settings
         self.enable_interaction.setEnabled(not disable_features)
         self.enable_extra_pages.setEnabled(not disable_features)
-        self.enable_consent.setEnabled(not disable_features)
-        self.enable_popups.setEnabled(not disable_features)
+        
+        # REQUIREMENT: Keep consent handlers ENABLED and ACTIVATED when RPA mode is ON
+        if rpa_mode_enabled:
+            # Force enable consent handlers when RPA mode is activated
+            self.enable_consent.setChecked(True)
+            self.enable_popups.setChecked(True)
+            # Keep them enabled so user can see they're active but disable changing them
+            self.enable_consent.setEnabled(True)
+            self.enable_popups.setEnabled(True)
+        else:
+            # Allow user to change consent handlers when RPA mode is off
+            self.enable_consent.setEnabled(True)
+            self.enable_popups.setEnabled(True)
+        
         self.enable_text_highlight.setEnabled(not disable_features)
         self.scroll_depth_input.setEnabled(not disable_features)
         self.enable_mouse_movement.setEnabled(not disable_features)
@@ -22631,9 +22741,7 @@ class AppGUI(QMainWindow):
         """)
         workflow_layout.addWidget(workflow_label)
         
-        self.workflow_list = QListWidget()
-        self.workflow_list.setAcceptDrops(True)
-        self.workflow_list.setDragDropMode(QAbstractItemView.InternalMove)
+        self.workflow_list = WorkflowListWidget(self)
         self.workflow_list.itemClicked.connect(self.on_workflow_item_clicked)
         self.workflow_list.model().rowsMoved.connect(self.sync_visual_to_json)
         self.workflow_list.setStyleSheet("""
@@ -22805,6 +22913,27 @@ class AppGUI(QMainWindow):
         btn_layout.addWidget(sync_btn)
         
         main_layout.addLayout(btn_layout)
+        
+        # RPA Mode Configuration (MOVED FROM BEHAVIOR TAB)
+        rpa_mode_group = QGroupBox('🧩 RPA Mode Configuration')
+        rpa_mode_layout = QVBoxLayout()
+        rpa_mode_layout.setSpacing(10)
+        
+        self.enable_rpa_mode = QCheckBox('✅ Enable RPA Mode Only')
+        self.enable_rpa_mode.setChecked(False)
+        self.enable_rpa_mode.stateChanged.connect(self.toggle_rpa_mode)
+        rpa_mode_layout.addWidget(self.enable_rpa_mode)
+        
+        rpa_info = QLabel('ℹ️ When enabled, only RPA script and proxy settings are active. All other features are disabled.\n\n'
+                         '✓ Consent & Popup Handler will be automatically enabled\n'
+                         '✓ Platform selection will be automatically enabled\n'
+                         '✗ HIGH CPC/CPM Visit mode will be automatically disabled')
+        rpa_info.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
+        rpa_info.setWordWrap(True)
+        rpa_mode_layout.addWidget(rpa_info)
+        
+        rpa_mode_group.setLayout(rpa_mode_layout)
+        main_layout.addWidget(rpa_mode_group)
         
         # Initialize workflow data storage
         self.workflow_steps = []
