@@ -8,7 +8,7 @@
    ```
    Double-click: build_standalone.bat
    ```
-   Wait 5-10 minutes for the build to complete.
+   Wait 5-10 minutes for the first build to complete (subsequent builds take 2-3 minutes).
 
 2. **Run Your Bot**
    
@@ -38,7 +38,7 @@
    chmod +x build_standalone.sh
    ./build_standalone.sh
    ```
-   Wait 5-10 minutes for the build to complete.
+   Wait 5-10 minutes for the first build to complete (subsequent builds take 2-3 minutes).
 
 2. **Run Your Bot**
    
