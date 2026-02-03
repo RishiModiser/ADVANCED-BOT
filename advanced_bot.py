@@ -87,12 +87,19 @@ AD_NETWORK_BLOCKLIST = [
 
 CONSENT_BUTTON_TEXTS = [
     'accept', 'accept all', 'agree', 'allow all', 'i agree',
-    'agree and close', 'allow cookies', 'got it', 'ok', 'consent',
+    'agree and close', 'allow cookies', 'got it', 'ok', 'okay', 'consent',
     'agree and continue', 'akzeptieren', 'accepter', 'aceptar',
     'accept cookies', 'accepter tout', 'alle akzeptieren', 'tout accepter',
     'accept all cookies', 'allow all cookies', 'i accept', 'i understand',
     'agree to all', 'j\'accepte', 'acepto', 'accetto', 'continuar',
-    'continue', 'understood', 'dismiss', 'close'
+    'continue', 'understood', 'dismiss', 'close', 'yes', 'allow',
+    'enable', 'enable all', 'confirm', 'accept & close', 'agree & close',
+    'that\'s ok', 'fine by me', 'sounds good', 'accept recommended',
+    'i understand', 'proceed', 'agree all', 'allow cookies and close',
+    'accept and proceed', 'accept selected', 'save and close',
+    'save preferences', 'all cookies', 'necessary cookies only',
+    'reject all', 'only necessary', 'customize', 'preferences',
+    'manage options', 'cookie settings', 'privacy settings'
 ]
 
 SPONSORED_SELECTORS = [
@@ -17512,7 +17519,8 @@ class HumanBehavior:
             logging.error(f'Text highlight error: {e}')
     
     @staticmethod
-    async def time_based_browsing(page: Page, min_time: int, max_time: int, enable_highlight: bool = False):
+    async def time_based_browsing(page: Page, min_time: int, max_time: int, enable_highlight: bool = False, 
+                                  consent_manager=None, log_manager=None):
         """
         Simulate advanced human browsing behavior for a specified time period.
         
@@ -17521,6 +17529,8 @@ class HumanBehavior:
             min_time: Minimum time to spend in seconds (120-480)
             max_time: Maximum time to spend in seconds (120-480)
             enable_highlight: Enable random text highlighting
+            consent_manager: Optional ConsentManager for continuous popup handling
+            log_manager: Optional LogManager for logging
         """
         try:
             # Validate and clamp time range
@@ -17537,6 +17547,8 @@ class HumanBehavior:
             
             logging.info(f'Starting time-based browsing for {time_to_spend:.1f} seconds')
             
+            last_consent_check = start_time  # Track last consent check time
+            
             while time.time() - start_time < time_to_spend:
                 # Random scroll depth
                 scroll_depth = random.randint(30, 100)
@@ -17546,6 +17558,14 @@ class HumanBehavior:
                 
                 # Random reading pause
                 await asyncio.sleep(random.uniform(2.0, 5.0))
+                
+                # Periodically check for consent popups (every 10-15 seconds)
+                if consent_manager and (time.time() - last_consent_check) > random.uniform(10, 15):
+                    try:
+                        await consent_manager.handle_consents(page, max_retries=1)
+                        last_consent_check = time.time()
+                    except Exception:
+                        pass  # Silent failure for consent checks during browsing
                 
                 # Occasionally highlight text if enabled
                 if enable_highlight and random.random() < 0.2:  # 20% chance
@@ -17572,83 +17592,330 @@ class HumanBehavior:
 
 
 # ============================================================================
-# CONSENT MANAGER
+# CONSENT MANAGER - ADVANCED VERSION
 # ============================================================================
 
 class ConsentManager:
-    """Automatically handles cookie banners and popups."""
+    """Advanced automatic cookie banner, popup, and consent dialog handler.
+    
+    Handles all types of consent popups including:
+    - Cookie banners and GDPR notices
+    - Permission requests (notifications, location, etc.)
+    - Modal overlays and dialogs
+    - Shadow DOM elements
+    - Multiple sequential popups
+    - iFrame-based consent managers
+    """
     
     def __init__(self, log_manager: LogManager):
         self.log_manager = log_manager
+        self.handled_popups = set()  # Track handled popups to avoid duplicates
     
-    async def handle_consents(self, page: Page) -> bool:
-        """Detect and handle consent dialogs."""
+    async def handle_consents(self, page: Page, max_retries: int = 3) -> bool:
+        """Detect and handle consent dialogs with multiple strategies and retries.
+        
+        Args:
+            page: Playwright Page object
+            max_retries: Maximum number of retry attempts (default: 3)
+            
+        Returns:
+            bool: True if any consent was handled, False otherwise
+        """
         try:
-            self.log_manager.log('Checking for consent dialogs...')
+            self.log_manager.log('🔍 Checking for consent dialogs...')
             
             # Wait a bit for dialogs to appear
-            await asyncio.sleep(1)
+            await asyncio.sleep(1.5)
             
-            # Try multiple detection strategies
-            handled = False
+            overall_handled = False
             
-            # Strategy 1: Text-based button detection
+            # Try multiple times to catch delayed or sequential popups
+            for retry in range(max_retries):
+                handled = False
+                
+                # Strategy 1: Text-based button detection (comprehensive)
+                handled = await self._handle_text_based_buttons(page)
+                if handled:
+                    overall_handled = True
+                    await asyncio.sleep(1)  # Wait for popup to close
+                    continue  # Check for more popups
+                
+                # Strategy 2: Role-based dialog detection
+                handled = await self._handle_role_based_dialogs(page)
+                if handled:
+                    overall_handled = True
+                    await asyncio.sleep(1)
+                    continue
+                
+                # Strategy 3: Common CSS class-based detection
+                handled = await self._handle_css_class_based_popups(page)
+                if handled:
+                    overall_handled = True
+                    await asyncio.sleep(1)
+                    continue
+                
+                # Strategy 4: iFrame-based consent managers
+                handled = await self._handle_iframe_consents(page)
+                if handled:
+                    overall_handled = True
+                    await asyncio.sleep(1)
+                    continue
+                
+                # Strategy 5: Modal overlays and backdrops
+                handled = await self._handle_modal_overlays(page)
+                if handled:
+                    overall_handled = True
+                    await asyncio.sleep(1)
+                    continue
+                
+                # Strategy 6: Shadow DOM elements
+                handled = await self._handle_shadow_dom_consents(page)
+                if handled:
+                    overall_handled = True
+                    await asyncio.sleep(1)
+                    continue
+                
+                # If nothing was found in this iteration, break early
+                if not handled:
+                    break
+            
+            if overall_handled:
+                self.log_manager.log('✅ Successfully handled consent dialog(s)')
+            else:
+                self.log_manager.log('ℹ️  No consent dialogs detected')
+            
+            return overall_handled
+            
+        except Exception as e:
+            self.log_manager.log(f'⚠️  Consent handler error: {e}', 'ERROR')
+            return False
+    
+    async def _handle_text_based_buttons(self, page: Page) -> bool:
+        """Strategy 1: Detect buttons by text content."""
+        try:
             for text in CONSENT_BUTTON_TEXTS:
+                # Case-insensitive selectors with various element types
                 selectors = [
                     f'button:has-text("{text}")',
                     f'a:has-text("{text}")',
-                    f'[role="button"]:has-text("{text}")'
+                    f'[role="button"]:has-text("{text}")',
+                    f'div[onclick]:has-text("{text}")',
+                    f'span[onclick]:has-text("{text}")'
                 ]
                 
                 for selector in selectors:
                     try:
                         elements = await page.query_selector_all(selector)
                         for element in elements:
-                            # Check if element is visible
+                            # Check if element is visible and clickable
                             is_visible = await element.is_visible()
                             if is_visible:
+                                # Get element ID to avoid duplicate clicks
+                                element_id = await element.evaluate('el => el.outerHTML.substring(0, 100)')
+                                if element_id in self.handled_popups:
+                                    continue
+                                
                                 # Human-like delay before clicking
                                 await HumanBehavior.random_delay(500, 1500)
                                 await element.click()
-                                self.log_manager.log(f'Clicked consent button: {text}')
-                                handled = True
+                                self.handled_popups.add(element_id)
+                                self.log_manager.log(f'✓ Clicked consent button: "{text}"')
                                 await asyncio.sleep(0.5)
-                                break
-                        if handled:
-                            break
+                                return True
                     except Exception:
                         continue
-                
-                if handled:
-                    break
+            return False
+        except Exception:
+            return False
+    
+    async def _handle_role_based_dialogs(self, page: Page) -> bool:
+        """Strategy 2: Detect dialogs by ARIA roles."""
+        try:
+            # Check for dialogs, alertdialogs, and modals
+            role_selectors = [
+                '[role="dialog"]',
+                '[role="alertdialog"]',
+                '[role="alert"]',
+                '[aria-modal="true"]'
+            ]
             
-            # Strategy 2: Role-based dialog detection
-            if not handled:
-                try:
-                    dialogs = await page.query_selector_all('[role="dialog"]')
-                    for dialog in dialogs:
-                        is_visible = await dialog.is_visible()
-                        if is_visible:
-                            # Look for accept button within dialog
-                            buttons = await dialog.query_selector_all('button')
-                            for button in buttons:
-                                text = await button.inner_text()
-                                if any(consent_text in text.lower() for consent_text in CONSENT_BUTTON_TEXTS):
+            for role_selector in role_selectors:
+                dialogs = await page.query_selector_all(role_selector)
+                for dialog in dialogs:
+                    is_visible = await dialog.is_visible()
+                    if is_visible:
+                        # Look for accept/allow buttons within dialog
+                        buttons = await dialog.query_selector_all('button, a, [role="button"]')
+                        for button in buttons:
+                            try:
+                                text = (await button.inner_text()).lower()
+                                # Check if text matches any consent phrase
+                                if any(consent_text in text for consent_text in CONSENT_BUTTON_TEXTS):
                                     await HumanBehavior.random_delay(500, 1500)
                                     await button.click()
-                                    self.log_manager.log(f'Clicked dialog consent button')
-                                    handled = True
-                                    break
-                        if handled:
-                            break
-                except Exception:
-                    pass
-            
-            return handled
-            
-        except Exception as e:
-            self.log_manager.log(f'Consent handler error: {e}', 'ERROR')
+                                    self.log_manager.log(f'✓ Clicked dialog consent button: "{text[:30]}"')
+                                    return True
+                            except Exception:
+                                continue
             return False
+        except Exception:
+            return False
+    
+    async def _handle_css_class_based_popups(self, page: Page) -> bool:
+        """Strategy 3: Detect popups by common CSS class patterns."""
+        try:
+            # Common class name patterns for cookie/consent banners
+            class_patterns = [
+                '[class*="cookie"]',
+                '[class*="consent"]',
+                '[class*="gdpr"]',
+                '[class*="privacy"]',
+                '[class*="banner"]',
+                '[class*="notice"]',
+                '[id*="cookie"]',
+                '[id*="consent"]',
+                '[id*="gdpr"]'
+            ]
+            
+            for pattern in class_patterns:
+                containers = await page.query_selector_all(pattern)
+                for container in containers:
+                    is_visible = await container.is_visible()
+                    if is_visible:
+                        # Look for buttons inside
+                        buttons = await container.query_selector_all('button, a, [role="button"]')
+                        for button in buttons:
+                            try:
+                                text = (await button.inner_text()).lower()
+                                # Prioritize accept/allow buttons
+                                if any(word in text for word in ['accept', 'allow', 'agree', 'ok', 'okay', 'got it']):
+                                    await HumanBehavior.random_delay(500, 1500)
+                                    await button.click()
+                                    self.log_manager.log(f'✓ Clicked CSS-detected consent: "{text[:30]}"')
+                                    return True
+                            except Exception:
+                                continue
+            return False
+        except Exception:
+            return False
+    
+    async def _handle_iframe_consents(self, page: Page) -> bool:
+        """Strategy 4: Handle consent managers in iframes."""
+        try:
+            # Get all iframes
+            frames = page.frames
+            for frame in frames:
+                if frame == page.main_frame:
+                    continue
+                
+                try:
+                    # Check for consent-related content in iframe
+                    for text in ['accept', 'agree', 'allow', 'ok', 'okay', 'consent']:
+                        selectors = [
+                            f'button:has-text("{text}")',
+                            f'a:has-text("{text}")'
+                        ]
+                        
+                        for selector in selectors:
+                            try:
+                                element = await frame.query_selector(selector)
+                                if element:
+                                    is_visible = await element.is_visible()
+                                    if is_visible:
+                                        await HumanBehavior.random_delay(500, 1500)
+                                        await element.click()
+                                        self.log_manager.log(f'✓ Clicked iframe consent: "{text}"')
+                                        return True
+                            except Exception:
+                                continue
+                except Exception:
+                    continue
+            return False
+        except Exception:
+            return False
+    
+    async def _handle_modal_overlays(self, page: Page) -> bool:
+        """Strategy 5: Handle modal overlays and backdrops."""
+        try:
+            # Look for elements with high z-index (typically popups/modals)
+            high_z_elements = await page.evaluate("""
+                () => {
+                    const elements = Array.from(document.querySelectorAll('*'));
+                    return elements
+                        .filter(el => {
+                            const style = window.getComputedStyle(el);
+                            const zIndex = parseInt(style.zIndex);
+                            return zIndex > 1000 && style.display !== 'none' && style.visibility !== 'hidden';
+                        })
+                        .map(el => el.outerHTML.substring(0, 100));
+                }
+            """)
+            
+            if high_z_elements and len(high_z_elements) > 0:
+                # Try to find and click accept buttons in high z-index elements
+                for text in ['accept', 'agree', 'allow', 'ok', 'okay', 'got it']:
+                    try:
+                        button = await page.query_selector(f'button:has-text("{text}")')
+                        if button:
+                            is_visible = await button.is_visible()
+                            if is_visible:
+                                await HumanBehavior.random_delay(500, 1500)
+                                await button.click()
+                                self.log_manager.log(f'✓ Clicked modal consent: "{text}"')
+                                return True
+                    except Exception:
+                        continue
+            return False
+        except Exception:
+            return False
+    
+    async def _handle_shadow_dom_consents(self, page: Page) -> bool:
+        """Strategy 6: Handle consents in Shadow DOM elements."""
+        try:
+            # Check for shadow roots and consent buttons inside them
+            shadow_buttons = await page.evaluate("""
+                () => {
+                    const shadowHosts = Array.from(document.querySelectorAll('*'))
+                        .filter(el => el.shadowRoot);
+                    
+                    for (const host of shadowHosts) {
+                        const shadowRoot = host.shadowRoot;
+                        const buttons = shadowRoot.querySelectorAll('button, a, [role="button"]');
+                        
+                        for (const button of buttons) {
+                            const text = button.textContent.toLowerCase();
+                            if (text.includes('accept') || text.includes('agree') || 
+                                text.includes('allow') || text.includes('ok')) {
+                                button.click();
+                                return true;
+                            }
+                        }
+                    }
+                    return false;
+                }
+            """)
+            
+            if shadow_buttons:
+                self.log_manager.log('✓ Clicked Shadow DOM consent')
+                return True
+            return False
+        except Exception:
+            return False
+    
+    async def continuous_consent_monitoring(self, page: Page, duration_seconds: int = 5):
+        """Continuously monitor and handle popups that appear during browsing.
+        
+        Args:
+            page: Playwright Page object
+            duration_seconds: How long to monitor for popups
+        """
+        try:
+            start_time = time.time()
+            while time.time() - start_time < duration_seconds:
+                await self.handle_consents(page, max_retries=1)
+                await asyncio.sleep(2)  # Check every 2 seconds
+        except Exception as e:
+            self.log_manager.log(f'Continuous monitoring error: {e}', 'DEBUG')
 
 
 # ============================================================================
@@ -18777,6 +19044,15 @@ class AutomationWorker(QObject):
             
             # CRITICAL FIX: Add proper wait after navigation to prevent immediate close
             await asyncio.sleep(random.uniform(3, 5))
+            
+            # Handle consent popups after referral navigation
+            self.emit_log('Checking for consent popups on referral target...')
+            try:
+                temp_consent_manager = ConsentManager(self.log_manager)
+                await temp_consent_manager.handle_consents(page, max_retries=2)
+            except Exception as consent_error:
+                self.emit_log(f'Consent handling note: {consent_error}', 'DEBUG')
+            
             self.emit_log(f'✓ Successfully landed on target site via {referrer.capitalize()} referral')
             
         except Exception as e:
@@ -19151,6 +19427,15 @@ class AutomationWorker(QObject):
                 
                 await asyncio.sleep(random.uniform(3, 5))
                 
+                # Handle consent popups on target domain
+                self.emit_log('Checking target domain for consent popups...')
+                try:
+                    # Create a temporary consent manager for this check
+                    temp_consent_manager = ConsentManager(self.log_manager)
+                    await temp_consent_manager.handle_consents(page, max_retries=2)
+                except Exception as consent_error:
+                    self.emit_log(f'Consent handling note: {consent_error}', 'DEBUG')
+                
                 # After clicking, normal scrolling behavior will be handled by the caller
                 self.emit_log('✓ Successfully navigated to target domain from search')
                 return page  # Return the page object for further use
@@ -19162,6 +19447,15 @@ class AutomationWorker(QObject):
                 try:
                     await page.goto(fallback_url, wait_until='domcontentloaded', timeout=30000)
                     await asyncio.sleep(random.uniform(2, 4))
+                    
+                    # Handle consent popups on fallback navigation
+                    self.emit_log('Checking for consent popups after fallback...')
+                    try:
+                        temp_consent_manager = ConsentManager(self.log_manager)
+                        await temp_consent_manager.handle_consents(page, max_retries=2)
+                    except Exception:
+                        pass
+                    
                     self.emit_log('✓ Direct navigation successful (fallback)')
                     return page  # Return the page object for further use
                 except Exception as nav_error:
@@ -20072,9 +20366,11 @@ class AutomationWorker(QObject):
                 if consent_manager and enable_consent:
                     await consent_manager.handle_consents(page)
                 
-                # Time-based human scrolling behavior with highlighting
+                # Time-based human scrolling behavior with highlighting and continuous consent monitoring
                 self.emit_log(f'Starting time-based browsing ({min_time_spend}-{max_time_spend} seconds)...')
-                await HumanBehavior.time_based_browsing(page, min_time_spend, max_time_spend, enable_highlight)
+                consent_mgr = consent_manager if enable_consent else None
+                await HumanBehavior.time_based_browsing(page, min_time_spend, max_time_spend, enable_highlight, 
+                                                       consent_mgr, self.log_manager)
                 
                 # Handle interaction if enabled (legacy mode)
                 if enable_interaction:
@@ -20132,10 +20428,11 @@ class AutomationWorker(QObject):
             if consent_manager and enable_consent:
                 await consent_manager.handle_consents(page)
             
-            
-            # Time-based human scrolling behavior with highlighting
+            # Time-based human scrolling behavior with highlighting and continuous consent monitoring
             self.emit_log(f'[Visit {visit_num}] Starting browsing for {min_time_spend//60} minutes with scrolling...')
-            await HumanBehavior.time_based_browsing(page, min_time_spend, max_time_spend, enable_highlight)
+            consent_mgr = consent_manager if enable_consent else None
+            await HumanBehavior.time_based_browsing(page, min_time_spend, max_time_spend, enable_highlight, 
+                                                   consent_mgr, self.log_manager)
             
             # Handle interaction if enabled (legacy mode)
             if enable_interaction:
