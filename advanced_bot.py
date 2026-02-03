@@ -21016,6 +21016,7 @@ class AutomationWorker(QObject):
             
             rpa_script = self.config.get('rpa_script', {})
             num_concurrent = self.config.get('threads', 1)
+            platforms = self.config.get('platforms', ['windows'])
             
             # Check proxy configuration
             proxy_manager = self.browser_manager.proxy_manager
@@ -21036,6 +21037,10 @@ class AutomationWorker(QObject):
             
             # Force visible browser - headless mode removed completely
             self.browser_manager.headless = False  # ALWAYS VISIBLE
+            
+            # Show platform selection
+            platforms_str = ', '.join(platforms)
+            self.emit_log(f'✓ Platform(s) selected: {platforms_str}')
             
             self.emit_log(f'Starting {num_concurrent} concurrent visible browser(s)...')
             self.emit_log(f'✓ Maintaining exactly {num_concurrent} browsers in taskbar at all times')
@@ -21063,17 +21068,22 @@ class AutomationWorker(QObject):
                         if not self.running:
                             break
                         
+                        # Select random platform for this concurrent browser
+                        platform = random.choice(platforms)
+                        
                         # Check if proxies are available (if proxy mode enabled)
                         if proxy_manager.proxy_enabled:
                             remaining = proxy_manager.get_remaining_proxies()
                             if remaining <= 0:
                                 self.emit_log(f'[Concurrent {thread_num}] No more proxies available, stopping', 'INFO')
                                 break
-                            self.emit_log(f'[Concurrent {thread_num}] Starting (Proxies remaining: {remaining})')
+                            self.emit_log(f'[Concurrent {thread_num}] Starting | Platform: {platform} | Proxies: {remaining}')
+                        else:
+                            self.emit_log(f'[Concurrent {thread_num}] Starting | Platform: {platform}')
                         
                         # Create browser context (proxy will be assigned automatically by create_context)
                         self.emit_log(f'[Concurrent {thread_num}] Creating visible browser context...')
-                        context = await self.browser_manager.create_context(use_proxy=proxy_manager.proxy_enabled)
+                        context = await self.browser_manager.create_context(platform=platform, use_proxy=proxy_manager.proxy_enabled)
                         
                         if not context:
                             self.emit_log(f'[Concurrent {thread_num}] Failed to create context, retrying in 2s...', 'WARNING')
@@ -21183,6 +21193,8 @@ class AutomationWorker(QObject):
             
             
             self.emit_log(f'Configuration: {len(url_list)} URLs, {num_threads} concurrent threads')
+            platforms_str = ', '.join(platforms)
+            self.emit_log(f'Platform(s) selected: {platforms_str}')
             if high_cpc_enabled:
                 self.emit_log('✓ HIGH CPC/CPM Mode enabled')
                 self.emit_log(f'  High CPC URL: {high_cpc_url[:50]}...')
