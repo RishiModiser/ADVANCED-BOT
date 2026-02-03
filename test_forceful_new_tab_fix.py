@@ -208,11 +208,8 @@ def main():
         print("\n✅ All tests PASSED! Forceful new tab fix is complete.")
         print("DuckDuckGo, Yandex, and Baidu will now properly open target domains in new tabs.")
         return 0
-    elif total_score >= total_checks * 0.8:
-        print(f"\n⚠ Most tests passed ({total_score}/{total_checks}). Implementation looks mostly good.")
-        return 0
     else:
-        print("\n❌ Some tests FAILED. Please review the implementation.")
+        print(f"\n❌ Some tests FAILED ({total_score}/{total_checks} passed). Please review the implementation.")
         return 1
 
 
