@@ -21102,6 +21102,49 @@ class AppGUI(QMainWindow):
         self.search_group.setVisible(False)  # Hidden by default
         layout.addWidget(self.search_group)
         
+        # HIGH CPC/CPM Mode Section
+        self.high_cpc_group = QGroupBox('💰 HIGH CPC/CPM Mode Settings')
+        high_cpc_layout = QVBoxLayout()
+        high_cpc_layout.setSpacing(10)
+        
+        # High CPC Website URL
+        high_cpc_layout.addWidget(QLabel('High CPC Website URL:'))
+        self.high_cpc_url_input = QLineEdit()
+        self.high_cpc_url_input.setPlaceholderText('https://high-cpc-website.com')
+        high_cpc_layout.addWidget(self.high_cpc_url_input)
+        
+        # Target Domain URL
+        high_cpc_layout.addWidget(QLabel('Target Domain URL:'))
+        self.high_cpc_target_input = QLineEdit()
+        self.high_cpc_target_input.setPlaceholderText('https://target-domain.com')
+        high_cpc_layout.addWidget(self.high_cpc_target_input)
+        
+        # Stay Time
+        stay_time_cpc_layout = QHBoxLayout()
+        stay_time_cpc_layout.addWidget(QLabel('Target Stay Time (seconds):'))
+        self.high_cpc_stay_time_input = QSpinBox()
+        self.high_cpc_stay_time_input.setRange(30, 3600)
+        self.high_cpc_stay_time_input.setValue(180)  # 3 minutes default
+        self.high_cpc_stay_time_input.setSuffix(' sec')
+        self.high_cpc_stay_time_input.setToolTip('Total time to spend on Target Domain')
+        stay_time_cpc_layout.addWidget(self.high_cpc_stay_time_input)
+        stay_time_cpc_layout.addStretch()
+        high_cpc_layout.addLayout(stay_time_cpc_layout)
+        
+        # Info label
+        info_label = QLabel('ℹ️ This mode will:\n'
+                           '1. Open High CPC URL in 4 tabs with cookie handling\n'
+                           '2. Perform shopping interaction in Tab 4 (add to bag, checkout, form filling)\n'
+                           '3. Open Target Domain in 5th tab with scrolling and clicks\n'
+                           '4. Close all tabs after stay time completes')
+        info_label.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
+        info_label.setWordWrap(True)
+        high_cpc_layout.addWidget(info_label)
+        
+        self.high_cpc_group.setLayout(high_cpc_layout)
+        self.high_cpc_group.setVisible(False)  # Hidden by default
+        layout.addWidget(self.high_cpc_group)
+        
         # Traffic Settings
         traffic_group = QGroupBox('📊 Traffic Settings')
         traffic_layout = QVBoxLayout()
@@ -21172,49 +21215,6 @@ class AppGUI(QMainWindow):
         
         traffic_group.setLayout(traffic_layout)
         layout.addWidget(traffic_group)
-        
-        # HIGH CPC/CPM Mode Section
-        self.high_cpc_group = QGroupBox('💰 HIGH CPC/CPM Mode Settings')
-        high_cpc_layout = QVBoxLayout()
-        high_cpc_layout.setSpacing(10)
-        
-        # High CPC Website URL
-        high_cpc_layout.addWidget(QLabel('High CPC Website URL:'))
-        self.high_cpc_url_input = QLineEdit()
-        self.high_cpc_url_input.setPlaceholderText('https://high-cpc-website.com')
-        high_cpc_layout.addWidget(self.high_cpc_url_input)
-        
-        # Target Domain URL
-        high_cpc_layout.addWidget(QLabel('Target Domain URL:'))
-        self.high_cpc_target_input = QLineEdit()
-        self.high_cpc_target_input.setPlaceholderText('https://target-domain.com')
-        high_cpc_layout.addWidget(self.high_cpc_target_input)
-        
-        # Stay Time
-        stay_time_cpc_layout = QHBoxLayout()
-        stay_time_cpc_layout.addWidget(QLabel('Target Stay Time (seconds):'))
-        self.high_cpc_stay_time_input = QSpinBox()
-        self.high_cpc_stay_time_input.setRange(30, 3600)
-        self.high_cpc_stay_time_input.setValue(180)  # 3 minutes default
-        self.high_cpc_stay_time_input.setSuffix(' sec')
-        self.high_cpc_stay_time_input.setToolTip('Total time to spend on Target Domain')
-        stay_time_cpc_layout.addWidget(self.high_cpc_stay_time_input)
-        stay_time_cpc_layout.addStretch()
-        high_cpc_layout.addLayout(stay_time_cpc_layout)
-        
-        # Info label
-        info_label = QLabel('ℹ️ This mode will:\n'
-                           '1. Open High CPC URL in 4 tabs with cookie handling\n'
-                           '2. Perform shopping interaction in Tab 4 (add to bag, checkout, form filling)\n'
-                           '3. Open Target Domain in 5th tab with scrolling and clicks\n'
-                           '4. Close all tabs after stay time completes')
-        info_label.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
-        info_label.setWordWrap(True)
-        high_cpc_layout.addWidget(info_label)
-        
-        self.high_cpc_group.setLayout(high_cpc_layout)
-        self.high_cpc_group.setVisible(False)  # Hidden by default
-        layout.addWidget(self.high_cpc_group)
         
         # Platform Selection
         platform_group = QGroupBox('💻 Platform')
