@@ -19300,6 +19300,9 @@ class AutomationWorker(QObject):
                 self.emit_log(f'Failed to create browser context', 'ERROR')
                 return False
             
+            # Track active context for immediate stop
+            self.active_contexts.append(context)
+            
             try:
                 high_cpc_tabs = []
                 
@@ -19451,6 +19454,11 @@ class AutomationWorker(QObject):
                 return True
                 
             finally:
+                # Remove from active contexts
+                try:
+                    self.active_contexts.remove(context)
+                except:
+                    pass
                 # Always close context
                 await context.close()
                 
@@ -20244,7 +20252,7 @@ class AutomationWorker(QObject):
             return False
     
     async def execute_browser_with_tabs(self, browser_num, url_list, num_tabs, platforms, visit_type,
-                                        search_keyword, target_domain, referral_sources,
+                                        search_keyword, target_domain, search_website, referral_sources,
                                         min_time_spend, max_time_spend, enable_consent,
                                         enable_interaction, enable_extra_pages, max_pages,
                                         consent_manager, enable_highlight=False,
@@ -20262,6 +20270,9 @@ class AutomationWorker(QObject):
             if not context:
                 self.emit_log(f'Failed to create browser context for browser {browser_num}', 'ERROR')
                 return False
+            
+            # Track active context for immediate stop
+            self.active_contexts.append(context)
             
             try:
                 # Get proxy location once for the browser
@@ -20342,6 +20353,11 @@ class AutomationWorker(QObject):
                 return success_count > 0
                 
             finally:
+                # Remove from active contexts
+                try:
+                    self.active_contexts.remove(context)
+                except:
+                    pass
                 # Always close context after all tabs complete
                 await context.close()
                 
