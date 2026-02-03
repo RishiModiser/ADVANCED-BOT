@@ -21667,6 +21667,191 @@ class WorkflowListWidget(QListWidget):
 
 
 # ============================================================================
+# RPA SCRIPT NORMALIZATION UTILITIES
+# ============================================================================
+
+def normalize_action_type(action_type: str) -> str:
+    """
+    Normalize action type names to internal format.
+    Supports multiple naming conventions for compatibility.
+    """
+    # Mapping of alternative names to internal names
+    type_aliases = {
+        # Alternative naming conventions
+        'gotoUrl': 'navigate',
+        'goto': 'navigate',
+        'gotoURL': 'navigate',
+        'goToUrl': 'navigate',
+        'openUrl': 'navigate',
+        
+        'waitTime': 'wait',
+        'waitFor': 'wait',
+        'delay': 'wait',
+        'sleep': 'wait',
+        'pause': 'wait',
+        
+        'scrollPage': 'scroll',
+        'pageScroll': 'scroll',
+        'scrollTo': 'scroll',
+        
+        'clickElement': 'click',
+        'clickOn': 'click',
+        
+        'inputText': 'input',
+        'typeText': 'input',
+        'enterText': 'input',
+        
+        'openPage': 'newPage',
+        'createPage': 'newPage',
+        'newTab': 'newPage',
+        'openTab': 'newPage',
+        
+        'close': 'closePage',
+        'closeCurrentPage': 'closePage',
+    }
+    
+    # Return normalized type or original if not found
+    return type_aliases.get(action_type, action_type)
+
+
+def normalize_step_config(step_type: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize step configuration to internal format.
+    Handles different property naming conventions.
+    """
+    normalized = {}
+    
+    # Handle navigate/gotoUrl action
+    if step_type == 'navigate':
+        normalized['url'] = config.get('url', config.get('URL', ''))
+        normalized['timeout'] = config.get('timeout', config.get('timeOut', 30000))
+    
+    # Handle wait/waitTime action
+    elif step_type == 'wait':
+        # Support different timeout naming
+        timeout = config.get('timeout', config.get('timeOut', config.get('duration', 1000)))
+        
+        # Check if it's a range-based wait
+        timeout_type = config.get('timeoutType', config.get('type', 'fixedValue'))
+        
+        if timeout_type == 'fixedValue' or timeout_type == 'Fixed':
+            normalized['duration'] = timeout
+            normalized['min_duration'] = timeout
+            normalized['max_duration'] = timeout
+        else:
+            # Random range
+            normalized['duration'] = timeout
+            normalized['min_duration'] = config.get('timeoutMin', config.get('min_duration', timeout))
+            normalized['max_duration'] = config.get('timeoutMax', config.get('max_duration', timeout))
+        
+        normalized['mode'] = 'Fixed' if timeout_type == 'fixedValue' else 'Random'
+    
+    # Handle scroll/scrollPage action
+    elif step_type == 'scroll':
+        # Determine scroll position
+        position = config.get('position', 'Intermediate')
+        scroll_type_value = config.get('scrollType', config.get('type', 'position'))
+        
+        if position == 'bottom':
+            normalized['depth'] = 100
+            normalized['position'] = 'Bottom'
+        elif position == 'top':
+            normalized['depth'] = 0
+            normalized['position'] = 'Top'
+        else:
+            normalized['depth'] = config.get('depth', config.get('distance', 50))
+            normalized['position'] = position.capitalize() if position else 'Intermediate'
+        
+        # Handle scroll type (animation type, not step type)
+        scroll_type = config.get('type', 'smooth')
+        normalized['scroll_type'] = scroll_type.capitalize() if scroll_type else 'Smooth'
+        
+        # Speed settings
+        normalized['min_speed'] = config.get('min_speed', 100)
+        normalized['max_speed'] = config.get('max_speed', 500)
+    
+    # Handle click action
+    elif step_type == 'click':
+        normalized['selector'] = config.get('selector', '')
+        normalized['confidence'] = config.get('confidence', 0.8)
+    
+    # Handle input action
+    elif step_type == 'input':
+        normalized['selector'] = config.get('selector', '')
+        normalized['text'] = config.get('text', config.get('value', ''))
+        normalized['typing_delay'] = config.get('typing_delay', config.get('typingDelay', 100))
+    
+    # For other actions or unmapped properties, copy all config as-is
+    else:
+        normalized = config.copy()
+    
+    # Preserve any additional properties not specifically mapped
+    # IMPORTANT: Don't preserve 'type' as it may conflict with step type
+    for key, value in config.items():
+        if key not in normalized and key not in ['remark', 'description', 'type']:
+            normalized[key] = value
+    
+    return normalized
+
+
+def normalize_rpa_script(data: Any) -> Dict[str, Any]:
+    """
+    Normalize RPA script JSON to internal format.
+    Handles multiple input formats:
+    1. Array of steps with config objects
+    2. Object with steps array
+    3. Mixed formats
+    """
+    # If input is a list (array format), wrap it
+    if isinstance(data, list):
+        steps_data = data
+    elif isinstance(data, dict):
+        # If it already has 'steps', use it
+        if 'steps' in data:
+            steps_data = data['steps']
+        else:
+            # Single step object
+            steps_data = [data]
+    else:
+        # Invalid format
+        return {'name': 'Invalid Script', 'steps': []}
+    
+    # Normalize each step
+    normalized_steps = []
+    for step_data in steps_data:
+        # Get the original type
+        original_type = step_data.get('type', '')
+        
+        # Normalize the type
+        step_type = normalize_action_type(original_type)
+        
+        # Get config (might be nested or flat)
+        if 'config' in step_data:
+            config = step_data.get('config', {})
+        else:
+            # Config is flat (properties at step level)
+            config = {k: v for k, v in step_data.items() if k != 'type'}
+        
+        # Normalize the config
+        normalized_config = normalize_step_config(step_type, config)
+        
+        # Create normalized step
+        normalized_step = {
+            'type': step_type,
+            **normalized_config
+        }
+        
+        normalized_steps.append(normalized_step)
+    
+    # Return in expected format
+    return {
+        'name': data.get('name', 'Loaded Script') if isinstance(data, dict) else 'Loaded Script',
+        'description': data.get('description', 'Script loaded from JSON') if isinstance(data, dict) else 'Script loaded from JSON',
+        'steps': normalized_steps
+    }
+
+
+# ============================================================================
 # MAIN GUI APPLICATION
 # ============================================================================
 
@@ -23342,12 +23527,21 @@ class AppGUI(QMainWindow):
                     QMessageBox.warning(self, 'Input Error', 'RPA Mode is enabled but no RPA script is provided.\n\nPlease add actions to workflow steps in the RPA Script Creator tab or enter a script in the JSON Editor.')
                     return
                 
-                # Validate RPA script JSON
+                # Validate and normalize RPA script JSON
                 try:
-                    rpa_script = json.loads(rpa_script_text)
+                    raw_script = json.loads(rpa_script_text)
+                    
+                    # Normalize the script to handle different formats
+                    rpa_script = normalize_rpa_script(raw_script)
+                    
                     if 'steps' not in rpa_script or not isinstance(rpa_script['steps'], list):
                         QMessageBox.warning(self, 'Invalid Script', 'RPA script must contain a "steps" array')
                         return
+                    
+                    if len(rpa_script['steps']) == 0:
+                        QMessageBox.warning(self, 'Empty Script', 'RPA script has no steps to execute')
+                        return
+                        
                 except json.JSONDecodeError as e:
                     QMessageBox.warning(self, 'Invalid JSON', f'RPA script has invalid JSON syntax: {str(e)}')
                     return
@@ -23660,7 +23854,7 @@ class AppGUI(QMainWindow):
             QMessageBox.critical(self, 'Error', f'Failed to save script: {e}')
     
     def load_script(self):
-        """Load RPA script from file."""
+        """Load RPA script from file with normalization support."""
         try:
             file_path, _ = QFileDialog.getOpenFileName(
                 self, 'Load Script', '', 'JSON Files (*.json)'
@@ -23670,13 +23864,21 @@ class AppGUI(QMainWindow):
                 with open(file_path, 'r') as f:
                     script_text = f.read()
                 
-                # Validate JSON
-                json.loads(script_text)
+                # Parse JSON
+                raw_data = json.loads(script_text)
                 
-                # Set the JSON text (this will trigger sync_json_to_visual via textChanged signal)
-                self.script_editor.setPlainText(script_text)
+                # Normalize the script to internal format
+                normalized_script = normalize_rpa_script(raw_data)
                 
-                QMessageBox.information(self, 'Success', 'Script loaded and synced to Visual Builder successfully')
+                # Convert normalized script back to JSON string
+                normalized_text = json.dumps(normalized_script, indent=2)
+                
+                # Set the normalized JSON text (this will trigger sync_json_to_visual via textChanged signal)
+                self.script_editor.setPlainText(normalized_text)
+                
+                QMessageBox.information(self, 'Success', 
+                    f'Script loaded and normalized successfully!\n'
+                    f'Loaded {len(normalized_script["steps"])} action(s) into workflow.')
                 
         except json.JSONDecodeError as e:
             QMessageBox.critical(self, 'Error', f'Invalid JSON: {e}')
@@ -23934,7 +24136,7 @@ class AppGUI(QMainWindow):
             self.syncing = False
     
     def sync_json_to_visual(self):
-        """Sync JSON editor to visual builder."""
+        """Sync JSON editor to visual builder with normalization support."""
         if self.syncing:
             return
         
@@ -23945,8 +24147,12 @@ class AppGUI(QMainWindow):
             if not json_text:
                 return
             
-            script = json.loads(json_text)
-            steps = script.get('steps', [])
+            # Parse JSON
+            raw_data = json.loads(json_text)
+            
+            # Normalize the script (handles different formats)
+            normalized_script = normalize_rpa_script(raw_data)
+            steps = normalized_script.get('steps', [])
             
             # Clear and rebuild workflow
             self.workflow_list.clear()
@@ -23970,6 +24176,14 @@ class AppGUI(QMainWindow):
                 list_item = QListWidgetItem(display_text)
                 list_item.setData(Qt.UserRole, step['id'])
                 self.workflow_list.addItem(list_item)
+            
+            # Update JSON editor with normalized format (only if it changed)
+            normalized_text = json.dumps(normalized_script, indent=2)
+            if normalized_text != json_text:
+                # Temporarily set syncing to False to update the editor
+                self.syncing = False
+                self.script_editor.setPlainText(normalized_text)
+                self.syncing = True
         
         except json.JSONDecodeError:
             pass  # Invalid JSON, don't update visual
