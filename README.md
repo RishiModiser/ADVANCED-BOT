@@ -26,6 +26,37 @@ Humanex Version 5 is an enterprise-grade RPA (Robotic Process Automation) system
 
 ## 🚀 Installation
 
+### Option 1: Standalone Executable (Recommended for End Users)
+
+**⚡ 1-Click Solution - No Python Required!**
+
+If you want to run the bot with just one click without installing Python or any dependencies:
+
+1. **Download or Build the Standalone Executable**
+   
+   **To build from source:**
+   ```bash
+   # Windows
+   build_standalone.bat
+   
+   # Linux/Mac
+   ./build_standalone.sh
+   ```
+
+2. **Run the Executable**
+   - **Windows**: Double-click `dist/ADVANCED-BOT.exe`
+   - **Linux/Mac**: Run `./dist/ADVANCED-BOT`
+
+3. **First Run**: The application will automatically download Playwright browsers (takes 1-2 minutes)
+
+✅ **That's it! Your bot is ready to use with just one click!**
+
+📖 **For detailed instructions, see [STANDALONE_GUIDE.md](STANDALONE_GUIDE.md)**
+
+---
+
+### Option 2: Python Installation (For Developers)
+
 ### Prerequisites
 - Python 3.8 or higher
 - pip package manager
@@ -93,6 +124,16 @@ For CI/CD pipelines, use the provided GitHub Actions workflow (`.github/workflow
 
 ### Running the Application
 
+#### Standalone Executable (1-Click)
+```bash
+# Windows
+dist\ADVANCED-BOT.exe
+
+# Linux/Mac  
+./dist/ADVANCED-BOT
+```
+
+#### Python Version
 ```bash
 python advanced_bot.py
 ```
