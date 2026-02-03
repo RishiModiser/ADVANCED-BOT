@@ -20956,19 +20956,23 @@ class AppGUI(QMainWindow):
         self.visit_direct_radio = QRadioButton('Direct Visit')
         self.visit_referral_radio = QRadioButton('Referral Visit')
         self.visit_search_radio = QRadioButton('Search Visit')
+        self.visit_high_cpc_radio = QRadioButton('💰 HIGH CPC/CPM Visit')
         self.visit_direct_radio.setChecked(True)
         
         self.visit_type_group.addButton(self.visit_direct_radio, 0)
         self.visit_type_group.addButton(self.visit_referral_radio, 1)
         self.visit_type_group.addButton(self.visit_search_radio, 2)
+        self.visit_type_group.addButton(self.visit_high_cpc_radio, 3)
         
         visit_type_layout.addWidget(self.visit_direct_radio)
         visit_type_layout.addWidget(self.visit_referral_radio)
         visit_type_layout.addWidget(self.visit_search_radio)
+        visit_type_layout.addWidget(self.visit_high_cpc_radio)
         
         # Connect signals to toggle visibility of sub-sections
         self.visit_referral_radio.toggled.connect(self.toggle_referral_section)
         self.visit_search_radio.toggled.connect(self.toggle_search_section)
+        self.visit_high_cpc_radio.toggled.connect(self.toggle_high_cpc_section)
         
         visit_type_group.setLayout(visit_type_layout)
         layout.addWidget(visit_type_group)
@@ -21170,29 +21174,20 @@ class AppGUI(QMainWindow):
         layout.addWidget(traffic_group)
         
         # HIGH CPC/CPM Mode Section
-        self.high_cpc_group = QGroupBox('💰 HIGH CPC/CPM Mode')
+        self.high_cpc_group = QGroupBox('💰 HIGH CPC/CPM Mode Settings')
         high_cpc_layout = QVBoxLayout()
         high_cpc_layout.setSpacing(10)
-        
-        # Enable checkbox
-        self.high_cpc_enabled = QCheckBox('✅ Enable HIGH CPC/CPM Mode')
-        self.high_cpc_enabled.setChecked(False)
-        self.high_cpc_enabled.setToolTip('Enable advanced CPC/CPM mode with multi-tab High CPC website interaction')
-        self.high_cpc_enabled.toggled.connect(self.toggle_high_cpc_inputs)
-        high_cpc_layout.addWidget(self.high_cpc_enabled)
         
         # High CPC Website URL
         high_cpc_layout.addWidget(QLabel('High CPC Website URL:'))
         self.high_cpc_url_input = QLineEdit()
         self.high_cpc_url_input.setPlaceholderText('https://high-cpc-website.com')
-        self.high_cpc_url_input.setEnabled(False)
         high_cpc_layout.addWidget(self.high_cpc_url_input)
         
         # Target Domain URL
         high_cpc_layout.addWidget(QLabel('Target Domain URL:'))
         self.high_cpc_target_input = QLineEdit()
         self.high_cpc_target_input.setPlaceholderText('https://target-domain.com')
-        self.high_cpc_target_input.setEnabled(False)
         high_cpc_layout.addWidget(self.high_cpc_target_input)
         
         # Stay Time
@@ -21203,7 +21198,6 @@ class AppGUI(QMainWindow):
         self.high_cpc_stay_time_input.setValue(180)  # 3 minutes default
         self.high_cpc_stay_time_input.setSuffix(' sec')
         self.high_cpc_stay_time_input.setToolTip('Total time to spend on Target Domain')
-        self.high_cpc_stay_time_input.setEnabled(False)
         stay_time_cpc_layout.addWidget(self.high_cpc_stay_time_input)
         stay_time_cpc_layout.addStretch()
         high_cpc_layout.addLayout(stay_time_cpc_layout)
@@ -21219,6 +21213,7 @@ class AppGUI(QMainWindow):
         high_cpc_layout.addWidget(info_label)
         
         self.high_cpc_group.setLayout(high_cpc_layout)
+        self.high_cpc_group.setVisible(False)  # Hidden by default
         layout.addWidget(self.high_cpc_group)
         
         # Platform Selection
@@ -21260,8 +21255,9 @@ class AppGUI(QMainWindow):
         if checked:
             self.url_group.setVisible(False)
         else:
-            # Show URL group when not search visit
-            self.url_group.setVisible(True)
+            # Show URL group when not search visit (unless it's HIGH CPC visit)
+            if not self.visit_high_cpc_radio.isChecked():
+                self.url_group.setVisible(True)
     
     def add_url_to_list(self):
         """Add URL from input to list widget."""
@@ -21495,6 +21491,22 @@ class AppGUI(QMainWindow):
         if min_time > max_time:
             # Auto-adjust max to match min if min becomes greater
             self.max_time_input.setValue(min_time)
+    
+    def toggle_high_cpc_section(self, checked):
+        """Toggle visibility of HIGH CPC/CPM mode section.
+        
+        When HIGH CPC/CPM visit type is selected, Target URLs section should be hidden
+        since we're providing the target domain in the HIGH CPC settings.
+        """
+        self.high_cpc_group.setVisible(checked)
+        # Hide URL group for HIGH CPC visits since we use HIGH CPC settings instead
+        if checked:
+            self.url_group.setVisible(False)
+            self.emit_log('ℹ️ Target URLs mode disabled - using HIGH CPC/CPM Mode target domain')
+        else:
+            # Show URL group when not HIGH CPC visit (unless it's search visit)
+            if not self.visit_search_radio.isChecked():
+                self.url_group.setVisible(True)
     
     def toggle_high_cpc_inputs(self, enabled: bool):
         """Toggle HIGH CPC/CPM mode input fields.
@@ -22243,15 +22255,17 @@ class AppGUI(QMainWindow):
                 
             else:
                 # Normal Mode: Standard automation
-                # Check if HIGH CPC/CPM Mode is enabled
-                high_cpc_enabled = self.high_cpc_enabled.isChecked()
-                
                 # Get visit type first to determine what validation is needed
                 visit_type = 'direct'
                 if self.visit_referral_radio.isChecked():
                     visit_type = 'referral'
                 elif self.visit_search_radio.isChecked():
                     visit_type = 'search'
+                elif self.visit_high_cpc_radio.isChecked():
+                    visit_type = 'high_cpc'
+                
+                # Check if HIGH CPC/CPM Mode is enabled (via radio button)
+                high_cpc_enabled = (visit_type == 'high_cpc')
                 
                 # Validate search keyword and target domain if search type is selected
                 if visit_type == 'search':
@@ -22266,6 +22280,15 @@ class AppGUI(QMainWindow):
                     # For search visits, we don't need target URLs since we use keyword + target domain
                     url_list = [target_domain]  # Use target domain as the URL list
                 elif high_cpc_enabled:
+                    # Validate HIGH CPC/CPM Mode fields
+                    high_cpc_url = self.high_cpc_url_input.text().strip()
+                    high_cpc_target = self.high_cpc_target_input.text().strip()
+                    if not high_cpc_url:
+                        QMessageBox.warning(self, 'Input Error', 'Please enter a High CPC Website URL for HIGH CPC/CPM Visit type')
+                        return
+                    if not high_cpc_target:
+                        QMessageBox.warning(self, 'Input Error', 'Please enter a Target Domain URL for HIGH CPC/CPM Visit type')
+                        return
                     # For HIGH CPC/CPM Mode, we don't need target URLs since we use HIGH CPC settings
                     # The target domain is provided in HIGH CPC settings instead
                     url_list = []  # Empty list - not needed for HIGH CPC mode
@@ -22400,7 +22423,7 @@ class AppGUI(QMainWindow):
                     'imported_useragents': self.imported_useragents,
                     'imported_cookies': self.imported_cookies,
                     # HIGH CPC/CPM Mode configuration
-                    'high_cpc_enabled': self.high_cpc_enabled.isChecked(),
+                    'high_cpc_enabled': high_cpc_enabled,
                     'high_cpc_url': self.high_cpc_url_input.text().strip(),
                     'high_cpc_target': self.high_cpc_target_input.text().strip(),
                     'high_cpc_stay_time': self.high_cpc_stay_time_input.value(),
