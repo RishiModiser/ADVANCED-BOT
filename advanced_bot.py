@@ -18944,10 +18944,19 @@ class AutomationWorker(QObject):
         page = await context.new_page()
         
         try:
-            # Navigate to search engine in the new tab
+            # Navigate to search engine in the new tab with networkidle for stable loading
             self.emit_log(f'Opening {search_engine} in new tab...')
-            await page.goto(engine_config['url'], wait_until='domcontentloaded', timeout=60000)
-            await asyncio.sleep(random.uniform(2, 3))
+            try:
+                # Try with networkidle first (more stable, waits for network to be idle)
+                await page.goto(engine_config['url'], wait_until='networkidle', timeout=60000)
+            except:
+                # Fallback to domcontentloaded if networkidle fails
+                self.emit_log(f'Retrying with domcontentloaded...')
+                await page.goto(engine_config['url'], wait_until='domcontentloaded', timeout=60000)
+            
+            # Wait longer to ensure page is fully stable and loaded
+            await asyncio.sleep(random.uniform(3, 5))
+            self.emit_log(f'✓ {search_engine} page loaded successfully')
             
             # Handle consent popups first
             self.emit_log('Checking for consent dialogs...')
@@ -18960,29 +18969,72 @@ class AutomationWorker(QObject):
                         if text and any(word in text.lower() for word in ['accept', 'agree', 'accept all', 'i agree', 'consent']):
                             await button.click()
                             self.emit_log('✓ Clicked consent button')
-                            await asyncio.sleep(2)
+                            # Wait longer after consent for page to stabilize
+                            await asyncio.sleep(random.uniform(3, 4))
+                            # Wait for any navigation that might occur after consent
+                            try:
+                                await page.wait_for_load_state('networkidle', timeout=10000)
+                            except:
+                                await asyncio.sleep(2)
                             break
                     except:
                         continue
             except Exception as e:
                 self.emit_log(f'No consent needed or error: {e}', 'INFO')
             
-            # Wait for search box to appear - try multiple selectors
+            # Wait for search box to appear - try multiple selectors with retries
             self.emit_log('Waiting for search box...')
             search_selector = None
-            for selector in engine_config['search_box_selectors']:
-                try:
-                    await page.wait_for_selector(selector, timeout=10000)
-                    search_selector = selector
-                    self.emit_log(f'✓ Found search box: {selector}')
+            max_retries = 3
+            
+            for retry in range(max_retries):
+                for selector in engine_config['search_box_selectors']:
+                    try:
+                        # Wait for selector and ensure it's visible
+                        await page.wait_for_selector(selector, state='visible', timeout=15000)
+                        # Double-check that element is actually interactable
+                        element = await page.query_selector(selector)
+                        if element:
+                            is_visible = await element.is_visible()
+                            if is_visible:
+                                search_selector = selector
+                                self.emit_log(f'✓ Found search box: {selector}')
+                                break
+                    except Exception as e:
+                        self.emit_log(f'Attempt {retry+1}: Selector {selector} not found: {e}', 'DEBUG')
+                        continue
+                
+                if search_selector:
                     break
-                except:
-                    continue
+                    
+                if retry < max_retries - 1:
+                    self.emit_log(f'Search box not found, waiting and retrying... (attempt {retry+1}/{max_retries})')
+                    await asyncio.sleep(3)
             
             if not search_selector:
-                self.emit_log('Could not find search box with any selector', 'ERROR')
-                await page.close()
-                return None
+                self.emit_log(f'Could not find search box after {max_retries} attempts', 'ERROR')
+                self.emit_log(f'Current URL: {page.url}', 'ERROR')
+                # Don't close the page immediately - try to reload it once more
+                self.emit_log('Attempting one final page reload...')
+                try:
+                    await page.reload(wait_until='networkidle', timeout=30000)
+                    await asyncio.sleep(3)
+                    # Try one more time
+                    for selector in engine_config['search_box_selectors']:
+                        try:
+                            await page.wait_for_selector(selector, state='visible', timeout=10000)
+                            search_selector = selector
+                            self.emit_log(f'✓ Found search box after reload: {selector}')
+                            break
+                        except:
+                            continue
+                except Exception as reload_error:
+                    self.emit_log(f'Reload failed: {reload_error}', 'ERROR')
+                
+                # If still not found, close and return None
+                if not search_selector:
+                    await page.close()
+                    return None
             
             # Type keyword like a human (character by character with random delay)
             self.emit_log(f'Typing search keyword: "{keyword}"...')
@@ -18993,12 +19045,27 @@ class AutomationWorker(QObject):
             await asyncio.sleep(random.uniform(0.5, 1.0))
             await page.press(search_selector, 'Enter')
             
+            # Wait for navigation after pressing Enter
+            self.emit_log('Waiting for search results page to load...')
+            try:
+                # Wait for network to be idle after search submission
+                await page.wait_for_load_state('networkidle', timeout=30000)
+            except:
+                # Fallback to domcontentloaded if networkidle times out
+                try:
+                    await page.wait_for_load_state('domcontentloaded', timeout=15000)
+                except:
+                    pass
+            
+            # Additional wait for page to stabilize
+            await asyncio.sleep(random.uniform(2, 3))
+            
             # Wait for search results to load properly - try multiple selectors
-            self.emit_log('Waiting for search results...')
+            self.emit_log('Verifying search results are loaded...')
             results_loaded = False
             for selector in engine_config['results_selector']:
                 try:
-                    await page.wait_for_selector(selector, timeout=15000)
+                    await page.wait_for_selector(selector, state='visible', timeout=15000)
                     results_loaded = True
                     self.emit_log(f'✓ Results loaded: {selector}')
                     break
@@ -19008,7 +19075,8 @@ class AutomationWorker(QObject):
             if not results_loaded:
                 self.emit_log('Search results selector not found, continuing anyway', 'WARNING')
             
-            await asyncio.sleep(random.uniform(2, 4))
+            # Extra wait to ensure results are fully rendered
+            await asyncio.sleep(random.uniform(2, 3))
             
             # Check for CAPTCHA after search results load
             captcha_detected = await self.detect_and_solve_captcha(page)
