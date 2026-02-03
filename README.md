@@ -107,8 +107,9 @@ The application provides a modern, fully responsive GUI with improved navigation
 
 1. **🔧 Website Traffic**
    - **Multiple Target URLs** - Add and manage multiple URLs in a list
-   - **Visit Type Selection** - Direct, Referral, or Search visits
+   - **Visit Type Selection** - Direct, Referral, Search, or HIGH CPC/CPM visits
    - **Search Settings** - Keyword and target domain for Google search visits
+   - **HIGH CPC/CPM Mode Settings** - Advanced CPC/CPM optimization with multi-tab interaction
    - **Traffic Settings** - Number of visits, concurrent threads, total thread limit
    - **Content vs Sponsored interaction ratios**
    - **Platform Mix** - Select Desktop, Android, or both for mixed traffic

@@ -8,30 +8,33 @@ The HIGH CPC/CPM Mode is an advanced feature designed to simulate high-value tra
 
 ## Feature Location
 
-The HIGH CPC/CPM Mode controls are located in the **Traffic Settings Layout** section of the bot's GUI, appearing after the Content Interaction percentage setting and before the Platform Selection section.
+The HIGH CPC/CPM Mode is now integrated as a **Visit Type** option in the main traffic settings section of the bot's GUI. It appears as a radio button alongside Direct Visit, Referral Visit, and Search Visit options.
 
 ## UI Components
 
-### 1. Enable Checkbox
-- **Label**: "✅ Enable HIGH CPC/CPM Mode"
-- **Default**: Disabled
-- **Function**: When checked, activates HIGH CPC/CPM mode and enables input fields
-- **Side Effect**: Automatically disables the "Target URLs" section (not needed for HIGH CPC mode)
+### 1. Visit Type Radio Button
+- **Label**: "💰 HIGH CPC/CPM Visit"
+- **Location**: In the "🔍 Visit Type" section
+- **Function**: When selected, shows HIGH CPC/CPM Mode settings and hides Target URLs section
+- **Behavior**: Works similar to Search Visit mode - automatically manages URL requirements
 
-### 2. High CPC Website URL
+### 2. HIGH CPC/CPM Mode Settings Group
+This section appears when HIGH CPC/CPM Visit is selected:
+
+#### High CPC Website URL
 - **Label**: "High CPC Website URL:"
 - **Type**: Text input field
 - **Placeholder**: "https://high-cpc-website.com"
 - **Purpose**: URL of the high CPC website to interact with in 4 tabs
 
-### 3. Target Domain URL
+#### Target Domain URL
 - **Label**: "Target Domain URL:"
 - **Type**: Text input field
 - **Placeholder**: "https://target-domain.com"
 - **Purpose**: URL of the target domain to visit in the 5th tab
 - **Note**: This replaces the need for Target URLs in the main settings
 
-### 4. Target Stay Time
+#### Target Stay Time
 - **Label**: "Target Stay Time (seconds):"
 - **Type**: Spin box (30-3600 seconds)
 - **Default**: 180 seconds (3 minutes)
@@ -168,11 +171,12 @@ python3 test_high_cpc_mode.py
 
 ## Best Practices
 
-1. **URL Format**: Always include protocol (https:// or http://)
-2. **Stay Time**: Set appropriate stay time (minimum 30 seconds, recommended 180+)
-3. **High CPC Sites**: Use reputable e-commerce or content sites
-4. **Concurrency**: Start with lower concurrency (1-5) for testing
-5. **Monitoring**: Watch logs to ensure proper execution
+1. **Visit Type Selection**: Select "💰 HIGH CPC/CPM Visit" from the Visit Type radio buttons
+2. **URL Format**: Always include protocol (https:// or http://)
+3. **Stay Time**: Set appropriate stay time (minimum 30 seconds, recommended 180+)
+4. **High CPC Sites**: Use reputable e-commerce or content sites
+5. **Concurrency**: Start with lower concurrency (1-5) for testing
+6. **Monitoring**: Watch logs to ensure proper execution
 
 ## Limitations
 
