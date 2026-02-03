@@ -18747,7 +18747,7 @@ class BrowserManager:
                 'viewport': fingerprint['viewport'],
                 'locale': fingerprint['locale'],
                 'timezone_id': fingerprint['timezone'],
-                'headless': self.headless,
+                'headless': False,  # ALWAYS VISIBLE - headless mode removed completely
                 'channel': 'chrome',  # Use real Chrome instead of Chromium
                 'ignore_default_args': ['--enable-automation'],  # Remove automation flag
                 'args': [
@@ -18873,6 +18873,62 @@ class BrowserManager:
             
         except Exception as e:
             self.log_manager.log(f'Browser close error: {e}', 'ERROR')
+    
+    async def force_close_all(self):
+        """Forcefully and immediately close all active browser contexts without waiting."""
+        try:
+            self.log_manager.log('Force closing all browsers immediately...')
+            
+            # Create tasks to close all contexts concurrently (don't wait for each)
+            close_tasks = []
+            for context in self.active_contexts:
+                try:
+                    # Close each context without waiting
+                    close_tasks.append(asyncio.create_task(context.close()))
+                except Exception:
+                    pass  # Ignore errors
+            
+            # Wait for all closures with a very short timeout
+            if close_tasks:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*close_tasks, return_exceptions=True),
+                        timeout=2.0  # 2 second max wait
+                    )
+                except asyncio.TimeoutError:
+                    # Force kill if they don't close in time
+                    self.log_manager.log('Force killing browsers that did not close in time', 'WARNING')
+                    for task in close_tasks:
+                        if not task.done():
+                            task.cancel()
+            
+            self.active_contexts.clear()
+            
+            # Close single context if exists
+            if self.context:
+                try:
+                    await asyncio.wait_for(self.context.close(), timeout=1.0)
+                except Exception:
+                    pass
+            
+            # Close browser if exists
+            if self.browser:
+                try:
+                    await asyncio.wait_for(self.browser.close(), timeout=1.0)
+                except Exception:
+                    pass
+            
+            # Stop playwright
+            if self.playwright:
+                try:
+                    await asyncio.wait_for(self.playwright.stop(), timeout=1.0)
+                except Exception:
+                    pass
+            
+            self.log_manager.log('All browsers forcefully closed')
+            
+        except Exception as e:
+            self.log_manager.log(f'Force close error: {e}', 'ERROR')
 
 
 # ============================================================================
@@ -18894,6 +18950,7 @@ class AutomationWorker(QObject):
         # Pass imported useragents and cookies to browser manager
         self.browser_manager.imported_useragents = config.get('imported_useragents', [])
         self.browser_manager.imported_cookies = config.get('imported_cookies', [])
+        self.active_tasks = []  # Track all active async tasks for immediate cancellation
     
     def emit_log(self, message: str, level: str = 'INFO'):
         """Emit log to GUI."""
@@ -18901,9 +18958,23 @@ class AutomationWorker(QObject):
         self.log_signal.emit(log_entry)
     
     def stop(self):
-        """Stop the automation."""
+        """Stop the automation immediately and forcefully."""
         self.running = False
-        self.emit_log('Stopping automation...')
+        self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+        self.emit_log('🛑 STOP REQUESTED - Immediately stopping all concurrent browsers')
+        self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+        
+        # Cancel all active tasks immediately without waiting
+        cancelled_count = 0
+        for task in self.active_tasks:
+            if not task.done():
+                task.cancel()
+                cancelled_count += 1
+        
+        if cancelled_count > 0:
+            self.emit_log(f'✓ Cancelled {cancelled_count} running task(s) immediately')
+        
+        self.emit_log('✓ Stop signal sent - browsers will close immediately')
     
     @staticmethod
     def generate_utm_url(base_url: str, source: str, medium: str, campaign: str, term: str = '', content: str = '') -> str:
@@ -20827,9 +20898,8 @@ class AutomationWorker(QObject):
             else:
                 self.emit_log('Using generated user agents (no imported user agents)')
             
-            # Force visible browser for RPA mode
-            original_headless = self.browser_manager.headless
-            self.browser_manager.headless = False  # Always visible for RPA mode
+            # Force visible browser - headless mode removed completely
+            self.browser_manager.headless = False  # ALWAYS VISIBLE
             
             self.emit_log(f'Starting {num_concurrent} concurrent visible browser(s)...')
             self.emit_log(f'✓ Maintaining exactly {num_concurrent} browsers in taskbar at all times')
@@ -20842,8 +20912,7 @@ class AutomationWorker(QObject):
                 self.emit_log('Failed to initialize browser', 'ERROR')
                 return
             
-            # Track running threads
-            active_tasks = []
+            # Track running threads in the worker's active_tasks list
             thread_counter = 0
             
             async def run_rpa_thread(thread_num):
@@ -20854,6 +20923,10 @@ class AutomationWorker(QObject):
                 while self.running:
                     context = None
                     try:
+                        # Check stop immediately at start of each iteration
+                        if not self.running:
+                            break
+                        
                         # Check if proxies are available (if proxy mode enabled)
                         if proxy_manager.proxy_enabled:
                             remaining = proxy_manager.get_remaining_proxies()
@@ -20912,19 +20985,19 @@ class AutomationWorker(QObject):
                 for i in range(num_concurrent):
                     thread_counter += 1
                     task = asyncio.create_task(run_rpa_thread(thread_counter))
-                    active_tasks.append(task)
+                    self.active_tasks.append(task)  # Track in worker's task list
                     # No delay - start all browsers immediately to maintain N concurrent
                 
                 # Wait for all threads to complete
                 self.emit_log(f'✓ All {num_concurrent} concurrent browsers started and running')
                 self.emit_log('Browsers will automatically restart if closed. Press STOP to end automation.')
-                await asyncio.gather(*active_tasks, return_exceptions=True)
+                await asyncio.gather(*self.active_tasks, return_exceptions=True)
                 
                 self.emit_log('✓ All concurrent browsers stopped')
                     
             finally:
-                await self.browser_manager.close()
-                self.browser_manager.headless = original_headless
+                # Force close all browsers immediately
+                await self.browser_manager.force_close_all()
                 self.emit_log('RPA mode execution finished')
             
         except Exception as e:
@@ -21002,7 +21075,8 @@ class AutomationWorker(QObject):
                 self.emit_log(f'Running {num_threads} concurrent browser(s) without proxy rotation')
             
             # Initialize browser AFTER proxy validation
-            self.browser_manager.headless = self.config.get('headless', False)
+            # ALWAYS VISIBLE - headless mode removed completely
+            self.browser_manager.headless = False
             
             self.emit_log('Initializing Playwright...')
             success = await self.browser_manager.initialize()
@@ -21035,6 +21109,10 @@ class AutomationWorker(QObject):
                     worker_counter += 1
                     
                     try:
+                        # Check stop immediately at start
+                        if not self.running:
+                            return False
+                        
                         # Check if we should continue (proxies available or no proxy mode)
                         if proxy_manager.proxy_enabled:
                             remaining = proxy_manager.get_remaining_proxies()
@@ -21088,10 +21166,11 @@ class AutomationWorker(QObject):
                             self.emit_log('All proxies consumed, waiting for active workers to finish...')
                             break
                     
-                    # Remove completed tasks
+                    # Remove completed tasks and update active_tasks tracking
                     active_workers = [w for w in active_workers if not w.done()]
+                    self.active_tasks = active_workers  # Keep tracking updated
                     
-                    # Spawn new workers if below thread limit
+                    # Spawn new workers immediately if below thread limit
                     while len(active_workers) < num_threads and self.running:
                         # Check proxies again before spawning
                         if proxy_manager.proxy_enabled and proxy_manager.get_remaining_proxies() <= 0:
@@ -21099,6 +21178,7 @@ class AutomationWorker(QObject):
                         
                         task = asyncio.create_task(worker_task())
                         active_workers.append(task)
+                        self.active_tasks.append(task)  # Track in worker's task list
                         # No delay - instances should start immediately
                     
                     # If no active workers and no more proxies/work to do, break
@@ -21129,10 +21209,20 @@ class AutomationWorker(QObject):
                         # Very short pause before checking again
                         await asyncio.sleep(0.1)
                 
-                # Wait for all remaining workers to finish
+                # Wait for all remaining workers to finish (with short timeout when stopping)
                 if active_workers:
-                    self.emit_log(f'Waiting for {len(active_workers)} active worker(s) to finish...')
-                    await asyncio.gather(*active_workers, return_exceptions=True)
+                    if self.running:
+                        # Normal completion - wait for all
+                        self.emit_log(f'Waiting for {len(active_workers)} active worker(s) to finish...')
+                        await asyncio.gather(*active_workers, return_exceptions=True)
+                    else:
+                        # Stop requested - force close immediately
+                        self.emit_log(f'Stop requested - force closing {len(active_workers)} active worker(s)...')
+                        for task in active_workers:
+                            if not task.done():
+                                task.cancel()
+                        # Give them a moment to cancel gracefully
+                        await asyncio.sleep(0.5)
                 
             except Exception as e:
                 self.emit_log(f'Worker pool error: {e}', 'ERROR')
@@ -21141,8 +21231,8 @@ class AutomationWorker(QObject):
             self.emit_log(f'✓ Automation completed: {completed_count} profiles processed successfully')
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             
-            # Cleanup
-            await self.browser_manager.close()
+            # Cleanup - force close all browsers immediately
+            await self.browser_manager.force_close_all()
             self.emit_log('Browser closed, automation finished')
             
         except Exception as e:
