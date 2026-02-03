@@ -89,6 +89,7 @@ def test_high_cpc_url_requirement():
             print(f"  Reason: {test_case['reason']}")
             all_passed = False
     
+    # Return 0 for success, 1 for failure
     return 0 if all_passed else 1
 
 
