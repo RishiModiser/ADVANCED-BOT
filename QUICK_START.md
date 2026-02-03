@@ -11,9 +11,16 @@
    Wait 5-10 minutes for the build to complete.
 
 2. **Run Your Bot**
+   
+   **Option A - Direct:**
    ```
    Go to: dist folder
    Double-click: ADVANCED-BOT.exe
+   ```
+   
+   **Option B - Using Launcher:**
+   ```
+   Double-click: run_standalone.bat
    ```
 
 3. **First Time Only**
@@ -34,8 +41,15 @@
    Wait 5-10 minutes for the build to complete.
 
 2. **Run Your Bot**
+   
+   **Option A - Direct:**
    ```bash
    ./dist/ADVANCED-BOT
+   ```
+   
+   **Option B - Using Launcher:**
+   ```bash
+   ./run_standalone.sh
    ```
 
 3. **First Time Only**
