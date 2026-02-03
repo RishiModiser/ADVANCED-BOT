@@ -21255,8 +21255,9 @@ class AppGUI(QMainWindow):
         if checked:
             self.url_group.setVisible(False)
         else:
-            # Show URL group when not search visit
-            self.url_group.setVisible(True)
+            # Show URL group when not search visit (unless it's HIGH CPC visit)
+            if not self.visit_high_cpc_radio.isChecked():
+                self.url_group.setVisible(True)
     
     def add_url_to_list(self):
         """Add URL from input to list widget."""
