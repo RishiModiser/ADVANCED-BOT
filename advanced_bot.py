@@ -16885,6 +16885,46 @@ REFERRER_URLS = {
     'line': 'https://line.me/R/msg/text'  # LINE share
 }
 
+# Search engine configurations for SEARCH VISIT feature
+SEARCH_ENGINES = {
+    'Google': {
+        'url': 'https://www.google.com',
+        'search_box_selectors': ['textarea[name="q"]', 'input[name="q"]'],
+        'results_selector': ['div#search', '[id="rso"]'],
+        'result_links_selector': 'div#search a[href], div#rso a[href]'
+    },
+    'Bing': {
+        'url': 'https://www.bing.com',
+        'search_box_selectors': ['textarea[name="q"]', 'input[name="q"]', '#sb_form_q'],
+        'results_selector': ['#b_results', '.b_algo'],
+        'result_links_selector': '#b_results a[href], .b_algo a[href]'
+    },
+    'Yahoo': {
+        'url': 'https://www.yahoo.com',
+        'search_box_selectors': ['input[name="p"]', '#yschsp'],
+        'results_selector': ['#web', '.searchCenterMiddle'],
+        'result_links_selector': '#web a[href], .searchCenterMiddle a[href]'
+    },
+    'DuckDuckGo': {
+        'url': 'https://duckduckgo.com',
+        'search_box_selectors': ['input[name="q"]', '#search_form_input'],
+        'results_selector': ['#links', '.results'],
+        'result_links_selector': '#links a[href], .results a[href]'
+    },
+    'Yandex': {
+        'url': 'https://www.yandex.com',
+        'search_box_selectors': ['input[name="text"]', '.input__control'],
+        'results_selector': ['#search-result', '.serp-list'],
+        'result_links_selector': '#search-result a[href], .serp-list a[href]'
+    },
+    'Baidu': {
+        'url': 'https://www.baidu.com',
+        'search_box_selectors': ['input[name="wd"]', '#kw'],
+        'results_selector': ['#content_left', '.result'],
+        'result_links_selector': '#content_left a[href], .result a[href]'
+    }
+}
+
 # Link filtering - URLs to skip when clicking content links
 LINK_SKIP_PATTERNS = ['logout', 'login', 'signin', 'signup', 'facebook', 'twitter', 'instagram']
 
@@ -18862,19 +18902,32 @@ class AutomationWorker(QObject):
             self.emit_log(f'Error in CAPTCHA detection: {e}', 'ERROR')
             return False
     
-    async def handle_search_visit(self, context: BrowserContext, target_domain: str, keyword: str):
-        """Handle search visit - search on Google, find target domain, and click it.
+    async def handle_search_visit(self, context: BrowserContext, target_domain: str, keyword: str, search_engine: str = 'Google'):
+        """Handle search visit - search on selected engine, find target domain, and click it.
         
-        Fixed to prevent reload loops and ensure proper Google search behavior:
-        1. Open Google in a NEW tab/page
-        2. Wait for search box with proper selector
+        New implementation with multi-engine support:
+        1. Open selected search engine in a NEW tab/page
+        2. Wait for search box with engine-specific selector
         3. Handle consent popups first
-        4. Type character by character (not fill)
+        4. Type keyword character by character (human-like)
         5. Wait for results properly
-        6. Find and click target domain
+        6. Find and click target domain in top 10 results
         7. Start scrolling after click
+        
+        Args:
+            context: Browser context
+            target_domain: Full URL of target domain (https://example.com)
+            keyword: Keyword to search for
+            search_engine: Search engine to use (Google, Bing, Yahoo, DuckDuckGo, Yandex, Baidu)
         """
         from urllib.parse import urlparse
+        
+        # Get search engine configuration
+        if search_engine not in SEARCH_ENGINES:
+            self.emit_log(f'Unknown search engine: {search_engine}, falling back to Google', 'WARNING')
+            search_engine = 'Google'
+        
+        engine_config = SEARCH_ENGINES[search_engine]
         
         # Normalize target_domain to extract just the domain (remove protocol if present)
         if target_domain.startswith('http://') or target_domain.startswith('https://'):
@@ -18883,66 +18936,77 @@ class AutomationWorker(QObject):
         else:
             target_domain_clean = target_domain.split('/')[0]  # Remove any path after domain
         
-        self.emit_log(f'[INFO] Search visit with keyword: "{keyword}" for domain: "{target_domain_clean}"')
+        self.emit_log(f'[INFO] Search visit using {search_engine}')
+        self.emit_log(f'[INFO] Keyword: "{keyword}" | Target: "{target_domain_clean}"')
         
-        # Create a NEW page/tab for Google search
-        self.emit_log('Creating new tab for Google search...')
+        # Create a NEW page/tab for search engine
+        self.emit_log(f'Creating new tab for {search_engine}...')
         page = await context.new_page()
         
         try:
-            # Navigate to Google in the new tab
-            self.emit_log('Opening Google in new tab...')
-            await page.goto('https://www.google.com', wait_until='domcontentloaded', timeout=60000)
+            # Navigate to search engine in the new tab
+            self.emit_log(f'Opening {search_engine} in new tab...')
+            await page.goto(engine_config['url'], wait_until='domcontentloaded', timeout=60000)
             await asyncio.sleep(random.uniform(2, 3))
             
-            # Handle consent popups on Google first
-            self.emit_log('Checking for Google consent dialogs...')
+            # Handle consent popups first
+            self.emit_log('Checking for consent dialogs...')
             try:
-                # Try to find and click "Accept all" button on Google consent
+                # Try to find and click "Accept all" button on consent
                 accept_buttons = await page.query_selector_all('button')
                 for button in accept_buttons:
-                    text = await button.inner_text()
-                    if text and any(word in text.lower() for word in ['accept', 'agree', 'accept all', 'i agree']):
-                        await button.click()
-                        self.emit_log('✓ Clicked Google consent button')
-                        await asyncio.sleep(2)
-                        break
+                    try:
+                        text = await button.inner_text()
+                        if text and any(word in text.lower() for word in ['accept', 'agree', 'accept all', 'i agree', 'consent']):
+                            await button.click()
+                            self.emit_log('✓ Clicked consent button')
+                            await asyncio.sleep(2)
+                            break
+                    except:
+                        continue
             except Exception as e:
                 self.emit_log(f'No consent needed or error: {e}', 'INFO')
             
-            # Wait for search box to appear (use proper wait instead of sleep)
+            # Wait for search box to appear - try multiple selectors
             self.emit_log('Waiting for search box...')
-            try:
-                await page.wait_for_selector('textarea[name="q"]', timeout=10000)
-                search_selector = 'textarea[name="q"]'
-            except:
-                # Fallback to input if textarea not found
+            search_selector = None
+            for selector in engine_config['search_box_selectors']:
                 try:
-                    await page.wait_for_selector('input[name="q"]', timeout=10000)
-                    search_selector = 'input[name="q"]'
+                    await page.wait_for_selector(selector, timeout=10000)
+                    search_selector = selector
+                    self.emit_log(f'✓ Found search box: {selector}')
+                    break
                 except:
-                    self.emit_log('Could not find search box', 'ERROR')
-                    return False
+                    continue
             
-            # Type keyword like a human (character by character with delay)
+            if not search_selector:
+                self.emit_log('Could not find search box with any selector', 'ERROR')
+                await page.close()
+                return None
+            
+            # Type keyword like a human (character by character with random delay)
             self.emit_log(f'Typing search keyword: "{keyword}"...')
             await page.type(search_selector, keyword, delay=random.randint(80, 150))
             
-            # Press Enter
-            self.emit_log('Pressing Enter...')
+            # Press Enter to search
+            self.emit_log('Pressing Enter to search...')
             await asyncio.sleep(random.uniform(0.5, 1.0))
             await page.press(search_selector, 'Enter')
             
-            # Wait for search results to load properly
+            # Wait for search results to load properly - try multiple selectors
             self.emit_log('Waiting for search results...')
-            try:
-                await page.wait_for_selector('div#search', timeout=15000)
-            except:
+            results_loaded = False
+            for selector in engine_config['results_selector']:
                 try:
-                    # Alternative selector for search results
-                    await page.wait_for_selector('[id="rso"]', timeout=15000)
+                    await page.wait_for_selector(selector, timeout=15000)
+                    results_loaded = True
+                    self.emit_log(f'✓ Results loaded: {selector}')
+                    break
                 except:
-                    self.emit_log('Search results selector not found, continuing anyway', 'WARNING')
+                    continue
+            
+            if not results_loaded:
+                self.emit_log('Search results selector not found, continuing anyway', 'WARNING')
             
             await asyncio.sleep(random.uniform(2, 4))
             
@@ -18952,13 +19016,12 @@ class AutomationWorker(QObject):
                 # Wait a bit more after CAPTCHA solving
                 await asyncio.sleep(random.uniform(2, 3))
                 # Re-check for search results after CAPTCHA
-                try:
-                    await page.wait_for_selector('div#search', timeout=10000)
-                except:
+                for selector in engine_config['results_selector']:
                     try:
-                        await page.wait_for_selector('[id="rso"]', timeout=10000)
+                        await page.wait_for_selector(selector, timeout=10000)
+                        break
                     except:
-                        pass
+                        continue
             
             # Scroll results page to simulate reading
             await HumanBehavior.scroll_page(page, random.randint(30, 60))
@@ -18967,20 +19030,24 @@ class AutomationWorker(QObject):
             # Try to find and click target domain in top 10 results
             self.emit_log(f'Searching for target domain "{target_domain_clean}" in top 10 search results...')
             
-            # Get search result links (more specific selector for actual search results)
-            # Try to get organic search results specifically
-            organic_results = await page.query_selector_all('div#search a[href], div#rso a[href]')
+            # Get search result links using engine-specific selector
+            organic_results = await page.query_selector_all(engine_config['result_links_selector'])
             
             # Filter to get only valid result links (exclude navigation, ads, etc.)
             result_links = []
+            search_engine_domains = ['google.com', 'bing.com', 'yahoo.com', 'duckduckgo.com', 'yandex.com', 'baidu.com']
+            
             for link in organic_results:
                 try:
                     href = await link.get_attribute('href')
-                    # Only include HTTP/HTTPS links that aren't Google internal links
-                    if href and href.startswith('http') and 'google.com' not in href:
-                        result_links.append(link)
-                        if len(result_links) >= 10:  # Limit to top 10 results
-                            break
+                    # Only include HTTP/HTTPS links that aren't search engine internal links
+                    if href and href.startswith('http'):
+                        # Check if it's not a search engine internal link
+                        is_internal = any(domain in href.lower() for domain in search_engine_domains)
+                        if not is_internal:
+                            result_links.append(link)
+                            if len(result_links) >= 10:  # Limit to top 10 results
+                                break
                 except:
                     continue
             
@@ -19021,16 +19088,16 @@ class AutomationWorker(QObject):
                 return page  # Return the page object for further use
             else:
                 self.emit_log(f'⚠ Target domain "{target_domain_clean}" not found in search results', 'WARNING')
-                # FALLBACK: If not found, at least try to navigate directly
-                # Construct proper URL with protocol
-                fallback_url = target_domain if target_domain.startswith('http') else f'https://{target_domain_clean}'
+                # FALLBACK: If not found, navigate directly to target domain
+                fallback_url = target_domain if target_domain.startswith('http') else f'https://{target_domain}'
                 self.emit_log(f'Attempting direct navigation to {fallback_url}')
                 try:
                     await page.goto(fallback_url, wait_until='domcontentloaded', timeout=30000)
                     await asyncio.sleep(random.uniform(2, 4))
                     self.emit_log('✓ Direct navigation successful (fallback)')
                     return page  # Return the page object for further use
-                except:
+                except Exception as nav_error:
+                    self.emit_log(f'Failed to navigate directly: {nav_error}', 'ERROR')
                     await page.close()  # Close the page if navigation fails
                     return None
             
@@ -19039,7 +19106,7 @@ class AutomationWorker(QObject):
             # Try fallback navigation
             try:
                 # Construct proper URL with protocol
-                fallback_url = target_domain if target_domain.startswith('http') else f'https://{target_domain_clean}'
+                fallback_url = target_domain if target_domain.startswith('http') else f'https://{target_domain}'
                 self.emit_log(f'Attempting fallback navigation to {fallback_url}')
                 await page.goto(fallback_url, wait_until='domcontentloaded', timeout=30000)
                 await asyncio.sleep(random.uniform(2, 4))
@@ -19855,7 +19922,7 @@ class AutomationWorker(QObject):
     
     
     async def execute_single_visit(self, visit_num, url_list, platforms, visit_type, 
-                                   search_keyword, target_domain, referral_sources,
+                                   search_keyword, target_domain, search_engine, referral_sources,
                                    min_time_spend, max_time_spend, enable_consent, 
                                    enable_interaction, enable_extra_pages, max_pages,
                                    consent_manager, enable_highlight=False,
@@ -19921,8 +19988,8 @@ class AutomationWorker(QObject):
                     await self.handle_referral_visit(page, target_url, referral_sources,
                                                     utm_medium, utm_campaign, utm_term, utm_content)
                 elif visit_type == 'search':
-                    # Search visit - opens Google in a NEW tab, searches, and clicks target domain
-                    search_page = await self.handle_search_visit(context, target_domain, search_keyword)
+                    # Search visit - opens selected search engine in a NEW tab, searches, and clicks target domain
+                    search_page = await self.handle_search_visit(context, target_domain, search_keyword, search_engine)
                     if not search_page:
                         self.emit_log(f'Target domain not found in search for profile {visit_num}', 'WARNING')
                         return False
@@ -19960,7 +20027,7 @@ class AutomationWorker(QObject):
             return False
     
     async def execute_single_visit(self, page, visit_num, target_url, visit_type,
-                                  search_keyword, target_domain, referral_sources,
+                                  search_keyword, target_domain, search_engine, referral_sources,
                                   min_time_spend, max_time_spend, enable_consent,
                                   enable_interaction, enable_extra_pages, max_pages,
                                   consent_manager, enable_highlight=False,
@@ -19974,8 +20041,8 @@ class AutomationWorker(QObject):
                 await self.handle_referral_visit(page, target_url, referral_sources,
                                                 utm_medium, utm_campaign, utm_term, utm_content)
             elif visit_type == 'search':
-                # Search visit - opens Google in a NEW tab, searches, and clicks target domain
-                search_page = await self.handle_search_visit(page.context, target_domain, search_keyword)
+                # Search visit - opens selected search engine in a NEW tab, searches, and clicks target domain
+                search_page = await self.handle_search_visit(page.context, target_domain, search_keyword, search_engine)
                 if not search_page:
                     self.emit_log(f'[Visit {visit_num}] Target domain not found in search', 'WARNING')
                     return False
@@ -20014,7 +20081,7 @@ class AutomationWorker(QObject):
             return False
     
     async def execute_single_profile(self, profile_num, url_list, platforms, visit_type,
-                                     search_keyword, target_domain, referral_sources,
+                                     search_keyword, target_domain, search_engine, referral_sources,
                                      random_time_enabled, stay_time, min_time_spend, max_time_spend, enable_consent,
                                      enable_interaction, enable_extra_pages, max_pages,
                                      consent_manager, enable_highlight=False,
@@ -20094,7 +20161,7 @@ class AutomationWorker(QObject):
                 # Execute the profile visit
                 result = await self.execute_single_visit(
                     page, profile_num, target_url, visit_type,
-                    search_keyword, target_domain, referral_sources,
+                    search_keyword, target_domain, search_engine, referral_sources,
                     time_to_spend, time_to_spend, enable_consent,  # Use same time for both min/max
                     enable_interaction, enable_extra_pages, max_pages,
                     consent_manager, enable_highlight,
@@ -20119,7 +20186,7 @@ class AutomationWorker(QObject):
             return False
     
     async def execute_browser_with_tabs(self, browser_num, url_list, num_tabs, platforms, visit_type,
-                                        search_keyword, target_domain, referral_sources,
+                                        search_keyword, target_domain, search_engine, referral_sources,
                                         min_time_spend, max_time_spend, enable_consent,
                                         enable_interaction, enable_extra_pages, max_pages,
                                         consent_manager, enable_highlight=False,
@@ -20191,7 +20258,7 @@ class AutomationWorker(QObject):
                     # Create task for this tab
                     task = self.execute_single_visit(
                         page, tab_idx + 1, target_url, visit_type,
-                        search_keyword, target_domain, referral_sources,
+                        search_keyword, target_domain, search_engine, referral_sources,
                         min_time_spend, max_time_spend, enable_consent,
                         enable_interaction, enable_extra_pages, max_pages,
                         consent_manager, enable_highlight,
@@ -20406,6 +20473,7 @@ class AutomationWorker(QObject):
             visit_type = self.config.get('visit_type', 'direct')
             search_keyword = self.config.get('search_keyword', '')
             target_domain = self.config.get('target_domain', '')
+            search_engine = self.config.get('search_engine', 'Google')
             referral_sources = self.config.get('referral_sources', [])
             utm_campaign = self.config.get('utm_campaign', '')
             utm_medium = self.config.get('utm_medium', 'social')
@@ -20500,7 +20568,7 @@ class AutomationWorker(QObject):
                         # Execute single profile
                         result = await self.execute_single_profile(
                             worker_num, url_list, platforms, visit_type,
-                            search_keyword, target_domain, referral_sources,
+                            search_keyword, target_domain, search_engine, referral_sources,
                             random_time_enabled, stay_time, min_time_spend, max_time_spend, enable_consent,
                             enable_interaction, enable_extra_pages, max_pages,
                             consent_manager, enable_text_highlight,
@@ -21073,26 +21141,35 @@ class AppGUI(QMainWindow):
         self.referral_group.setVisible(False)  # Hidden by default
         layout.addWidget(self.referral_group)
         
-        # Search Settings (NEW FEATURE)
+        # Search Settings (ENHANCED FEATURE - Multi-Engine Support)
         self.search_group = QGroupBox('🔎 Search Settings')
         search_layout = QVBoxLayout()
         search_layout.setSpacing(10)
+        
+        # Search Engine Selector
+        search_layout.addWidget(QLabel('Search Engine:'))
+        self.search_engine_combo = QComboBox()
+        self.search_engine_combo.addItems(['Google', 'Bing', 'Yahoo', 'DuckDuckGo', 'Yandex', 'Baidu'])
+        self.search_engine_combo.setToolTip('Select which search engine to use (only 1 at a time)')
+        search_layout.addWidget(self.search_engine_combo)
         
         search_layout.addWidget(QLabel('Search Keyword:'))
         self.search_keyword_input = QLineEdit()
         self.search_keyword_input.setPlaceholderText('Enter keyword to search...')
         search_layout.addWidget(self.search_keyword_input)
         
-        search_layout.addWidget(QLabel('Target Domain (e.g., example.com):'))
+        search_layout.addWidget(QLabel('Target Domain (full URL with https://):'))
         self.target_domain_input = QLineEdit()
-        self.target_domain_input.setPlaceholderText('Enter your target domain...')
+        self.target_domain_input.setPlaceholderText('https://example.com')
         search_layout.addWidget(self.target_domain_input)
         
         info_label = QLabel('ℹ️ Bot will:\n'
-                           '1. Open Google in a new tab\n'
-                           '2. Search for your keyword\n'
-                           '3. Find and click your target domain in top 10 results\n'
-                           '4. Visit directly if not found in results\n'
+                           '1. Open selected search engine in a new tab\n'
+                           '2. Type the keyword in a human-like way\n'
+                           '3. Search for the keyword\n'
+                           '4. Scan top 10 results for target domain\n'
+                           '5. Click on target domain if found\n'
+                           '6. Perform scrolling behavior\n'
                            '📝 Note: Target URLs above are NOT needed for Search Visit')
         info_label.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
         info_label.setWordWrap(True)
@@ -22271,6 +22348,7 @@ class AppGUI(QMainWindow):
                 if visit_type == 'search':
                     keyword = self.search_keyword_input.text().strip()
                     target_domain = self.target_domain_input.text().strip()
+                    search_engine = self.search_engine_combo.currentText()  # Get selected search engine
                     if not keyword:
                         QMessageBox.warning(self, 'Input Error', 'Please enter a search keyword for Search Visit type')
                         return
@@ -22406,6 +22484,7 @@ class AppGUI(QMainWindow):
                     'visit_type': visit_type,
                     'search_keyword': self.search_keyword_input.text().strip() if visit_type == 'search' else '',
                     'target_domain': self.target_domain_input.text().strip() if visit_type == 'search' else '',
+                    'search_engine': self.search_engine_combo.currentText() if visit_type == 'search' else 'Google',
                     'referral_sources': referral_sources,
                     'utm_campaign': utm_campaign,
                     'utm_medium': utm_medium,
