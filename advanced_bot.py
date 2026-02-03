@@ -16902,7 +16902,19 @@ SEARCH_ENGINES = {
     },
     'Bing': {
         'url': 'https://www.bing.com',
-        'search_box_selectors': ['textarea[name="q"]', 'input[name="q"]', '#sb_form_q'],
+        'search_box_selectors': [
+            'textarea[name="q"]',              # New Bing textarea
+            'input[name="q"]',                 # Classic input
+            '#sb_form_q',                      # Main search box ID
+            'input[id="sb_form_q"]',           # Search box by ID selector
+            'textarea[id="sb_form_q"]',        # Textarea variant by ID
+            'input.sb_form_q',                 # Class-based selector
+            'form#sb_form input[type="search"]', # Search input within form
+            '[aria-label*="Enter your search term"]', # Aria label
+            '[placeholder*="Search"]',         # Placeholder text
+            '#b_searchbox input',              # Search box container
+            '.b-searchboxForm input'           # Alternative class
+        ],
         'results_selector': ['#b_results', '.b_algo'],
         'result_links_selector': '#b_results a[href], .b_algo a[href]'
     },
@@ -19647,6 +19659,13 @@ class AutomationWorker(QObject):
                         await new_page.goto(url_to_open, wait_until='domcontentloaded', timeout=30000)
                         await asyncio.sleep(random.uniform(3, 5))
                         
+                        # CRITICAL FIX: Bring new tab to front to ensure focus
+                        try:
+                            await new_page.bring_to_front()
+                            self.emit_log('✓ Brought new tab to front')
+                        except Exception as focus_error:
+                            self.emit_log(f'Note: Could not bring tab to front: {focus_error}', 'DEBUG')
+                        
                         # Handle consent popups on target domain in new tab
                         self.emit_log('Checking target domain for consent popups...')
                         try:
@@ -19666,6 +19685,13 @@ class AutomationWorker(QObject):
                     if len(all_pages) > 1:
                         # Get the last opened page (newly created tab)
                         new_page = all_pages[-1]
+                        
+                        # CRITICAL FIX: Bring new tab to front to ensure it has focus
+                        try:
+                            await new_page.bring_to_front()
+                            self.emit_log('✓ Brought new tab to front')
+                        except Exception as focus_error:
+                            self.emit_log(f'Note: Could not bring tab to front: {focus_error}', 'DEBUG')
                         
                         # Wait for the new page to load
                         try:
@@ -19719,6 +19745,13 @@ class AutomationWorker(QObject):
                         await new_page.goto(url_to_open, wait_until='domcontentloaded', timeout=30000)
                         await asyncio.sleep(random.uniform(2, 4))
                         
+                        # CRITICAL FIX: Bring new tab to front
+                        try:
+                            await new_page.bring_to_front()
+                            self.emit_log('✓ Brought fallback tab to front')
+                        except Exception as focus_error:
+                            self.emit_log(f'Note: Could not bring tab to front: {focus_error}', 'DEBUG')
+                        
                         # Handle consent popups
                         try:
                             temp_consent_manager = ConsentManager(self.log_manager)
@@ -19743,6 +19776,13 @@ class AutomationWorker(QObject):
                     new_page = await context.new_page()
                     await new_page.goto(fallback_url, wait_until='domcontentloaded', timeout=30000)
                     await asyncio.sleep(random.uniform(2, 4))
+                    
+                    # CRITICAL FIX: Bring new tab to front
+                    try:
+                        await new_page.bring_to_front()
+                        self.emit_log('✓ Brought fallback tab to front')
+                    except Exception as focus_error:
+                        self.emit_log(f'Note: Could not bring tab to front: {focus_error}', 'DEBUG')
                     
                     # Handle consent popups on fallback navigation
                     self.emit_log('Checking for consent popups after fallback...')
@@ -19778,6 +19818,13 @@ class AutomationWorker(QObject):
                 new_page = await context.new_page()
                 await new_page.goto(fallback_url, wait_until='domcontentloaded', timeout=30000)
                 await asyncio.sleep(random.uniform(2, 4))
+                
+                # CRITICAL FIX: Bring new tab to front
+                try:
+                    await new_page.bring_to_front()
+                    self.emit_log('✓ Brought exception fallback tab to front')
+                except Exception as focus_error:
+                    self.emit_log(f'Note: Could not bring tab to front: {focus_error}', 'DEBUG')
                 
                 # Handle consent popups
                 try:
