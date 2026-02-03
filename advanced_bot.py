@@ -22243,6 +22243,9 @@ class AppGUI(QMainWindow):
                 
             else:
                 # Normal Mode: Standard automation
+                # Check if HIGH CPC/CPM Mode is enabled
+                high_cpc_enabled = self.high_cpc_enabled.isChecked()
+                
                 # Get visit type first to determine what validation is needed
                 visit_type = 'direct'
                 if self.visit_referral_radio.isChecked():
@@ -22262,6 +22265,10 @@ class AppGUI(QMainWindow):
                         return
                     # For search visits, we don't need target URLs since we use keyword + target domain
                     url_list = [target_domain]  # Use target domain as the URL list
+                elif high_cpc_enabled:
+                    # For HIGH CPC/CPM Mode, we don't need target URLs since we use HIGH CPC settings
+                    # The target domain is provided in HIGH CPC settings instead
+                    url_list = []  # Empty list - not needed for HIGH CPC mode
                 else:
                     # For direct and referral visits, we need target URLs
                     # Validate inputs - collect URLs from list widget
