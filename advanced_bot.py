@@ -19635,7 +19635,33 @@ class AutomationWorker(QObject):
                     # Open in a new tab by using Ctrl+Click (modifier key)
                     self.emit_log(f'Opening target domain in new tab: {url_to_open[:80]}...')
                     
-                    # Method 1: Try Ctrl+Click to open in new tab
+                    # FORCEFUL FIX: For DuckDuckGo, Yandex, and Baidu, always use direct new tab method
+                    # These engines don't handle Ctrl+Click reliably, so we force new tab creation
+                    # to match Bing's 100% perfect behavior
+                    force_direct_method = search_engine in ['DuckDuckGo', 'Yandex', 'Baidu']
+                    
+                    if force_direct_method:
+                        # FORCEFUL METHOD: Create new page and navigate directly (like Bing fallback)
+                        self.emit_log(f'[FORCEFUL] Using direct new tab method for {search_engine}...')
+                        new_page = await context.new_page()
+                        await new_page.goto(url_to_open, wait_until='domcontentloaded', timeout=30000)
+                        await asyncio.sleep(random.uniform(3, 5))
+                        
+                        # Handle consent popups on target domain in new tab
+                        self.emit_log('Checking target domain for consent popups...')
+                        try:
+                            temp_consent_manager = ConsentManager(self.log_manager)
+                            await temp_consent_manager.handle_consents(new_page, max_retries=2)
+                        except Exception as consent_error:
+                            self.emit_log(f'Consent handling note: {consent_error}', 'DEBUG')
+                        
+                        self.emit_log(f'✓ [FORCEFUL] Successfully opened target domain in new tab for {search_engine}')
+                        
+                        # Close the search results page and return the new page
+                        await page.close()
+                        return new_page
+                    
+                    # Method 1: Try Ctrl+Click to open in new tab (for Google, Bing, Yahoo)
                     try:
                         await found_link.click(modifiers=['Control'])
                         self.emit_log('✓ Ctrl+Click executed - opening in new tab')
@@ -19689,24 +19715,26 @@ class AutomationWorker(QObject):
                         await page.close()
                         return new_page
                     else:
-                        # If new tab didn't open, treat it as same-tab navigation
-                        try:
-                            await page.wait_for_load_state('domcontentloaded', timeout=30000)
-                        except:
-                            pass
-                        
+                        # FORCEFUL FIX: If new tab didn't open with Ctrl+Click, force create new tab
+                        # instead of returning old search page (which causes scrolling bug)
+                        self.emit_log('[FORCEFUL] Ctrl+Click did not create new tab, forcing new tab creation...')
+                        new_page = await context.new_page()
+                        await new_page.goto(url_to_open, wait_until='domcontentloaded', timeout=30000)
                         await asyncio.sleep(random.uniform(3, 5))
                         
                         # Handle consent popups on target domain
                         self.emit_log('Checking target domain for consent popups...')
                         try:
                             temp_consent_manager = ConsentManager(self.log_manager)
-                            await temp_consent_manager.handle_consents(page, max_retries=2)
+                            await temp_consent_manager.handle_consents(new_page, max_retries=2)
                         except Exception as consent_error:
                             self.emit_log(f'Consent handling note: {consent_error}', 'DEBUG')
                         
-                        self.emit_log('✓ Successfully navigated to target domain')
-                        return page
+                        self.emit_log('✓ [FORCEFUL] Successfully opened target domain in new tab')
+                        
+                        # Close the search results page and return the new page
+                        await page.close()
+                        return new_page
                         
                 except Exception as click_error:
                     self.emit_log(f'Error during click: {click_error}', 'ERROR')
