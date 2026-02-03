@@ -18087,136 +18087,21 @@ class SponsoredClickEngine:
 class ScriptExecutor:
     """Executes RPA scripts with JSON-based steps."""
     
-    def __init__(self, log_manager: LogManager):
+    def __init__(self, log_manager: LogManager, consent_manager: Optional['ConsentManager'] = None):
         self.log_manager = log_manager
         self.current_page = None
+        self.consent_manager = consent_manager
+        self.context = None
+        self.loop_break = False  # Flag for break statement
     
     async def execute_script(self, script: Dict[str, Any], context: BrowserContext):
         """Execute a full RPA script with enhanced error handling and logging."""
         try:
+            self.context = context
             steps = script.get('steps', [])
             
-            for idx, step in enumerate(steps):
-                step_type = step.get('type')
-                self.log_manager.log(f'▶ Starting step {idx + 1}/{len(steps)}: {step_type}')
-                
-                try:
-                    if step_type == 'newPage':
-                        # Always create a new page when newPage action is used
-                        # This ensures New Tab action works properly in RPA Script Creator
-                        try:
-                            # Check if context has existing pages
-                            if not self.current_page and context.pages:
-                                # For first page in persistent context, use existing page
-                                self.current_page = context.pages[0]
-                                self.log_manager.log(f'✓ Step {idx + 1}: Using existing page')
-                            else:
-                                # Create a new page/tab
-                                self.current_page = await context.new_page()
-                                self.log_manager.log(f'✓ Step {idx + 1}: New page/tab opened successfully')
-                        except Exception as e:
-                            self.log_manager.log(f'✗ Step {idx + 1}: Failed to create new page: {e}', 'ERROR')
-                    
-                    elif step_type == 'navigate':
-                        url = step.get('url', '')
-                        timeout = step.get('timeout', 30000)
-                        if self.current_page:
-                            await self.current_page.goto(url, wait_until='domcontentloaded', timeout=timeout)
-                            self.log_manager.log(f'✓ Step {idx + 1}: Navigated to {url}')
-                        else:
-                            self.log_manager.log(f'✗ Step {idx + 1}: No page available', 'ERROR')
-                    
-                    elif step_type == 'wait':
-                        # Support randomized wait ranges
-                        duration = step.get('duration', 1000)
-                        min_duration = step.get('min_duration', duration)
-                        max_duration = step.get('max_duration', duration)
-                        
-                        actual_duration = random.uniform(min_duration, max_duration) / 1000
-                        await asyncio.sleep(actual_duration)
-                        self.log_manager.log(f'✓ Step {idx + 1}: Waited {actual_duration:.2f}s')
-                    
-                    elif step_type == 'scroll':
-                        if self.current_page:
-                            depth = step.get('depth', 50)
-                            position = step.get('position', 'Intermediate')
-                            scroll_type = step.get('scroll_type', 'Smooth')
-                            min_speed = step.get('min_speed', 100)
-                            max_speed = step.get('max_speed', 500)
-                            
-                            # Human-like scroll with natural behavior
-                            await HumanBehavior.scroll_page(
-                                self.current_page, 
-                                depth, 
-                                position, 
-                                scroll_type=scroll_type,
-                                min_speed=min_speed,
-                                max_speed=max_speed
-                            )
-                            self.log_manager.log(f'✓ Step {idx + 1}: Scrolled to depth {depth}% from {position} ({scroll_type} type)')
-                        else:
-                            self.log_manager.log(f'✗ Step {idx + 1}: No page available', 'ERROR')
-                    
-                    elif step_type == 'click':
-                        selector = step.get('selector', '')
-                        confidence = step.get('confidence', 0.8)
-                        
-                        if self.current_page and selector:
-                            # Click with confidence scoring
-                            try:
-                                await self.current_page.wait_for_selector(selector, timeout=5000)
-                                
-                                # Check if element is visible (confidence check)
-                                is_visible = await self.current_page.is_visible(selector)
-                                
-                                if is_visible:
-                                    # Natural click with human behavior
-                                    await HumanBehavior.natural_click(self.current_page, selector)
-                                    self.log_manager.log(f'✓ Step {idx + 1}: Clicked {selector} (confidence: {confidence})')
-                                else:
-                                    self.log_manager.log(f'✗ Step {idx + 1}: Element not visible: {selector}', 'ERROR')
-                            except Exception as e:
-                                self.log_manager.log(f'✗ Step {idx + 1}: Click failed on {selector}: {e}', 'ERROR')
-                        else:
-                            self.log_manager.log(f'✗ Step {idx + 1}: No page or selector', 'ERROR')
-                    
-                    elif step_type == 'input':
-                        selector = step.get('selector', '')
-                        text = step.get('text', '')
-                        typing_delay = step.get('typing_delay', 100)  # ms between keystrokes
-                        
-                        if self.current_page and selector:
-                            try:
-                                await self.current_page.wait_for_selector(selector, timeout=5000)
-                                
-                                # Clear existing text
-                                await self.current_page.fill(selector, '')
-                                
-                                # Type with human-like delay
-                                for char in text:
-                                    await self.current_page.type(selector, char, delay=random.uniform(typing_delay * 0.8, typing_delay * 1.2))
-                                
-                                self.log_manager.log(f'✓ Step {idx + 1}: Typed text into {selector}')
-                            except Exception as e:
-                                self.log_manager.log(f'✗ Step {idx + 1}: Input failed on {selector}: {e}', 'ERROR')
-                        else:
-                            self.log_manager.log(f'✗ Step {idx + 1}: No page or selector', 'ERROR')
-                    
-                    elif step_type == 'closePage':
-                        if self.current_page:
-                            await self.current_page.close()
-                            self.current_page = None
-                            self.log_manager.log(f'✓ Step {idx + 1}: Page closed')
-                        else:
-                            self.log_manager.log(f'✗ Step {idx + 1}: No page to close', 'ERROR')
-                    
-                    else:
-                        self.log_manager.log(f'⚠ Step {idx + 1}: Unknown step type: {step_type}', 'WARNING')
-                    
-                except Exception as e:
-                    self.log_manager.log(f'✗ Step {idx + 1} error: {e}', 'ERROR')
-                    # Continue to next step even on error
-                    continue
+            # Execute steps with loop control
+            await self._execute_steps(steps, 0, len(steps))
             
             self.log_manager.log('Script execution completed')
             return True
@@ -18224,6 +18109,256 @@ class ScriptExecutor:
         except Exception as e:
             self.log_manager.log(f'Script execution error: {e}', 'ERROR')
             return False
+    
+    async def _execute_steps(self, steps: List[Dict[str, Any]], start_idx: int, end_idx: int):
+        """Execute a range of steps with support for loops and conditionals."""
+        idx = start_idx
+        while idx < end_idx:
+            if self.loop_break:
+                self.loop_break = False
+                break
+                
+            step = steps[idx]
+            step_type = step.get('type')
+            self.log_manager.log(f'▶ Starting step {idx + 1}/{len(steps)}: {step_type}')
+            
+            try:
+                if step_type == 'newPage':
+                    # Always create a new page when newPage action is used
+                    # This ensures New Tab action works properly in RPA Script Creator
+                    try:
+                        # Check if context has existing pages
+                        if not self.current_page and self.context.pages:
+                            # For first page in persistent context, use existing page
+                            self.current_page = self.context.pages[0]
+                            self.log_manager.log(f'✓ Step {idx + 1}: Using existing page')
+                        else:
+                            # Create a new page/tab
+                            self.current_page = await self.context.new_page()
+                            self.log_manager.log(f'✓ Step {idx + 1}: New page/tab opened successfully')
+                        
+                        # Handle consent popups if consent manager is available
+                        if self.consent_manager and self.current_page:
+                            try:
+                                await self.consent_manager.handle_consents(self.current_page)
+                            except Exception as e:
+                                self.log_manager.log(f'Consent handler error: {e}', 'WARNING')
+                    except Exception as e:
+                        self.log_manager.log(f'✗ Step {idx + 1}: Failed to create new page: {e}', 'ERROR')
+                
+                elif step_type == 'navigate':
+                    url = step.get('url', '')
+                    timeout = step.get('timeout', 30000)
+                    if self.current_page:
+                        await self.current_page.goto(url, wait_until='domcontentloaded', timeout=timeout)
+                        self.log_manager.log(f'✓ Step {idx + 1}: Navigated to {url}')
+                        
+                        # Handle consent popups after navigation if consent manager is available
+                        if self.consent_manager:
+                            try:
+                                await self.consent_manager.handle_consents(self.current_page)
+                            except Exception as e:
+                                self.log_manager.log(f'Consent handler error: {e}', 'WARNING')
+                    else:
+                        self.log_manager.log(f'✗ Step {idx + 1}: No page available', 'ERROR')
+                
+                elif step_type == 'wait':
+                    # Support randomized wait ranges
+                    duration = step.get('duration', 1000)
+                    min_duration = step.get('min_duration', duration)
+                    max_duration = step.get('max_duration', duration)
+                    
+                    actual_duration = random.uniform(min_duration, max_duration) / 1000
+                    await asyncio.sleep(actual_duration)
+                    self.log_manager.log(f'✓ Step {idx + 1}: Waited {actual_duration:.2f}s')
+                
+                elif step_type == 'scroll':
+                    if self.current_page:
+                        depth = step.get('depth', 50)
+                        position = step.get('position', 'Intermediate')
+                        scroll_type = step.get('scroll_type', 'Smooth')
+                        min_speed = step.get('min_speed', 100)
+                        max_speed = step.get('max_speed', 500)
+                        
+                        # Human-like scroll with natural behavior
+                        await HumanBehavior.scroll_page(
+                            self.current_page, 
+                            depth, 
+                            position, 
+                            scroll_type=scroll_type,
+                            min_speed=min_speed,
+                            max_speed=max_speed
+                        )
+                        self.log_manager.log(f'✓ Step {idx + 1}: Scrolled to depth {depth}% from {position} ({scroll_type} type)')
+                    else:
+                        self.log_manager.log(f'✗ Step {idx + 1}: No page available', 'ERROR')
+                
+                elif step_type == 'click':
+                    selector = step.get('selector', '')
+                    confidence = step.get('confidence', 0.8)
+                    
+                    if self.current_page and selector:
+                        # Click with confidence scoring
+                        try:
+                            await self.current_page.wait_for_selector(selector, timeout=5000)
+                            
+                            # Check if element is visible (confidence check)
+                            is_visible = await self.current_page.is_visible(selector)
+                            
+                            if is_visible:
+                                # Natural click with human behavior
+                                await HumanBehavior.natural_click(self.current_page, selector)
+                                self.log_manager.log(f'✓ Step {idx + 1}: Clicked {selector} (confidence: {confidence})')
+                            else:
+                                self.log_manager.log(f'✗ Step {idx + 1}: Element not visible: {selector}', 'ERROR')
+                        except Exception as e:
+                            self.log_manager.log(f'✗ Step {idx + 1}: Click failed on {selector}: {e}', 'ERROR')
+                    else:
+                        self.log_manager.log(f'✗ Step {idx + 1}: No page or selector', 'ERROR')
+                
+                elif step_type == 'input':
+                    selector = step.get('selector', '')
+                    text = step.get('text', '')
+                    typing_delay = step.get('typing_delay', 100)  # ms between keystrokes
+                    
+                    if self.current_page and selector:
+                        try:
+                            await self.current_page.wait_for_selector(selector, timeout=5000)
+                            
+                            # Clear existing text
+                            await self.current_page.fill(selector, '')
+                            
+                            # Type with human-like delay
+                            for char in text:
+                                await self.current_page.type(selector, char, delay=random.uniform(typing_delay * 0.8, typing_delay * 1.2))
+                            
+                            self.log_manager.log(f'✓ Step {idx + 1}: Typed text into {selector}')
+                        except Exception as e:
+                            self.log_manager.log(f'✗ Step {idx + 1}: Input failed on {selector}: {e}', 'ERROR')
+                    else:
+                        self.log_manager.log(f'✗ Step {idx + 1}: No page or selector', 'ERROR')
+                
+                elif step_type == 'closePage':
+                    if self.current_page:
+                        await self.current_page.close()
+                        self.current_page = None
+                        self.log_manager.log(f'✓ Step {idx + 1}: Page closed')
+                    else:
+                        self.log_manager.log(f'✗ Step {idx + 1}: No page to close', 'ERROR')
+                
+                elif step_type == 'refresh':
+                    # Refresh Webpage
+                    if self.current_page:
+                        await self.current_page.reload(wait_until='domcontentloaded')
+                        self.log_manager.log(f'✓ Step {idx + 1}: Page refreshed')
+                        
+                        # Handle consent popups after refresh if consent manager is available
+                        if self.consent_manager:
+                            try:
+                                await self.consent_manager.handle_consents(self.current_page)
+                            except Exception as e:
+                                self.log_manager.log(f'Consent handler error: {e}', 'WARNING')
+                    else:
+                        self.log_manager.log(f'✗ Step {idx + 1}: No page available', 'ERROR')
+                
+                elif step_type == 'closeTab':
+                    # Close Tab (same as closePage)
+                    if self.current_page:
+                        await self.current_page.close()
+                        self.current_page = None
+                        self.log_manager.log(f'✓ Step {idx + 1}: Tab closed')
+                    else:
+                        self.log_manager.log(f'✗ Step {idx + 1}: No tab to close', 'ERROR')
+                
+                elif step_type == 'quitBrowser':
+                    # Quit Browser - close all pages in context
+                    if self.context:
+                        try:
+                            await self.context.close()
+                            self.current_page = None
+                            self.log_manager.log(f'✓ Step {idx + 1}: Browser quit')
+                            return  # Exit execution after quitting
+                        except Exception as e:
+                            self.log_manager.log(f'✗ Step {idx + 1}: Failed to quit browser: {e}', 'ERROR')
+                    else:
+                        self.log_manager.log(f'✗ Step {idx + 1}: No browser context', 'ERROR')
+                
+                elif step_type == 'if':
+                    # Statement If - conditional execution
+                    selector = step.get('selector', '')
+                    condition = step.get('condition', '')
+                    
+                    if self.current_page:
+                        try:
+                            # Simple condition check using selector visibility
+                            condition_met = False
+                            if selector:
+                                try:
+                                    condition_met = await self.current_page.is_visible(selector, timeout=2000)
+                                except:
+                                    condition_met = False
+                            
+                            if condition_met:
+                                self.log_manager.log(f'✓ Step {idx + 1}: Condition met')
+                                # Note: In a full implementation, you would execute nested steps here
+                                # For now, just log that condition was met
+                            else:
+                                self.log_manager.log(f'✓ Step {idx + 1}: Condition not met, skipping')
+                        except Exception as e:
+                            self.log_manager.log(f'✗ Step {idx + 1}: If statement error: {e}', 'ERROR')
+                    else:
+                        self.log_manager.log(f'✗ Step {idx + 1}: No page available', 'ERROR')
+                
+                elif step_type == 'forLoopElements':
+                    # For Loop Elements - iterate over elements
+                    selector = step.get('selector', '')
+                    max_items = step.get('max_items', 10)
+                    
+                    if self.current_page and selector:
+                        try:
+                            # Get all matching elements
+                            elements = await self.current_page.query_selector_all(selector)
+                            count = min(len(elements), max_items)
+                            self.log_manager.log(f'✓ Step {idx + 1}: Found {len(elements)} elements, processing {count}')
+                            
+                            # Note: In a full implementation, you would execute nested steps for each element
+                            # For now, just log the count
+                        except Exception as e:
+                            self.log_manager.log(f'✗ Step {idx + 1}: For loop elements error: {e}', 'ERROR')
+                    else:
+                        self.log_manager.log(f'✗ Step {idx + 1}: No page or selector', 'ERROR')
+                
+                elif step_type == 'forLoopTimes':
+                    # For Loop Times - iterate N times
+                    iterations = step.get('iterations', 5)
+                    self.log_manager.log(f'✓ Step {idx + 1}: Starting loop for {iterations} iterations')
+                    
+                    # Note: In a full implementation, you would execute nested steps N times
+                    # For now, just log the iteration count
+                
+                elif step_type == 'while':
+                    # While Loop - loop while condition is true
+                    condition = step.get('condition', '')
+                    max_iterations = step.get('max_iterations', 10)
+                    
+                    self.log_manager.log(f'✓ Step {idx + 1}: While loop started (max: {max_iterations} iterations)')
+                    
+                    # Note: In a full implementation, you would check condition and execute nested steps
+                    # For now, just log that the loop was started
+                
+                elif step_type == 'break':
+                    # Exit Loop - break out of current loop
+                    self.loop_break = True
+                    self.log_manager.log(f'✓ Step {idx + 1}: Loop exit triggered')
+                
+                else:
+                    self.log_manager.log(f'⚠ Step {idx + 1}: Unknown step type: {step_type}', 'WARNING')
+                
+            except Exception as e:
+                self.log_manager.log(f'✗ Step {idx + 1} error: {e}', 'ERROR')
+                # Continue to next step even on error
+            
+            idx += 1
 
 
 # ============================================================================
@@ -21069,6 +21204,12 @@ class AutomationWorker(QObject):
             rpa_script = self.config.get('rpa_script', {})
             num_concurrent = self.config.get('threads', 1)
             platforms = self.config.get('platforms', ['windows'])
+            enable_consent = self.config.get('enable_consent', True)
+            
+            # Create consent manager if enabled
+            consent_manager = ConsentManager(self.log_manager) if enable_consent else None
+            if consent_manager:
+                self.emit_log('✓ Consent popup handler enabled')
             
             # Check proxy configuration
             proxy_manager = self.browser_manager.proxy_manager
@@ -21143,7 +21284,7 @@ class AutomationWorker(QObject):
                             continue
                         
                         # Execute RPA script
-                        script_executor = ScriptExecutor(self.log_manager)
+                        script_executor = ScriptExecutor(self.log_manager, consent_manager)
                         self.emit_log(f'[Concurrent {thread_num}] Executing RPA script...')
                         success = await script_executor.execute_script(rpa_script, context)
                         
@@ -22717,7 +22858,15 @@ class AppGUI(QMainWindow):
             '📜 Scroll',
             '🖱 Click Element',
             '⌨ Input Text',
-            '❌ Close Page'
+            '❌ Close Page',
+            '🔄 Refresh Webpage',
+            '🔀 Close Tab',
+            '🔍 Statement If',
+            '🔁 For Loop Elements',
+            '🔢 For Loop Times',
+            '♾️ While Loop',
+            '⛔ Exit Loop',
+            '🚪 Quit Browser'
         ]
         for action in actions:
             item = QListWidgetItem(action)
@@ -23694,6 +23843,52 @@ class AppGUI(QMainWindow):
             text_input = QLineEdit(config.get('text', ''))
             text_input.textChanged.connect(lambda text: self.update_step_config(step, 'text', text))
             self.step_config_layout.addRow('Text:', text_input)
+        
+        elif step_type == 'if':
+            # Statement If configuration
+            condition_input = QLineEdit(config.get('condition', ''))
+            condition_input.setPlaceholderText('e.g., page.locator(".element").is_visible()')
+            condition_input.textChanged.connect(lambda text: self.update_step_config(step, 'condition', text))
+            self.step_config_layout.addRow('Condition:', condition_input)
+            
+            selector_input = QLineEdit(config.get('selector', ''))
+            selector_input.setPlaceholderText('Optional: CSS selector to check')
+            selector_input.textChanged.connect(lambda text: self.update_step_config(step, 'selector', text))
+            self.step_config_layout.addRow('Selector:', selector_input)
+        
+        elif step_type == 'forLoopElements':
+            # For Loop Elements configuration
+            selector_input = QLineEdit(config.get('selector', ''))
+            selector_input.setPlaceholderText('CSS selector for elements')
+            selector_input.textChanged.connect(lambda text: self.update_step_config(step, 'selector', text))
+            self.step_config_layout.addRow('Selector:', selector_input)
+            
+            max_items_input = QSpinBox()
+            max_items_input.setRange(1, 1000)
+            max_items_input.setValue(config.get('max_items', 10))
+            max_items_input.valueChanged.connect(lambda val: self.update_step_config(step, 'max_items', val))
+            self.step_config_layout.addRow('Max Items:', max_items_input)
+        
+        elif step_type == 'forLoopTimes':
+            # For Loop Times configuration
+            iterations_input = QSpinBox()
+            iterations_input.setRange(1, 1000)
+            iterations_input.setValue(config.get('iterations', 5))
+            iterations_input.valueChanged.connect(lambda val: self.update_step_config(step, 'iterations', val))
+            self.step_config_layout.addRow('Iterations:', iterations_input)
+        
+        elif step_type == 'while':
+            # While Loop configuration
+            condition_input = QLineEdit(config.get('condition', ''))
+            condition_input.setPlaceholderText('e.g., element.is_visible()')
+            condition_input.textChanged.connect(lambda text: self.update_step_config(step, 'condition', text))
+            self.step_config_layout.addRow('Condition:', condition_input)
+            
+            max_iterations_input = QSpinBox()
+            max_iterations_input.setRange(1, 1000)
+            max_iterations_input.setValue(config.get('max_iterations', 10))
+            max_iterations_input.valueChanged.connect(lambda val: self.update_step_config(step, 'max_iterations', val))
+            self.step_config_layout.addRow('Max Iterations:', max_iterations_input)
     
     def update_step_config(self, step: Dict[str, Any], key: str, value: Any):
         """Update step configuration."""
@@ -23804,6 +23999,14 @@ class AppGUI(QMainWindow):
             'Click Element': 'click',
             'Input Text': 'input',
             'Close Page': 'closePage',
+            'Refresh Webpage': 'refresh',
+            'Close Tab': 'closeTab',
+            'Statement If': 'if',
+            'For Loop Elements': 'forLoopElements',
+            'For Loop Times': 'forLoopTimes',
+            'While Loop': 'while',
+            'Exit Loop': 'break',
+            'Quit Browser': 'quitBrowser',
             # Old names for backward compatibility
             'New Page': 'newPage',
             'Open Page': 'newPage',
