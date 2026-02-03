@@ -68,6 +68,8 @@ async def test_all_rpa_actions():
         "navigate": {"tested": False, "passed": False, "error": None},
         "wait": {"tested": False, "passed": False, "error": None},
         "scroll": {"tested": False, "passed": False, "error": None},
+        "click": {"tested": False, "passed": False, "error": None},
+        "input": {"tested": False, "passed": False, "error": None},
         "closePage": {"tested": False, "passed": False, "error": None},
     }
     
@@ -128,7 +130,9 @@ async def test_all_rpa_actions():
                             scroll_type = step.get('scroll_type', 'Smooth')
                             
                             # Simple scroll implementation
-                            scroll_amount = depth * 10  # pixels
+                            # Convert percentage depth to pixels (depth * 10)
+                            # This is a simplified approximation for testing purposes
+                            scroll_amount = depth * 10
                             await current_page.evaluate(f"window.scrollBy(0, {scroll_amount})")
                             print(f"      ✓ Scrolled to depth {depth}% ({scroll_type})")
                             results["scroll"]["passed"] = True

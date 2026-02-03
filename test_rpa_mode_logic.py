@@ -62,7 +62,8 @@ def test_rpa_mode_logic():
             results['popup_checked'] = True    # Force checked
         else:
             results['consent_enabled'] = True
-            # Don't force check when disabled
+            # When RPA mode is disabled, consent handlers are enabled but not force-checked
+            # User retains control over consent handler state
         
         # HIGH CPC - disabled when RPA enabled
         if rpa_mode_enabled:
