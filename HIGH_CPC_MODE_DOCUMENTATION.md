@@ -4,6 +4,8 @@
 
 The HIGH CPC/CPM Mode is an advanced feature designed to simulate high-value traffic by combining High CPC (Cost Per Click) website interactions with target domain visits. This mode opens multiple tabs to interact with a High CPC website before visiting the target domain.
 
+**Important**: When HIGH CPC/CPM Mode is enabled, the Target URLs section is automatically disabled because HIGH CPC mode uses its own target domain setting. This behavior is similar to Search Visit mode where Target URLs are not required.
+
 ## Feature Location
 
 The HIGH CPC/CPM Mode controls are located in the **Traffic Settings Layout** section of the bot's GUI, appearing after the Content Interaction percentage setting and before the Platform Selection section.
@@ -14,6 +16,7 @@ The HIGH CPC/CPM Mode controls are located in the **Traffic Settings Layout** se
 - **Label**: "✅ Enable HIGH CPC/CPM Mode"
 - **Default**: Disabled
 - **Function**: When checked, activates HIGH CPC/CPM mode and enables input fields
+- **Side Effect**: Automatically disables the "Target URLs" section (not needed for HIGH CPC mode)
 
 ### 2. High CPC Website URL
 - **Label**: "High CPC Website URL:"
@@ -26,6 +29,7 @@ The HIGH CPC/CPM Mode controls are located in the **Traffic Settings Layout** se
 - **Type**: Text input field
 - **Placeholder**: "https://target-domain.com"
 - **Purpose**: URL of the target domain to visit in the 5th tab
+- **Note**: This replaces the need for Target URLs in the main settings
 
 ### 4. Target Stay Time
 - **Label**: "Target Stay Time (seconds):"
