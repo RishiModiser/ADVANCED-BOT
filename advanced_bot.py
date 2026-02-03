@@ -20102,14 +20102,14 @@ class AutomationWorker(QObject):
                                   utm_campaign='', utm_medium='social', utm_term='', utm_content=''):
         """Execute a single visit within a browser profile."""
         try:
-            self.emit_log(f'[Visit {visit_num}] Processing URL: {target_url[:50]}...')
-            
             # Navigate based on visit type
             if visit_type == 'referral':
+                self.emit_log(f'[Visit {visit_num}] Referral visit to {target_url[:50]}...')
                 await self.handle_referral_visit(page, target_url, referral_sources,
                                                 utm_medium, utm_campaign, utm_term, utm_content)
             elif visit_type == 'search':
                 # Search visit - opens selected search engine in a NEW tab, searches, and clicks target domain
+                self.emit_log(f'[Visit {visit_num}] Search visit - Opening {search_engine} to search for target domain...')
                 search_page = await self.handle_search_visit(page.context, target_domain, search_keyword, search_engine)
                 if not search_page:
                     self.emit_log(f'[Visit {visit_num}] Target domain not found in search', 'WARNING')
