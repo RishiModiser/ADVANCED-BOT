@@ -116,6 +116,8 @@ All changes have been verified through:
 
 ## Code Locations
 
+All changes are in `advanced_bot.py`:
+
 - `BrowserManager.force_close_all()` - Line ~18876
 - `AutomationWorker.__init__()` with active_tasks - Line ~18944
 - `AutomationWorker.stop()` - Line ~18960
