@@ -22346,14 +22346,37 @@ class AppGUI(QMainWindow):
         layout.addWidget(proxy_enable_group)
         
         # Proxy Type
-        proxy_type_group = QGroupBox('⚙️ Proxy Type')
+        proxy_type_group = QGroupBox('⚙️ Proxy Type Selection')
         proxy_type_layout = QVBoxLayout()
         proxy_type_layout.setSpacing(10)
         
-        proxy_type_layout.addWidget(QLabel('ℹ️ Default type for proxies without protocol prefix:'))
+        # Add detailed explanation
+        proxy_type_info = QLabel(
+            '⚠️ IMPORTANT: Choose the correct proxy type!\n'
+            '• HTTP: Standard web proxies (most common)\n'
+            '• HTTPS: Secure web proxies\n'
+            '• SOCKS5: Premium proxies (try this if HTTP doesn\'t work)\n\n'
+            'This setting applies to proxies WITHOUT a protocol prefix.\n'
+            'Example: "geo.g-w.info:10800:user:pass" will use the type selected below.\n'
+            'To override, add protocol: "socks5://geo.g-w.info:10800:user:pass"'
+        )
+        proxy_type_info.setWordWrap(True)
+        proxy_type_info.setStyleSheet('color: #666; font-size: 10px; padding: 5px; background-color: #fff3cd; border-radius: 3px;')
+        proxy_type_layout.addWidget(proxy_type_info)
+        
+        proxy_type_layout.addWidget(QLabel('Default Protocol (for proxies without prefix):'))
         self.proxy_type_combo = QComboBox()
         self.proxy_type_combo.addItems(['HTTP', 'HTTPS', 'SOCKS5'])
+        self.proxy_type_combo.setCurrentIndex(0)  # Default to HTTP
         self.proxy_type_combo.setEnabled(False)
+        # Update proxy count when type changes
+        self.proxy_type_combo.currentIndexChanged.connect(self.update_proxy_count)
+        # Add tooltip
+        self.proxy_type_combo.setToolTip(
+            'Select HTTP for most proxies.\n'
+            'Select SOCKS5 for premium proxy providers like geo.g-w.info.\n'
+            'Select HTTPS for secure proxies.'
+        )
         # Fix color issue - ensure text is readable when enabled
         self.proxy_type_combo.setStyleSheet("""
             QComboBox {
@@ -22385,20 +22408,48 @@ class AppGUI(QMainWindow):
         proxy_list_layout.setSpacing(10)
         
         proxy_list_layout.addWidget(QLabel('Enter proxies (one per line):'))
-        proxy_list_layout.addWidget(QLabel('Formats: ip:port, user:pass@ip:port, ip:port:user:pass, protocol://ip:port'))
+        
+        # Add format examples with better explanation
+        format_info = QLabel(
+            '✅ Supported Formats:\n'
+            '  • Simple: ip:port\n'
+            '  • With auth: user:pass@ip:port\n'
+            '  • With auth (format 2): ip:port:username:password  ⭐ For geo.g-w.info\n'
+            '  • With protocol: http://ip:port or socks5://ip:port\n'
+            '  • Combined: socks5://geo.g-w.info:10800:user:pass'
+        )
+        format_info.setWordWrap(True)
+        format_info.setStyleSheet('color: #666; font-size: 9px; padding: 3px;')
+        proxy_list_layout.addWidget(format_info)
         
         self.proxy_list_input = DragDropTextEdit()
-        self.proxy_list_input.setPlaceholderText('127.0.0.1:8080\nuser:pass@192.168.1.1:3128\n10.0.0.1:1080:user:pass\nhttp://proxy.com:8080\nsocks5://10.0.0.2:1080')
+        self.proxy_list_input.setPlaceholderText(
+            '# Simple proxy\n'
+            '127.0.0.1:8080\n\n'
+            '# With authentication (format 1)\n'
+            'user:pass@192.168.1.1:3128\n\n'
+            '# With authentication (format 2) - common for premium proxies\n'
+            'geo.g-w.info:10800:username:password\n\n'
+            '# With explicit protocol (overrides Proxy Type setting)\n'
+            'socks5://geo.g-w.info:10800:username:password\n'
+            'http://proxy.com:8080'
+        )
         self.proxy_list_input.setMaximumHeight(120)
         self.proxy_list_input.setEnabled(False)
         self.proxy_list_input.setAcceptDrops(True)
         self.proxy_list_input.textChanged.connect(self.update_proxy_count)
         proxy_list_layout.addWidget(self.proxy_list_input)
         
-        # Proxy count label
+        # Proxy count label with protocol info
         self.proxy_count_label = QLabel('📊 Proxies loaded: 0')
         self.proxy_count_label.setStyleSheet('color: #27ae60; font-weight: bold; font-size: 12px;')
         proxy_list_layout.addWidget(self.proxy_count_label)
+        
+        # Add protocol breakdown label
+        self.proxy_protocol_label = QLabel('')
+        self.proxy_protocol_label.setStyleSheet('color: #666; font-size: 10px; font-style: italic;')
+        self.proxy_protocol_label.setWordWrap(True)
+        proxy_list_layout.addWidget(self.proxy_protocol_label)
         
         # Import from file button
         import_btn = QPushButton('📁 Import from File')
@@ -22442,6 +22493,7 @@ class AppGUI(QMainWindow):
             proxy_text = self.proxy_list_input.toPlainText()
             if not proxy_text.strip():
                 self.proxy_count_label.setText('📊 Proxies loaded: 0')
+                self.proxy_protocol_label.setText('')
                 return
             
             # Reuse proxy manager for parsing
@@ -22452,11 +22504,39 @@ class AppGUI(QMainWindow):
             
             if count > 0:
                 self.proxy_count_label.setStyleSheet('color: #27ae60; font-weight: bold; font-size: 12px;')
+                
+                # Show protocol breakdown
+                protocol_counts = {'http': 0, 'https': 0, 'socks5': 0}
+                for proxy in proxies:
+                    server = proxy.get('server', '')
+                    if server.startswith('http://'):
+                        protocol_counts['http'] += 1
+                    elif server.startswith('https://'):
+                        protocol_counts['https'] += 1
+                    elif server.startswith('socks5://'):
+                        protocol_counts['socks5'] += 1
+                
+                # Build protocol breakdown message
+                breakdown_parts = []
+                if protocol_counts['http'] > 0:
+                    breakdown_parts.append(f"HTTP: {protocol_counts['http']}")
+                if protocol_counts['https'] > 0:
+                    breakdown_parts.append(f"HTTPS: {protocol_counts['https']}")
+                if protocol_counts['socks5'] > 0:
+                    breakdown_parts.append(f"SOCKS5: {protocol_counts['socks5']}")
+                
+                if breakdown_parts:
+                    breakdown_text = ' | '.join(breakdown_parts)
+                    self.proxy_protocol_label.setText(f'Protocol breakdown: {breakdown_text}')
+                else:
+                    self.proxy_protocol_label.setText('')
             else:
                 self.proxy_count_label.setStyleSheet('color: #e74c3c; font-weight: bold; font-size: 12px;')
+                self.proxy_protocol_label.setText('')
         except Exception as e:
             self.proxy_count_label.setText(f'📊 Proxies loaded: 0 (Error parsing)')
             self.proxy_count_label.setStyleSheet('color: #e74c3c; font-weight: bold; font-size: 12px;')
+            self.proxy_protocol_label.setText('')
     
     def import_proxies_from_file(self):
         """Import proxies from a text file."""

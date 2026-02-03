@@ -2,36 +2,49 @@
 # This file demonstrates all supported proxy formats
 # You can import this file or drag & drop it into the Proxy Settings tab
 
+# ⚠️ IMPORTANT: PROTOCOL SELECTION ⚠️
+# If you DON'T specify a protocol (http://, https://, socks5://), 
+# the bot will use the protocol selected in the "Proxy Type" dropdown.
+# Make sure to select the correct type (HTTP/HTTPS/SOCKS5) or add the protocol prefix!
+
 # ===== SIMPLE FORMAT =====
-# Just IP/hostname and port
+# Just IP/hostname and port (uses selected Proxy Type)
 192.168.1.1:8080
 10.0.0.1:3128
 proxy1.example.com:8080
 
 # ===== WITH AUTHENTICATION (Format 1) =====
-# user:pass@host:port
+# user:pass@host:port (uses selected Proxy Type)
 user1:password1@192.168.1.2:8080
 admin:secret@proxy2.example.com:3128
 
 # ===== WITH AUTHENTICATION (Format 2) =====
-# host:port:username:password
+# host:port:username:password (uses selected Proxy Type)
+# ⭐ This is the format for geo.g-w.info and similar proxy providers
 192.168.1.3:8080:testuser:testpass
 proxy3.example.com:3128:admin:admin123
+geo.g-w.info:10800:username:password
 
-# ===== HTTP PROTOCOL =====
+# ===== EXPLICIT HTTP PROTOCOL =====
+# Specifying http:// overrides the Proxy Type selection
 http://192.168.1.4:8080
 http://proxy4.example.com:8080
 http://user:pass@192.168.1.5:8080
+http://geo.g-w.info:10800:username:password
 
-# ===== HTTPS PROTOCOL =====
+# ===== EXPLICIT HTTPS PROTOCOL =====
+# Specifying https:// overrides the Proxy Type selection
 https://192.168.1.6:8080
 https://secure-proxy.example.com:8080
 https://user:pass@192.168.1.7:8080
 
-# ===== SOCKS5 PROTOCOL =====
+# ===== EXPLICIT SOCKS5 PROTOCOL =====
+# Specifying socks5:// overrides the Proxy Type selection
+# ⭐ Many premium proxy providers use SOCKS5
 socks5://192.168.1.8:1080
 socks5://socks-proxy.example.com:1080
 socks5://user:pass@192.168.1.9:1080
+socks5://geo.g-w.info:10800:username:password
 
 # ===== IPv6 ADDRESSES =====
 # Simple IPv6
