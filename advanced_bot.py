@@ -18587,6 +18587,9 @@ class AutomationWorker(QObject):
         # Pass imported useragents and cookies to browser manager
         self.browser_manager.imported_useragents = config.get('imported_useragents', [])
         self.browser_manager.imported_cookies = config.get('imported_cookies', [])
+        # Track active tasks and contexts for immediate stop
+        self.active_tasks = []  # List of asyncio tasks
+        self.active_contexts = []  # List of browser contexts
     
     def emit_log(self, message: str, level: str = 'INFO'):
         """Emit log to GUI."""
@@ -18594,9 +18597,41 @@ class AutomationWorker(QObject):
         self.log_signal.emit(log_entry)
     
     def stop(self):
-        """Stop the automation."""
+        """Stop the automation immediately."""
         self.running = False
-        self.emit_log('Stopping automation...')
+        self.emit_log('⛔ STOP REQUESTED - Stopping all automation immediately...')
+        
+        # Force cancel all active tasks immediately
+        cancelled_count = 0
+        for task in self.active_tasks:
+            if not task.done():
+                task.cancel()
+                cancelled_count += 1
+        
+        if cancelled_count > 0:
+            self.emit_log(f'⚠ Cancelled {cancelled_count} active tasks')
+        
+        # Force close all active browser contexts immediately
+        closed_count = 0
+        for context in self.active_contexts:
+            try:
+                # Use asyncio to schedule immediate close
+                if hasattr(context, 'close'):
+                    # Schedule context close in event loop
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            asyncio.create_task(context.close())
+                        closed_count += 1
+                    except:
+                        pass
+            except:
+                pass
+        
+        if closed_count > 0:
+            self.emit_log(f'⚠ Closed {closed_count} browser contexts')
+        
+        self.emit_log('✓ Stop completed - All concurrent tasks terminated')
     
     @staticmethod
     def generate_utm_url(base_url: str, source: str, medium: str, campaign: str, term: str = '', content: str = '') -> str:
@@ -18862,17 +18897,25 @@ class AutomationWorker(QObject):
             self.emit_log(f'Error in CAPTCHA detection: {e}', 'ERROR')
             return False
     
-    async def handle_search_visit(self, context: BrowserContext, target_domain: str, keyword: str):
-        """Handle search visit - search on Google, find target domain, and click it.
+    async def handle_search_visit(self, context: BrowserContext, target_domain: str, keyword: str, search_website: str = 'https://www.google.com'):
+        """Handle search visit - search on any website, find target domain, and click it.
         
-        Fixed to prevent reload loops and ensure proper Google search behavior:
-        1. Open Google in a NEW tab/page
-        2. Wait for search box with proper selector
+        Enhanced to work with any website's search functionality:
+        1. Open search website in a NEW tab/page
+        2. Find and wait for search box with generic selectors
         3. Handle consent popups first
-        4. Type character by character (not fill)
-        5. Wait for results properly
-        6. Find and click target domain
-        7. Start scrolling after click
+        4. Type keyword character by character (human-like)
+        5. Find and click search button
+        6. Wait for results properly
+        7. Find target domain in top 10 results
+        8. Click to open in new tab
+        9. Continue with normal behavior
+        
+        Args:
+            context: Browser context
+            target_domain: Domain to find in search results
+            keyword: Search keyword
+            search_website: Website to search on (default: Google)
         """
         from urllib.parse import urlparse
         
@@ -18883,82 +18926,143 @@ class AutomationWorker(QObject):
         else:
             target_domain_clean = target_domain.split('/')[0]  # Remove any path after domain
         
-        self.emit_log(f'[INFO] Search visit with keyword: "{keyword}" for domain: "{target_domain_clean}"')
+        # Ensure search_website has protocol
+        if not search_website.startswith('http'):
+            search_website = f'https://{search_website}'
         
-        # Create a NEW page/tab for Google search
-        self.emit_log('Creating new tab for Google search...')
+        self.emit_log(f'[INFO] Search visit with keyword: "{keyword}" for domain: "{target_domain_clean}"')
+        self.emit_log(f'[INFO] Using search website: {search_website}')
+        
+        # Create a NEW page/tab for search
+        self.emit_log('Creating new tab for search...')
         page = await context.new_page()
         
         try:
-            # Navigate to Google in the new tab
-            self.emit_log('Opening Google in new tab...')
-            await page.goto('https://www.google.com', wait_until='domcontentloaded', timeout=60000)
+            # Navigate to search website in the new tab
+            self.emit_log(f'Opening {search_website} in new tab...')
+            await page.goto(search_website, wait_until='domcontentloaded', timeout=60000)
             await asyncio.sleep(random.uniform(2, 3))
             
-            # Handle consent popups on Google first
-            self.emit_log('Checking for Google consent dialogs...')
+            # Handle consent popups first
+            self.emit_log('Checking for consent dialogs...')
             try:
-                # Try to find and click "Accept all" button on Google consent
+                # Try to find and click "Accept all" button on consent dialogs
                 accept_buttons = await page.query_selector_all('button')
                 for button in accept_buttons:
                     text = await button.inner_text()
-                    if text and any(word in text.lower() for word in ['accept', 'agree', 'accept all', 'i agree']):
+                    if text and any(word in text.lower() for word in ['accept', 'agree', 'accept all', 'i agree', 'allow all']):
                         await button.click()
-                        self.emit_log('✓ Clicked Google consent button')
+                        self.emit_log('✓ Clicked consent button')
                         await asyncio.sleep(2)
                         break
             except Exception as e:
                 self.emit_log(f'No consent needed or error: {e}', 'INFO')
             
-            # Wait for search box to appear (use proper wait instead of sleep)
+            # Wait for search box to appear using generic selectors
             self.emit_log('Waiting for search box...')
-            try:
-                await page.wait_for_selector('textarea[name="q"]', timeout=10000)
-                search_selector = 'textarea[name="q"]'
-            except:
-                # Fallback to input if textarea not found
+            search_selector = None
+            
+            # Try multiple common search box selectors
+            search_selectors = [
+                'textarea[name="q"]',  # Google textarea
+                'input[name="q"]',  # Google input fallback
+                'input[type="search"]',  # Generic HTML5 search input
+                'input[name*="search" i]',  # Any input with "search" in name (case insensitive)
+                'input[id*="search" i]',  # Any input with "search" in id
+                'input[placeholder*="search" i]',  # Any input with "search" in placeholder
+                'input[aria-label*="search" i]',  # Any input with "search" in aria-label
+                'input.search',  # Input with search class
+                '#search-input',  # Common ID
+                '#search',  # Common ID
+                '[role="searchbox"]',  # ARIA searchbox role
+            ]
+            
+            for selector in search_selectors:
                 try:
-                    await page.wait_for_selector('input[name="q"]', timeout=10000)
-                    search_selector = 'input[name="q"]'
+                    await page.wait_for_selector(selector, timeout=3000)
+                    search_selector = selector
+                    self.emit_log(f'✓ Found search box with selector: {selector}')
+                    break
                 except:
-                    self.emit_log('Could not find search box', 'ERROR')
-                    return False
+                    continue
+            
+            if not search_selector:
+                self.emit_log('Could not find search box with common selectors', 'WARNING')
+                # Fallback: Try to find any visible input field
+                try:
+                    inputs = await page.query_selector_all('input')
+                    for inp in inputs:
+                        is_visible = await inp.is_visible()
+                        input_type = await inp.get_attribute('type')
+                        if is_visible and input_type not in ['hidden', 'submit', 'button', 'checkbox', 'radio']:
+                            search_selector = f'input[type="{input_type}"]'
+                            self.emit_log(f'Using fallback input: {search_selector}')
+                            break
+                except:
+                    pass
+            
+            if not search_selector:
+                self.emit_log('Could not find any search box', 'ERROR')
+                await page.close()
+                return None
             
             # Type keyword like a human (character by character with delay)
             self.emit_log(f'Typing search keyword: "{keyword}"...')
             await page.type(search_selector, keyword, delay=random.randint(80, 150))
-            
-            # Press Enter
-            self.emit_log('Pressing Enter...')
             await asyncio.sleep(random.uniform(0.5, 1.0))
-            await page.press(search_selector, 'Enter')
             
-            # Wait for search results to load properly
-            self.emit_log('Waiting for search results...')
-            try:
-                await page.wait_for_selector('div#search', timeout=15000)
-            except:
+            # Find and click search button
+            self.emit_log('Looking for search button...')
+            search_button = None
+            
+            # Try multiple common search button selectors
+            button_selectors = [
+                'button[type="submit"]',  # Standard submit button
+                'input[type="submit"]',  # Submit input
+                'button[aria-label*="search" i]',  # Button with search in aria-label
+                'button:has-text("Search")',  # Button with "Search" text (case sensitive for Playwright)
+                'button:has-text("search")',  # Lowercase
+                'button[name*="search" i]',  # Button with search in name
+                '[role="button"][aria-label*="search" i]',  # ARIA button with search label
+            ]
+            
+            for selector in button_selectors:
                 try:
-                    # Alternative selector for search results
-                    await page.wait_for_selector('[id="rso"]', timeout=15000)
+                    await page.wait_for_selector(selector, timeout=2000)
+                    search_button = selector
+                    self.emit_log(f'✓ Found search button with selector: {selector}')
+                    break
                 except:
-                    self.emit_log('Search results selector not found, continuing anyway', 'WARNING')
+                    continue
             
-            await asyncio.sleep(random.uniform(2, 4))
+            if search_button:
+                # Click the search button
+                self.emit_log('Clicking search button...')
+                try:
+                    await page.click(search_button)
+                except:
+                    # If click fails, try pressing Enter on search box instead
+                    self.emit_log('Search button click failed, pressing Enter instead', 'WARNING')
+                    await page.press(search_selector, 'Enter')
+            else:
+                # No button found, just press Enter
+                self.emit_log('No search button found, pressing Enter...')
+                await page.press(search_selector, 'Enter')
+            
+            # Wait for search results to load
+            self.emit_log('Waiting for search results to load...')
+            await asyncio.sleep(random.uniform(3, 5))
+            
+            # Wait for page load after search
+            try:
+                await page.wait_for_load_state('domcontentloaded', timeout=15000)
+            except:
+                pass
             
             # Check for CAPTCHA after search results load
             captcha_detected = await self.detect_and_solve_captcha(page)
             if captcha_detected:
-                # Wait a bit more after CAPTCHA solving
                 await asyncio.sleep(random.uniform(2, 3))
-                # Re-check for search results after CAPTCHA
-                try:
-                    await page.wait_for_selector('div#search', timeout=10000)
-                except:
-                    try:
-                        await page.wait_for_selector('[id="rso"]', timeout=10000)
-                    except:
-                        pass
             
             # Scroll results page to simulate reading
             await HumanBehavior.scroll_page(page, random.randint(30, 60))
@@ -18967,20 +19071,24 @@ class AutomationWorker(QObject):
             # Try to find and click target domain in top 10 results
             self.emit_log(f'Searching for target domain "{target_domain_clean}" in top 10 search results...')
             
-            # Get search result links (more specific selector for actual search results)
-            # Try to get organic search results specifically
-            organic_results = await page.query_selector_all('div#search a[href], div#rso a[href]')
+            # Get all links on the page
+            all_links = await page.query_selector_all('a[href]')
             
-            # Filter to get only valid result links (exclude navigation, ads, etc.)
+            # Filter to get only valid result links (exclude navigation, ads, internal links)
             result_links = []
-            for link in organic_results:
+            search_domain = urlparse(search_website).netloc
+            
+            for link in all_links:
                 try:
                     href = await link.get_attribute('href')
-                    # Only include HTTP/HTTPS links that aren't Google internal links
-                    if href and href.startswith('http') and 'google.com' not in href:
-                        result_links.append(link)
-                        if len(result_links) >= 10:  # Limit to top 10 results
-                            break
+                    # Only include HTTP/HTTPS links that aren't from the search website itself
+                    if href and href.startswith('http') and search_domain not in href:
+                        # Check if link is visible (likely a result, not hidden/navigation)
+                        is_visible = await link.is_visible()
+                        if is_visible:
+                            result_links.append(link)
+                            if len(result_links) >= 10:  # Limit to top 10 results
+                                break
                 except:
                     continue
             
@@ -18999,20 +19107,23 @@ class AutomationWorker(QObject):
                     continue
             
             if found_link:
+                # Get the href before clicking (in case click opens new tab)
+                found_href = await found_link.get_attribute('href')
+                
                 # Click the found link
                 self.emit_log('Clicking on target domain link...')
                 try:
+                    # Try to click and navigate in same page
                     await found_link.click()
+                    # Wait for navigation
+                    try:
+                        await page.wait_for_load_state('domcontentloaded', timeout=30000)
+                    except:
+                        pass
                 except:
-                    # Fallback: Try to navigate directly if click fails
-                    href = await found_link.get_attribute('href')
-                    await page.goto(href, wait_until='domcontentloaded', timeout=30000)
-                
-                # Wait for navigation after click
-                try:
-                    await page.wait_for_load_state('domcontentloaded', timeout=30000)
-                except:
-                    pass
+                    # Fallback: Navigate directly if click fails
+                    self.emit_log('Click failed, navigating directly...', 'WARNING')
+                    await page.goto(found_href, wait_until='domcontentloaded', timeout=30000)
                 
                 await asyncio.sleep(random.uniform(3, 5))
                 
@@ -19021,8 +19132,7 @@ class AutomationWorker(QObject):
                 return page  # Return the page object for further use
             else:
                 self.emit_log(f'⚠ Target domain "{target_domain_clean}" not found in search results', 'WARNING')
-                # FALLBACK: If not found, at least try to navigate directly
-                # Construct proper URL with protocol
+                # FALLBACK: If not found, try direct navigation
                 fallback_url = target_domain if target_domain.startswith('http') else f'https://{target_domain_clean}'
                 self.emit_log(f'Attempting direct navigation to {fallback_url}')
                 try:
@@ -19038,7 +19148,6 @@ class AutomationWorker(QObject):
             self.emit_log(f'Error during search visit: {e}', 'ERROR')
             # Try fallback navigation
             try:
-                # Construct proper URL with protocol
                 fallback_url = target_domain if target_domain.startswith('http') else f'https://{target_domain_clean}'
                 self.emit_log(f'Attempting fallback navigation to {fallback_url}')
                 await page.goto(fallback_url, wait_until='domcontentloaded', timeout=30000)
@@ -19855,7 +19964,7 @@ class AutomationWorker(QObject):
     
     
     async def execute_single_visit(self, visit_num, url_list, platforms, visit_type, 
-                                   search_keyword, target_domain, referral_sources,
+                                   search_keyword, target_domain, search_website, referral_sources,
                                    min_time_spend, max_time_spend, enable_consent, 
                                    enable_interaction, enable_extra_pages, max_pages,
                                    consent_manager, enable_highlight=False,
@@ -19874,6 +19983,9 @@ class AutomationWorker(QObject):
             if not context:
                 self.emit_log(f'Failed to create browser context for profile {visit_num}', 'ERROR')
                 return False
+            
+            # Track active context for immediate stop
+            self.active_contexts.append(context)
             
             try:
                 # Get the first page from persistent context (instead of creating new page)
@@ -19921,8 +20033,8 @@ class AutomationWorker(QObject):
                     await self.handle_referral_visit(page, target_url, referral_sources,
                                                     utm_medium, utm_campaign, utm_term, utm_content)
                 elif visit_type == 'search':
-                    # Search visit - opens Google in a NEW tab, searches, and clicks target domain
-                    search_page = await self.handle_search_visit(context, target_domain, search_keyword)
+                    # Search visit - opens search website in a NEW tab, searches, and clicks target domain
+                    search_page = await self.handle_search_visit(context, target_domain, search_keyword, search_website)
                     if not search_page:
                         self.emit_log(f'Target domain not found in search for profile {visit_num}', 'WARNING')
                         return False
@@ -19952,6 +20064,11 @@ class AutomationWorker(QObject):
                 return True
                 
             finally:
+                # Remove from active contexts
+                try:
+                    self.active_contexts.remove(context)
+                except:
+                    pass
                 # Always close context after visit (session isolation)
                 await context.close()
                 
@@ -19960,7 +20077,7 @@ class AutomationWorker(QObject):
             return False
     
     async def execute_single_visit(self, page, visit_num, target_url, visit_type,
-                                  search_keyword, target_domain, referral_sources,
+                                  search_keyword, target_domain, search_website, referral_sources,
                                   min_time_spend, max_time_spend, enable_consent,
                                   enable_interaction, enable_extra_pages, max_pages,
                                   consent_manager, enable_highlight=False,
@@ -19974,8 +20091,8 @@ class AutomationWorker(QObject):
                 await self.handle_referral_visit(page, target_url, referral_sources,
                                                 utm_medium, utm_campaign, utm_term, utm_content)
             elif visit_type == 'search':
-                # Search visit - opens Google in a NEW tab, searches, and clicks target domain
-                search_page = await self.handle_search_visit(page.context, target_domain, search_keyword)
+                # Search visit - opens search website in a NEW tab, searches, and clicks target domain
+                search_page = await self.handle_search_visit(page.context, target_domain, search_keyword, search_website)
                 if not search_page:
                     self.emit_log(f'[Visit {visit_num}] Target domain not found in search', 'WARNING')
                     return False
@@ -20014,7 +20131,7 @@ class AutomationWorker(QObject):
             return False
     
     async def execute_single_profile(self, profile_num, url_list, platforms, visit_type,
-                                     search_keyword, target_domain, referral_sources,
+                                     search_keyword, target_domain, search_website, referral_sources,
                                      random_time_enabled, stay_time, min_time_spend, max_time_spend, enable_consent,
                                      enable_interaction, enable_extra_pages, max_pages,
                                      consent_manager, enable_highlight=False,
@@ -20049,6 +20166,9 @@ class AutomationWorker(QObject):
             if not context:
                 self.emit_log(f'Failed to create browser context for profile {profile_num}', 'ERROR')
                 return False
+            
+            # Track active context for immediate stop
+            self.active_contexts.append(context)
             
             try:
                 # Get proxy location once for the profile
@@ -20094,7 +20214,7 @@ class AutomationWorker(QObject):
                 # Execute the profile visit
                 result = await self.execute_single_visit(
                     page, profile_num, target_url, visit_type,
-                    search_keyword, target_domain, referral_sources,
+                    search_keyword, target_domain, search_website, referral_sources,
                     time_to_spend, time_to_spend, enable_consent,  # Use same time for both min/max
                     enable_interaction, enable_extra_pages, max_pages,
                     consent_manager, enable_highlight,
@@ -20111,6 +20231,11 @@ class AutomationWorker(QObject):
                 return result
                 
             finally:
+                # Remove from active contexts
+                try:
+                    self.active_contexts.remove(context)
+                except:
+                    pass
                 # Always close context after profile completes
                 await context.close()
                 
@@ -20191,7 +20316,7 @@ class AutomationWorker(QObject):
                     # Create task for this tab
                     task = self.execute_single_visit(
                         page, tab_idx + 1, target_url, visit_type,
-                        search_keyword, target_domain, referral_sources,
+                        search_keyword, target_domain, search_website, referral_sources,
                         min_time_spend, max_time_spend, enable_consent,
                         enable_interaction, enable_extra_pages, max_pages,
                         consent_manager, enable_highlight,
@@ -20324,6 +20449,9 @@ class AutomationWorker(QObject):
                             await asyncio.sleep(2)
                             continue
                         
+                        # Track active context for immediate stop
+                        self.active_contexts.append(context)
+                        
                         # Execute RPA script
                         script_executor = ScriptExecutor(self.log_manager)
                         self.emit_log(f'[Concurrent {thread_num}] Executing RPA script...')
@@ -20343,6 +20471,11 @@ class AutomationWorker(QObject):
                     
                     finally:
                         if context:
+                            # Remove from active contexts
+                            try:
+                                self.active_contexts.remove(context)
+                            except:
+                                pass
                             try:
                                 await context.close()
                             except:
@@ -20366,6 +20499,7 @@ class AutomationWorker(QObject):
                     thread_counter += 1
                     task = asyncio.create_task(run_rpa_thread(thread_counter))
                     active_tasks.append(task)
+                    self.active_tasks.append(task)  # Track for immediate stop
                     # No delay - start all browsers immediately to maintain N concurrent
                 
                 # Wait for all threads to complete
@@ -20406,6 +20540,7 @@ class AutomationWorker(QObject):
             visit_type = self.config.get('visit_type', 'direct')
             search_keyword = self.config.get('search_keyword', '')
             target_domain = self.config.get('target_domain', '')
+            search_website = self.config.get('search_website', 'https://www.google.com')  # Website to search on
             referral_sources = self.config.get('referral_sources', [])
             utm_campaign = self.config.get('utm_campaign', '')
             utm_medium = self.config.get('utm_medium', 'social')
@@ -20500,7 +20635,7 @@ class AutomationWorker(QObject):
                         # Execute single profile
                         result = await self.execute_single_profile(
                             worker_num, url_list, platforms, visit_type,
-                            search_keyword, target_domain, referral_sources,
+                            search_keyword, target_domain, search_website, referral_sources,
                             random_time_enabled, stay_time, min_time_spend, max_time_spend, enable_consent,
                             enable_interaction, enable_extra_pages, max_pages,
                             consent_manager, enable_text_highlight,
@@ -20551,6 +20686,7 @@ class AutomationWorker(QObject):
                         
                         task = asyncio.create_task(worker_task())
                         active_workers.append(task)
+                        self.active_tasks.append(task)  # Track for immediate stop
                         # No delay - instances should start immediately
                     
                     # If no active workers and no more proxies/work to do, break
@@ -21074,6 +21210,12 @@ class AppGUI(QMainWindow):
         search_layout = QVBoxLayout()
         search_layout.setSpacing(10)
         
+        search_layout.addWidget(QLabel('Search Website (e.g., google.com, bing.com):'))
+        self.search_website_input = QLineEdit()
+        self.search_website_input.setPlaceholderText('Enter search website URL (default: google.com)...')
+        self.search_website_input.setText('https://www.google.com')  # Default to Google
+        search_layout.addWidget(self.search_website_input)
+        
         search_layout.addWidget(QLabel('Search Keyword:'))
         self.search_keyword_input = QLineEdit()
         self.search_keyword_input.setPlaceholderText('Enter keyword to search...')
@@ -21085,10 +21227,11 @@ class AppGUI(QMainWindow):
         search_layout.addWidget(self.target_domain_input)
         
         info_label = QLabel('ℹ️ Bot will:\n'
-                           '1. Open Google in a new tab\n'
-                           '2. Search for your keyword\n'
-                           '3. Find and click your target domain in top 10 results\n'
-                           '4. Visit directly if not found in results\n'
+                           '1. Open the search website in a new tab\n'
+                           '2. Find the search box and type your keyword\n'
+                           '3. Click the search button\n'
+                           '4. Find and click your target domain in top 10 results\n'
+                           '5. Visit directly if not found in results\n'
                            '📝 Note: Target URLs above are NOT needed for Search Visit')
         info_label.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
         info_label.setWordWrap(True)
@@ -22383,6 +22526,7 @@ class AppGUI(QMainWindow):
                     'visit_type': visit_type,
                     'search_keyword': self.search_keyword_input.text().strip() if visit_type == 'search' else '',
                     'target_domain': self.target_domain_input.text().strip() if visit_type == 'search' else '',
+                    'search_website': self.search_website_input.text().strip() if visit_type == 'search' else 'https://www.google.com',
                     'referral_sources': referral_sources,
                     'utm_campaign': utm_campaign,
                     'utm_medium': utm_medium,
