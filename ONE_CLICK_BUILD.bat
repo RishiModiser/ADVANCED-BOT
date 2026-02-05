@@ -22,6 +22,7 @@ echo  ^|                                                      ^|
 echo  ========================================================
 echo.
 echo  Please wait while we:
+echo    - Validate environment
 echo    - Check Python installation
 echo    - Install build tools
 echo    - Download dependencies
@@ -33,6 +34,17 @@ echo  ========================================================
 echo.
 pause
 echo.
+
+REM Run validation script if available
+if exist validate_standalone.py (
+    echo Running pre-build validation...
+    python validate_standalone.py
+    if errorlevel 1 (
+        echo.
+        echo Some dependencies are missing. Installing them now...
+        echo.
+    )
+)
 
 REM Call the main build script
 call build_standalone.bat
@@ -66,3 +78,4 @@ if errorlevel 1 (
     echo  Press any key to exit...
     pause >nul
 )
+

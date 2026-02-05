@@ -21,6 +21,7 @@ echo "|                                                      |"
 echo "========================================================"
 echo ""
 echo "  Please wait while we:"
+echo "    - Validate environment"
 echo "    - Check Python installation"
 echo "    - Install build tools"
 echo "    - Download dependencies"
@@ -32,6 +33,17 @@ echo "========================================================"
 echo ""
 read -p "Press Enter to start the build process..."
 echo ""
+
+# Run validation script if available
+if [ -f "validate_standalone.py" ]; then
+    echo "Running pre-build validation..."
+    python3 validate_standalone.py
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo "Some dependencies are missing. Installing them now..."
+        echo ""
+    fi
+fi
 
 # Make the build script executable
 chmod +x build_standalone.sh
