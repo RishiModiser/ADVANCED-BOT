@@ -18865,6 +18865,8 @@ class BrowserManager:
         self.active_contexts = []  # Track all active persistent contexts for cleanup
         self.imported_useragents = []  # Store imported useragents
         self.imported_cookies = []  # Store imported cookies
+        self._context_semaphore = None  # Will be initialized in initialize()
+        self._max_concurrent_contexts = 50  # Limit concurrent browser context creation
     
     async def initialize(self):
         """Initialize Playwright only (no browser launch with persistent contexts)."""
@@ -18872,7 +18874,9 @@ class BrowserManager:
             self.log_manager.log('━━━ Browser Initialization Started ━━━')
             self.log_manager.log('Initializing Playwright...')
             self.playwright = await async_playwright().start()
+            self._context_semaphore = asyncio.Semaphore(self._max_concurrent_contexts)
             self.log_manager.log('✓ Playwright started successfully')
+            self.log_manager.log(f'✓ Context limiter initialized (max: {self._max_concurrent_contexts} concurrent)')
             self.log_manager.log('━━━ Browser Initialization Complete ━━━')
             
             return True
@@ -18891,29 +18895,31 @@ class BrowserManager:
         CRITICAL: Fetches proxy location FIRST, then generates fingerprint matching proxy country.
         This ensures browser location matches proxy location (USA proxy → USA fingerprint).
         """
-        try:
-            if not self.playwright:
-                success = await self.initialize()
-                if not success or not self.playwright:
-                    self.log_manager.log('Cannot create context: Playwright initialization failed', 'ERROR')
-                    return None
-            
-            # CRITICAL FIX: Fetch proxy BEFORE generating fingerprint
-            # This allows fingerprint to match proxy location
-            proxy_config = None
-            proxy_location = None
-            if use_proxy:
-                proxy_config = self.proxy_manager.get_proxy_config()
-                if proxy_config:
-                    # Fetch proxy geolocation FIRST
-                    geo_manager = ProxyGeolocation()
-                    proxy_location = await geo_manager.fetch_location(proxy_config)
-                    
-                    # Validate proxy_location has required keys
-                    if proxy_location and 'country' in proxy_location and 'ip' in proxy_location:
-                        server = proxy_config.get('server', 'unknown')
-                        self.log_manager.log(f'✓ Proxy selected: {server}')
-                        self.log_manager.log(f'✓ Proxy Location: {proxy_location["country"]} ({proxy_location.get("countryCode", "?")}), IP: {proxy_location["ip"]}')
+        # Use semaphore to limit concurrent context creation
+        async with self._context_semaphore:
+            try:
+                if not self.playwright:
+                    success = await self.initialize()
+                    if not success or not self.playwright:
+                        self.log_manager.log('Cannot create context: Playwright initialization failed', 'ERROR')
+                        return None
+                
+                # CRITICAL FIX: Fetch proxy BEFORE generating fingerprint
+                # This allows fingerprint to match proxy location
+                proxy_config = None
+                proxy_location = None
+                if use_proxy:
+                    proxy_config = self.proxy_manager.get_proxy_config()
+                    if proxy_config:
+                        # Fetch proxy geolocation FIRST
+                        geo_manager = ProxyGeolocation()
+                        proxy_location = await geo_manager.fetch_location(proxy_config)
+                        
+                        # Validate proxy_location has required keys
+                        if proxy_location and 'country' in proxy_location and 'ip' in proxy_location:
+                            server = proxy_config.get('server', 'unknown')
+                            self.log_manager.log(f'✓ Proxy selected: {server}')
+                            self.log_manager.log(f'✓ Proxy Location: {proxy_location["country"]} ({proxy_location.get("countryCode", "?")}), IP: {proxy_location["ip"]}')
                         # Log timezone if available
                         if 'timezone' in proxy_location:
                             self.log_manager.log(f'✓ Proxy Timezone: {proxy_location["timezone"]}')
@@ -18921,129 +18927,129 @@ class BrowserManager:
                         # Invalid proxy location data
                         self.log_manager.log('⚠ Proxy location data incomplete, using without geo-matching', 'WARNING')
                         proxy_location = None
-            
-            # Generate fingerprint AFTER getting proxy location
-            # Pass proxy_location so fingerprint matches proxy country
-            self.fingerprint_manager.platform = platform
-            fingerprint = self.fingerprint_manager.generate_fingerprint(proxy_location)
-            
-            # Use imported useragent if available, otherwise use generated one
-            if self.imported_useragents:
-                user_agent = random.choice(self.imported_useragents)
-                self.log_manager.log(f'✓ Using imported user agent')
-            else:
-                user_agent = fingerprint['user_agent']
-            
-            # Create unique profile directory
-            user_data_dir = Path(f"profiles/profile_{random.randint(1000, 9999)}")
-            user_data_dir.mkdir(parents=True, exist_ok=True)
-            
-            self.log_manager.log(f'━━━ Creating Browser Persistent Context ━━━')
-            self.log_manager.log(f'Platform: {platform}')
-            self.log_manager.log(f'Profile: {user_data_dir}')
-            self.log_manager.log(f'User Agent: {user_agent[:60]}...')
-            self.log_manager.log(f'Timezone: {fingerprint["timezone"]}, Locale: {fingerprint["locale"]}')
-            if proxy_location:
-                self.log_manager.log(f'✓ Fingerprint MATCHED to proxy location: {proxy_location["country"]}')
-            
-            # Build context options for launch_persistent_context
-            context_options = {
-                'user_agent': user_agent,
-                'viewport': fingerprint['viewport'],
-                'locale': fingerprint['locale'],
-                'timezone_id': fingerprint['timezone'],
-                'headless': False,  # ALWAYS VISIBLE - headless mode removed completely
-                'channel': 'chrome',  # Use real Chrome instead of Chromium
-                'ignore_default_args': ['--enable-automation'],  # Remove automation flag
-                'args': [
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-dev-shm-usage',
-                    '--no-sandbox',
-                    '--disable-infobars',
-                    '--test-type',  # Suppress warning about --no-sandbox flag
-                    '--disable-automation',
-                    '--disable-web-security',
-                    '--disable-features=IsolateOrigins,site-per-process'
-                ]
-            }
-            
-            # Add proxy if configured
-            if proxy_config:
-                context_options['proxy'] = proxy_config
-            else:
-                self.log_manager.log('No proxy configured, using direct connection')
-            
-            # Try to create persistent context with proxy
-            try:
-                context = await self.playwright.chromium.launch_persistent_context(
-                    user_data_dir=str(user_data_dir),
-                    **context_options
-                )
-                self.active_contexts.append(context)
-            except Exception as proxy_error:
-                # Check if error is proxy-related
-                error_str = str(proxy_error).lower()
-                proxy_error_indicators = [
-                    'proxy', 'econnrefused', 'etimedout', 'enotfound',
-                    'connection refused', 'timeout', 'unreachable'
-                ]
-                is_proxy_error = any(indicator in error_str for indicator in proxy_error_indicators)
                 
-                if is_proxy_error and proxy_config:
-                    # Log proxy-specific error
-                    self.log_manager.log(f'⚠ Proxy connection failed: {proxy_error}', 'WARNING')
-                    self.log_manager.log(f'⚠ Proxy server: {proxy_config.get("server", "unknown")}', 'WARNING')
-                    self.log_manager.log('⚠ Retrying without proxy...', 'WARNING')
-                    
-                    # Mark proxy as failed
-                    self.proxy_manager.mark_proxy_failed(proxy_config)
-                    
-                    # Retry without proxy (remove proxy from options)
-                    context_options.pop('proxy', None)
+                # Generate fingerprint AFTER getting proxy location
+                # Pass proxy_location so fingerprint matches proxy country
+                self.fingerprint_manager.platform = platform
+                fingerprint = self.fingerprint_manager.generate_fingerprint(proxy_location)
+                
+                # Use imported useragent if available, otherwise use generated one
+                if self.imported_useragents:
+                    user_agent = random.choice(self.imported_useragents)
+                    self.log_manager.log(f'✓ Using imported user agent')
+                else:
+                    user_agent = fingerprint['user_agent']
+                
+                # Create unique profile directory
+                user_data_dir = Path(f"profiles/profile_{random.randint(1000, 9999)}")
+                user_data_dir.mkdir(parents=True, exist_ok=True)
+                
+                self.log_manager.log(f'━━━ Creating Browser Persistent Context ━━━')
+                self.log_manager.log(f'Platform: {platform}')
+                self.log_manager.log(f'Profile: {user_data_dir}')
+                self.log_manager.log(f'User Agent: {user_agent[:60]}...')
+                self.log_manager.log(f'Timezone: {fingerprint["timezone"]}, Locale: {fingerprint["locale"]}')
+                if proxy_location:
+                    self.log_manager.log(f'✓ Fingerprint MATCHED to proxy location: {proxy_location["country"]}')
+                
+                # Build context options for launch_persistent_context
+                context_options = {
+                    'user_agent': user_agent,
+                    'viewport': fingerprint['viewport'],
+                    'locale': fingerprint['locale'],
+                    'timezone_id': fingerprint['timezone'],
+                    'headless': False,  # ALWAYS VISIBLE - headless mode removed completely
+                    'channel': 'chrome',  # Use real Chrome instead of Chromium
+                    'ignore_default_args': ['--enable-automation'],  # Remove automation flag
+                    'args': [
+                        '--disable-blink-features=AutomationControlled',
+                        '--disable-dev-shm-usage',
+                        '--no-sandbox',
+                        '--disable-infobars',
+                        '--test-type',  # Suppress warning about --no-sandbox flag
+                        '--disable-automation',
+                        '--disable-web-security',
+                        '--disable-features=IsolateOrigins,site-per-process'
+                    ]
+                }
+                
+                # Add proxy if configured
+                if proxy_config:
+                    context_options['proxy'] = proxy_config
+                else:
+                    self.log_manager.log('No proxy configured, using direct connection')
+                
+                # Try to create persistent context with proxy
+                try:
                     context = await self.playwright.chromium.launch_persistent_context(
                         user_data_dir=str(user_data_dir),
                         **context_options
                     )
                     self.active_contexts.append(context)
-                    self.log_manager.log('✓ Browser context created with direct connection (proxy bypassed)')
-                    proxy_location = None  # Clear proxy location since not using proxy
-                else:
-                    # Re-raise if not a proxy error
-                    raise
-            
-            # Inject navigator properties via init script
-            await context.add_init_script(f"""
-                Object.defineProperty(navigator, 'hardwareConcurrency', {{
-                    get: () => {fingerprint['hardware_concurrency']}
-                }});
-                Object.defineProperty(navigator, 'webdriver', {{
-                    get: () => undefined
-                }});
-            """)
-            
-            # Store proxy location for later use (e.g., displaying in browser)
-            context._proxy_location = proxy_location
-            
-            # Inject imported cookies if available
-            if self.imported_cookies:
-                try:
-                    await context.add_cookies(self.imported_cookies)
-                    self.log_manager.log(f'✓ Injected {len(self.imported_cookies)} imported cookies')
-                except Exception as cookie_error:
-                    self.log_manager.log(f'⚠ Failed to inject cookies: {cookie_error}', 'WARNING')
-            
-            self.log_manager.log('✓ Browser persistent context created successfully')
-            self.log_manager.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-            return context
-            
-        except Exception as e:
-            self.log_manager.log(f'Context creation error: {e}', 'ERROR')
-            self.log_manager.log('This may be due to:', 'ERROR')
-            self.log_manager.log('  - Invalid proxy configuration', 'ERROR')
-            self.log_manager.log('  - Network connectivity issues', 'ERROR')
-            self.log_manager.log('  - Chrome not installed (required for channel="chrome")', 'ERROR')
-            self.log_manager.log('  - Browser crash or resource exhaustion', 'ERROR')
-            return None
+                except Exception as proxy_error:
+                    # Check if error is proxy-related
+                    error_str = str(proxy_error).lower()
+                    proxy_error_indicators = [
+                        'proxy', 'econnrefused', 'etimedout', 'enotfound',
+                        'connection refused', 'timeout', 'unreachable'
+                    ]
+                    is_proxy_error = any(indicator in error_str for indicator in proxy_error_indicators)
+                    
+                    if is_proxy_error and proxy_config:
+                        # Log proxy-specific error
+                        self.log_manager.log(f'⚠ Proxy connection failed: {proxy_error}', 'WARNING')
+                        self.log_manager.log(f'⚠ Proxy server: {proxy_config.get("server", "unknown")}', 'WARNING')
+                        self.log_manager.log('⚠ Retrying without proxy...', 'WARNING')
+                        
+                        # Mark proxy as failed
+                        self.proxy_manager.mark_proxy_failed(proxy_config)
+                        
+                        # Retry without proxy (remove proxy from options)
+                        context_options.pop('proxy', None)
+                        context = await self.playwright.chromium.launch_persistent_context(
+                            user_data_dir=str(user_data_dir),
+                            **context_options
+                        )
+                        self.active_contexts.append(context)
+                        self.log_manager.log('✓ Browser context created with direct connection (proxy bypassed)')
+                        proxy_location = None  # Clear proxy location since not using proxy
+                    else:
+                        # Re-raise if not a proxy error
+                        raise
+                
+                # Inject navigator properties via init script
+                await context.add_init_script(f"""
+                    Object.defineProperty(navigator, 'hardwareConcurrency', {{
+                        get: () => {fingerprint['hardware_concurrency']}
+                    }});
+                    Object.defineProperty(navigator, 'webdriver', {{
+                        get: () => undefined
+                    }});
+                """)
+                
+                # Store proxy location for later use (e.g., displaying in browser)
+                context._proxy_location = proxy_location
+                
+                # Inject imported cookies if available
+                if self.imported_cookies:
+                    try:
+                        await context.add_cookies(self.imported_cookies)
+                        self.log_manager.log(f'✓ Injected {len(self.imported_cookies)} imported cookies')
+                    except Exception as cookie_error:
+                        self.log_manager.log(f'⚠ Failed to inject cookies: {cookie_error}', 'WARNING')
+                
+                self.log_manager.log('✓ Browser persistent context created successfully')
+                self.log_manager.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+                return context
+                
+            except Exception as e:
+                self.log_manager.log(f'Context creation error: {e}', 'ERROR')
+                self.log_manager.log('This may be due to:', 'ERROR')
+                self.log_manager.log('  - Invalid proxy configuration', 'ERROR')
+                self.log_manager.log('  - Network connectivity issues', 'ERROR')
+                self.log_manager.log('  - Chrome not installed (required for channel="chrome")', 'ERROR')
+                self.log_manager.log('  - Browser crash or resource exhaustion', 'ERROR')
+                return None
     
     async def close(self):
         """Close all browser contexts and cleanup."""
