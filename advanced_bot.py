@@ -17064,6 +17064,71 @@ class LogManager:
 
 
 # ============================================================================
+# RESOURCE MONITOR
+# ============================================================================
+
+class ResourceMonitor:
+    """Monitors system resources and prevents exhaustion under heavy load."""
+    
+    def __init__(self, log_manager: LogManager):
+        self.log_manager = log_manager
+        self.max_contexts = 100  # Maximum browser contexts allowed
+        self.context_count = 0
+        self.failed_count = 0
+        self.max_failures = 50  # Circuit breaker threshold
+        self._last_warning_time = 0
+        self._warning_interval = 30  # Warn every 30 seconds max
+    
+    def increment_context_count(self):
+        """Increment active context count and check limits."""
+        self.context_count += 1
+        
+        # Warn if approaching limits (but not too frequently)
+        current_time = time.time()
+        if self.context_count > self.max_contexts * 0.8:
+            if current_time - self._last_warning_time > self._warning_interval:
+                self.log_manager.log(
+                    f'⚠️ High context count: {self.context_count}/{self.max_contexts}',
+                    'WARNING'
+                )
+                self._last_warning_time = current_time
+    
+    def decrement_context_count(self):
+        """Decrement active context count."""
+        if self.context_count > 0:
+            self.context_count -= 1
+    
+    def record_failure(self):
+        """Record a failure and check circuit breaker."""
+        self.failed_count += 1
+        
+        if self.failed_count >= self.max_failures:
+            self.log_manager.log(
+                f'⛔ Circuit breaker triggered: {self.failed_count} failures',
+                'ERROR'
+            )
+            return True  # Circuit breaker activated
+        
+        return False  # Continue operation
+    
+    def reset_failures(self):
+        """Reset failure counter after successful operations."""
+        if self.failed_count > 0:
+            self.failed_count = max(0, self.failed_count - 1)
+    
+    def check_resource_limits(self) -> bool:
+        """Check if resource limits are exceeded."""
+        if self.context_count >= self.max_contexts:
+            self.log_manager.log(
+                f'⛔ Context limit reached: {self.context_count}/{self.max_contexts}',
+                'ERROR'
+            )
+            return False
+        
+        return True
+
+
+# ============================================================================
 # FINGERPRINT MANAGER
 # ============================================================================
 
@@ -18867,6 +18932,7 @@ class BrowserManager:
         self.imported_cookies = []  # Store imported cookies
         self._context_semaphore = None  # Will be initialized in initialize()
         self._max_concurrent_contexts = 50  # Limit concurrent browser context creation
+        self.resource_monitor = ResourceMonitor(log_manager)  # Add resource monitoring
     
     async def initialize(self):
         """Initialize Playwright only (no browser launch with persistent contexts)."""
@@ -18895,6 +18961,11 @@ class BrowserManager:
         CRITICAL: Fetches proxy location FIRST, then generates fingerprint matching proxy country.
         This ensures browser location matches proxy location (USA proxy → USA fingerprint).
         """
+        # Check resource limits before attempting to create context
+        if not self.resource_monitor.check_resource_limits():
+            self.log_manager.log('Cannot create context: Resource limits exceeded', 'ERROR')
+            return None
+        
         # Use semaphore to limit concurrent context creation
         async with self._context_semaphore:
             try:
@@ -18902,7 +18973,11 @@ class BrowserManager:
                     success = await self.initialize()
                     if not success or not self.playwright:
                         self.log_manager.log('Cannot create context: Playwright initialization failed', 'ERROR')
+                        self.resource_monitor.record_failure()
                         return None
+                
+                # Increment context counter for monitoring
+                self.resource_monitor.increment_context_count()
                 
                 # CRITICAL FIX: Fetch proxy BEFORE generating fingerprint
                 # This allows fingerprint to match proxy location
@@ -19038,11 +19113,17 @@ class BrowserManager:
                     except Exception as cookie_error:
                         self.log_manager.log(f'⚠ Failed to inject cookies: {cookie_error}', 'WARNING')
                 
+                # Record successful context creation
+                self.resource_monitor.reset_failures()
+                
                 self.log_manager.log('✓ Browser persistent context created successfully')
                 self.log_manager.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
                 return context
                 
             except Exception as e:
+                # Decrement counter on failure
+                self.resource_monitor.decrement_context_count()
+                self.resource_monitor.record_failure()
                 self.log_manager.log(f'Context creation error: {e}', 'ERROR')
                 self.log_manager.log('This may be due to:', 'ERROR')
                 self.log_manager.log('  - Invalid proxy configuration', 'ERROR')
@@ -19058,6 +19139,8 @@ class BrowserManager:
             for context in self.active_contexts:
                 try:
                     await context.close()
+                    # Decrement context counter for each closed context
+                    self.resource_monitor.decrement_context_count()
                 except Exception:
                     pass  # Ignore errors during cleanup
             self.active_contexts.clear()
@@ -19092,6 +19175,7 @@ class BrowserManager:
             
             # Create tasks to close all contexts concurrently (don't wait for each)
             close_tasks = []
+            context_count = len(self.active_contexts)
             for context in self.active_contexts:
                 try:
                     # Close each context without waiting
@@ -19112,6 +19196,10 @@ class BrowserManager:
                     for task in close_tasks:
                         if not task.done():
                             task.cancel()
+            
+            # Decrement context counter for all closed contexts
+            for _ in range(context_count):
+                self.resource_monitor.decrement_context_count()
             
             self.active_contexts.clear()
             
