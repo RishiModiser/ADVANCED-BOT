@@ -66,6 +66,7 @@ echo "This may take a few minutes on first run..."
 playwright install chromium || {
     echo "WARNING: Playwright browser installation had issues."
     echo "The application will attempt to download browsers on first run."
+    echo "This is not critical - the build will continue."
 }
 echo ""
 

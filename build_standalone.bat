@@ -96,8 +96,7 @@ if exist "dist\ADVANCED-BOT.exe" (
     echo.
     echo Your standalone executable is ready:
     echo   Location: dist\ADVANCED-BOT.exe
-    echo   Size: 
-    dir "dist\ADVANCED-BOT.exe" | find "ADVANCED-BOT.exe"
+    for %%F in ("dist\ADVANCED-BOT.exe") do echo   Size: %%~zF bytes
     echo.
     echo ================================================
     echo USAGE INSTRUCTIONS

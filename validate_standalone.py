@@ -78,11 +78,16 @@ except ImportError:
 
 # Check required files
 print("\n--- Project Files ---")
-check("advanced_bot.py", os.path.exists("advanced_bot.py"))
-check("advanced_bot.spec", os.path.exists("advanced_bot.spec"))
-check("requirements.txt", os.path.exists("requirements.txt"))
-check("build_standalone.bat", os.path.exists("build_standalone.bat"))
-check("build_standalone.sh", os.path.exists("build_standalone.sh"))
+check("advanced_bot.py", os.path.exists("advanced_bot.py"), 
+      "Main application file missing. Ensure you're in the project root directory.")
+check("advanced_bot.spec", os.path.exists("advanced_bot.spec"),
+      "PyInstaller spec file missing. Cannot build without advanced_bot.spec.")
+check("requirements.txt", os.path.exists("requirements.txt"),
+      "Requirements file missing. Cannot install dependencies.")
+check("build_standalone.bat", os.path.exists("build_standalone.bat"),
+      None, "Build script for Windows is missing.")
+check("build_standalone.sh", os.path.exists("build_standalone.sh"),
+      None, "Build script for Linux/Mac is missing.")
 
 # Check example files
 print("\n--- Example Files ---")

@@ -113,15 +113,12 @@ ADVANCED-BOT is an enterprise-grade **RPA (Robotic Process Automation)** system 
 - **Check internet connection** is active
 - **Check firewall** isn't blocking downloads
 - **Try running again** - it will retry automatically
-- **Manual install**: If automatic download fails repeatedly:
-  ```bash
-  # Windows (in Command Prompt)
-  cd %USERPROFILE%\.cache\ms-playwright
-  
-  # Linux/Mac (in Terminal)
-  cd ~/.cache/ms-playwright
-  ```
-  Then contact support with error details
+- **If automatic download fails repeatedly**, the app includes browser auto-installation.
+  Simply restart the application and click "Yes" when prompted to download browsers.
+- **For diagnostic purposes**: Browser files are stored in:
+  - Windows: `%USERPROFILE%\.cache\ms-playwright`
+  - Linux/Mac: `~/.cache/ms-playwright`
+- **Need help?** Contact support at GitHub with error details (see Support section below)
 
 ### Application Crashes
 
