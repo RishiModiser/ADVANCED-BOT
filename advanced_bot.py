@@ -24479,25 +24479,150 @@ def check_browser_installation():
     return False
 
 
+def auto_install_browser(parent=None):
+    """Automatically install Playwright Chromium browser with progress dialog."""
+    from PySide6.QtWidgets import QProgressDialog
+    from PySide6.QtCore import QTimer
+    
+    # Create progress dialog
+    progress = QProgressDialog(
+        "Downloading Playwright Chromium browser...\n\n"
+        "This is a one-time download (~200 MB).\n"
+        "Please wait, this may take 1-2 minutes...",
+        None,  # No cancel button - must complete
+        0, 0,  # Indeterminate progress
+        parent
+    )
+    progress.setWindowTitle('First Time Setup')
+    progress.setWindowModality(Qt.ApplicationModal)
+    progress.setMinimumDuration(0)
+    progress.setValue(0)
+    progress.show()
+    
+    # Force UI update
+    QApplication.processEvents()
+    
+    success = False
+    error_message = ""
+    
+    try:
+        # Run playwright install
+        process = subprocess.Popen(
+            ['playwright', 'install', 'chromium'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
+        )
+        
+        # Read output line by line
+        for line in process.stdout:
+            # Update progress dialog with current line
+            if 'Downloading' in line or 'Installing' in line or '%' in line:
+                progress.setLabelText(
+                    f"Downloading Playwright Chromium browser...\n\n"
+                    f"{line.strip()}\n\n"
+                    f"Please wait, this may take 1-2 minutes..."
+                )
+                QApplication.processEvents()
+        
+        # Wait for completion
+        process.wait()
+        
+        if process.returncode == 0:
+            success = True
+        else:
+            error_message = f"Installation failed with exit code {process.returncode}"
+    
+    except FileNotFoundError:
+        error_message = "Playwright command not found. Please ensure Playwright is installed."
+    except Exception as e:
+        error_message = f"Installation error: {str(e)}"
+    
+    progress.close()
+    
+    return success, error_message
+
+
 def main():
     """Main application entry point."""
     app = QApplication(sys.argv)
     
     # Check browser installation
     if not check_browser_installation():
+        # Ask user if they want to auto-install
         msg = QMessageBox()
-        msg.setIcon(QMessageBox.Warning)
-        msg.setWindowTitle('Browser Not Installed')
-        msg.setText('Playwright Chromium browser is not installed!')
+        msg.setIcon(QMessageBox.Information)
+        msg.setWindowTitle('First Time Setup')
+        msg.setText('Playwright Chromium browser is not installed.')
         msg.setInformativeText(
-            'Please install it by running one of these commands in your terminal:\n\n'
-            '  playwright install chromium\n'
-            '  python -m playwright install chromium\n\n'
-            'After installation, restart the application.'
+            'This is required for the bot to work.\n\n'
+            'Would you like to download and install it automatically?\n'
+            '(~200 MB download, takes 1-2 minutes)\n\n'
+            'Click "Yes" to install now, or "No" to install manually later.'
         )
-        msg.setStandardButtons(QMessageBox.Ok)
-        msg.exec()
-        return
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.setDefaultButton(QMessageBox.Yes)
+        
+        response = msg.exec()
+        
+        if response == QMessageBox.Yes:
+            # Auto-install browsers
+            success, error_msg = auto_install_browser()
+            
+            if success:
+                # Show success message
+                success_msg = QMessageBox()
+                success_msg.setIcon(QMessageBox.Information)
+                success_msg.setWindowTitle('Setup Complete')
+                success_msg.setText('Browser installation successful!')
+                success_msg.setInformativeText(
+                    'The Playwright Chromium browser has been installed.\n\n'
+                    'The application will now start.\n\n'
+                    'Future launches will be instant!'
+                )
+                success_msg.setStandardButtons(QMessageBox.Ok)
+                success_msg.exec()
+            else:
+                # Show error and manual instructions
+                error_dlg = QMessageBox()
+                error_dlg.setIcon(QMessageBox.Critical)
+                error_dlg.setWindowTitle('Installation Failed')
+                error_dlg.setText('Automatic browser installation failed!')
+                error_dlg.setInformativeText(
+                    f'Error: {error_msg}\n\n'
+                    'Please install manually by running:\n\n'
+                    '  playwright install chromium\n'
+                    '  python -m playwright install chromium\n\n'
+                    'After installation, restart the application.'
+                )
+                error_dlg.setStandardButtons(QMessageBox.Ok)
+                error_dlg.exec()
+                return
+        else:
+            # User chose not to install
+            manual_msg = QMessageBox()
+            manual_msg.setIcon(QMessageBox.Information)
+            manual_msg.setWindowTitle('Manual Installation Required')
+            manual_msg.setText('Please install the browser manually.')
+            manual_msg.setInformativeText(
+                'To install, run one of these commands:\n\n'
+                '  playwright install chromium\n'
+                '  python -m playwright install chromium\n\n'
+                'After installation, restart the application.'
+            )
+            manual_msg.setStandardButtons(QMessageBox.Ok)
+            manual_msg.exec()
+            return
+    
+    # Set application style
+    app.setStyle('Fusion')
+    
+    # Create and show main window
+    window = AppGUI()
+    window.show()
+    
+    sys.exit(app.exec())
     
     # Set application style
     app.setStyle('Fusion')

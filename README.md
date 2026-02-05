@@ -1,5 +1,27 @@
 # Humanex Version 5 - Advanced Simulation Traffic
 
+---
+
+## 🎉 **NEW: TRUE 1-CLICK STANDALONE - NO INSTALLATION NEEDED!**
+
+### 🚀 Quick Start (For End Users)
+
+**Want to run the bot with just ONE CLICK? No Python, no installation, no setup?**
+
+#### For Windows Users:
+1. Double-click: **`ONE_CLICK_BUILD.bat`** (first time only - builds the executable)
+2. Then double-click: **`dist/ADVANCED-BOT.exe`** (your standalone bot!)
+
+#### For Linux/Mac Users:
+1. Run: **`./ONE_CLICK_BUILD.sh`** (first time only - builds the executable)
+2. Then run: **`./dist/ADVANCED-BOT`** (your standalone bot!)
+
+**📖 Complete Guide:** See [QUICK_START_STANDALONE.md](QUICK_START_STANDALONE.md) for full instructions.
+
+✅ **After building once, you can distribute the executable to ANY computer - no Python needed!**
+
+---
+
 ## 🎯 Overview
 
 Humanex Version 5 is an enterprise-grade RPA (Robotic Process Automation) system designed for advanced traffic simulation and behavioral analysis. It provides sophisticated tools for:
