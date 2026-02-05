@@ -21387,13 +21387,15 @@ class AutomationWorker(QObject):
             
             try:
                 # Start all concurrent browsers immediately (no delay)
+                self.emit_log(f'Spawning {num_concurrent} concurrent browser tasks...')
                 for i in range(num_concurrent):
                     concurrent_counter += 1
                     task = asyncio.create_task(run_rpa_concurrent(concurrent_counter))
                     self.active_tasks.append(task)  # Track in worker's task list
                     # No delay - start all browsers immediately to maintain N concurrent
                 
-                # Wait for all concurrent browsers to complete
+                # Verify all tasks were created
+                self.emit_log(f'✓ Created {len(self.active_tasks)} concurrent browser tasks')
                 self.emit_log(f'✓ All {num_concurrent} concurrent browsers started and running')
                 self.emit_log('Browsers will automatically restart if closed. Press STOP to end automation.')
                 await asyncio.gather(*self.active_tasks, return_exceptions=True)
@@ -21565,6 +21567,9 @@ class AutomationWorker(QObject):
             
             # Keep spawning workers until stopped or proxies exhausted
             try:
+                # Initial spawn - start all N workers immediately
+                self.emit_log(f'Spawning initial batch of {num_concurrent} workers...')
+                initial_spawn_count = 0
                 while self.running:
                     # Check if we should continue
                     if proxy_manager.proxy_enabled:
@@ -21578,6 +21583,7 @@ class AutomationWorker(QObject):
                     self.active_tasks = active_workers  # Keep tracking updated
                     
                     # Spawn new workers immediately if below concurrent limit
+                    spawned_this_round = 0
                     while len(active_workers) < num_concurrent and self.running:
                         # Check proxies again before spawning
                         if proxy_manager.proxy_enabled and proxy_manager.get_remaining_proxies() <= 0:
@@ -21586,7 +21592,13 @@ class AutomationWorker(QObject):
                         task = asyncio.create_task(worker_task())
                         active_workers.append(task)
                         self.active_tasks.append(task)  # Track in worker's task list
+                        spawned_this_round += 1
+                        initial_spawn_count += 1
                         # No delay - instances should start immediately
+                    
+                    # Log initial spawn completion
+                    if spawned_this_round > 0 and initial_spawn_count <= num_concurrent:
+                        self.emit_log(f'✓ Spawned {initial_spawn_count}/{num_concurrent} workers (Active: {len(active_workers)})')
                     
                     # If no active workers and no more proxies/work to do, break
                     if not active_workers:
