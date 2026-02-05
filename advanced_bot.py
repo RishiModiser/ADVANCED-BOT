@@ -21436,13 +21436,16 @@ class AutomationWorker(QObject):
                 self.emit_log(f'[Concurrent {concurrent_num}] Concurrent browser stopped')
             
             try:
-                # Start all concurrent browsers immediately (no delay)
+                # Start all concurrent browsers with small stagger to avoid Playwright connection bottleneck
                 self.emit_log(f'Spawning {num_concurrent} concurrent browser tasks...')
                 for i in range(num_concurrent):
                     concurrent_counter += 1
                     task = asyncio.create_task(run_rpa_concurrent(concurrent_counter))
                     self.active_tasks.append(task)  # Track in worker's task list
-                    # No delay - start all browsers immediately to maintain N concurrent
+                    # Small stagger (0.2s) between launches to avoid overwhelming Playwright connection
+                    # Playwright's connection can only handle ~5 concurrent launch_persistent_context calls
+                    if i < num_concurrent - 1:  # Don't delay after the last one
+                        await asyncio.sleep(0.2)
                 
                 # Verify all tasks were created
                 self.emit_log(f'✓ Created {len(self.active_tasks)} concurrent browser tasks')
@@ -21632,7 +21635,7 @@ class AutomationWorker(QObject):
                     active_workers = [w for w in active_workers if not w.done()]
                     self.active_tasks = active_workers  # Keep tracking updated
                     
-                    # Spawn new workers immediately if below concurrent limit
+                    # Spawn new workers with small stagger to avoid Playwright connection bottleneck
                     spawned_this_round = 0
                     while len(active_workers) < num_concurrent and self.running:
                         # Check proxies again before spawning
@@ -21644,7 +21647,10 @@ class AutomationWorker(QObject):
                         self.active_tasks.append(task)  # Track in worker's task list
                         spawned_this_round += 1
                         initial_spawn_count += 1
-                        # No delay - instances should start immediately
+                        # Small stagger (0.2s) to avoid overwhelming Playwright connection
+                        # Playwright's connection can only handle ~5 concurrent launch_persistent_context calls
+                        if len(active_workers) < num_concurrent:  # Don't delay if we've reached the limit
+                            await asyncio.sleep(0.2)
                     
                     # Log initial spawn completion
                     if spawned_this_round > 0 and initial_spawn_count <= num_concurrent:
