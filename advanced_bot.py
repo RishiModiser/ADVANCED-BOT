@@ -17027,6 +17027,9 @@ class LogManager:
         
         log_file = log_dir / f'automation_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
         
+        # Clean up old log files (keep only 10 most recent)
+        self._cleanup_old_logs(max_log_files=10)
+        
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s [%(levelname)s] %(message)s',
@@ -17036,6 +17039,40 @@ class LogManager:
             ]
         )
         self.file_logger = logging.getLogger(__name__)
+    
+    def _cleanup_old_logs(self, max_log_files: int = 10):
+        """Keep only the most recent N log files, delete older ones.
+        
+        Args:
+            max_log_files: Maximum number of log files to keep (default: 10)
+        """
+        try:
+            log_dir = Path('logs')
+            if not log_dir.exists():
+                return
+            
+            # Get all log files sorted by modification time (newest first)
+            log_files = sorted(
+                log_dir.glob('automation_*.log'),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True
+            )
+            
+            # Delete files beyond the limit
+            if len(log_files) > max_log_files:
+                files_to_delete = log_files[max_log_files:]
+                for old_log in files_to_delete:
+                    try:
+                        old_log.unlink()
+                        print(f"Deleted old log file: {old_log.name}")
+                    except Exception as e:
+                        print(f"Failed to delete {old_log.name}: {e}")
+                
+                deleted_count = len(files_to_delete)
+                if deleted_count > 0:
+                    print(f"✓ Cleaned up {deleted_count} old log file(s), keeping {max_log_files} most recent")
+        except Exception as e:
+            print(f"Log cleanup error: {e}")
     
     def log(self, message: str, level: str = 'INFO'):
         """Add a log entry."""
