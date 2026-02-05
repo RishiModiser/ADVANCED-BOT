@@ -17064,6 +17064,71 @@ class LogManager:
 
 
 # ============================================================================
+# RESOURCE MONITOR
+# ============================================================================
+
+class ResourceMonitor:
+    """Monitors system resources and prevents exhaustion under heavy load."""
+    
+    def __init__(self, log_manager: LogManager):
+        self.log_manager = log_manager
+        self.max_contexts = 100  # Maximum browser contexts allowed
+        self.context_count = 0
+        self.failed_count = 0
+        self.max_failures = 50  # Circuit breaker threshold
+        self._last_warning_time = 0
+        self._warning_interval = 30  # Warn every 30 seconds max
+    
+    def increment_context_count(self):
+        """Increment active context count and check limits."""
+        self.context_count += 1
+        
+        # Warn if approaching limits (but not too frequently)
+        current_time = time.time()
+        if self.context_count > self.max_contexts * 0.8:
+            if current_time - self._last_warning_time > self._warning_interval:
+                self.log_manager.log(
+                    f'⚠️ High context count: {self.context_count}/{self.max_contexts}',
+                    'WARNING'
+                )
+                self._last_warning_time = current_time
+    
+    def decrement_context_count(self):
+        """Decrement active context count."""
+        if self.context_count > 0:
+            self.context_count -= 1
+    
+    def record_failure(self):
+        """Record a failure and check circuit breaker."""
+        self.failed_count += 1
+        
+        if self.failed_count >= self.max_failures:
+            self.log_manager.log(
+                f'⛔ Circuit breaker triggered: {self.failed_count} failures',
+                'ERROR'
+            )
+            return True  # Circuit breaker activated
+        
+        return False  # Continue operation
+    
+    def reset_failures(self):
+        """Reset failure counter after successful operations."""
+        if self.failed_count > 0:
+            self.failed_count = max(0, self.failed_count - 1)
+    
+    def check_resource_limits(self) -> bool:
+        """Check if resource limits are exceeded."""
+        if self.context_count >= self.max_contexts:
+            self.log_manager.log(
+                f'⛔ Context limit reached: {self.context_count}/{self.max_contexts}',
+                'ERROR'
+            )
+            return False
+        
+        return True
+
+
+# ============================================================================
 # FINGERPRINT MANAGER
 # ============================================================================
 
@@ -17278,7 +17343,7 @@ class HumanBehavior:
                     x = random.randint(100, viewport_width - 100)
                     y = random.randint(100, viewport_height - 100)
                     await page.mouse.move(x, y)
-                except:
+                except Exception:
                     pass
                 
                 # Use scroll behavior based on scroll_type
@@ -18295,7 +18360,7 @@ class ScriptExecutor:
                             if selector:
                                 try:
                                     condition_met = await self.current_page.is_visible(selector, timeout=2000)
-                                except:
+                                except Exception:
                                     condition_met = False
                             
                             if condition_met:
@@ -18704,7 +18769,7 @@ class ProxyGeolocation:
                 return 'Asia'
             else:
                 return 'Other'
-        except:
+        except Exception:
             return 'Unknown'
     
     def _get_country_code(self, country: str) -> str:
@@ -18865,6 +18930,9 @@ class BrowserManager:
         self.active_contexts = []  # Track all active persistent contexts for cleanup
         self.imported_useragents = []  # Store imported useragents
         self.imported_cookies = []  # Store imported cookies
+        self._context_semaphore = None  # Will be initialized in initialize()
+        self._max_concurrent_contexts = 50  # Limit concurrent browser context creation
+        self.resource_monitor = ResourceMonitor(log_manager)  # Add resource monitoring
     
     async def initialize(self):
         """Initialize Playwright only (no browser launch with persistent contexts)."""
@@ -18872,7 +18940,9 @@ class BrowserManager:
             self.log_manager.log('━━━ Browser Initialization Started ━━━')
             self.log_manager.log('Initializing Playwright...')
             self.playwright = await async_playwright().start()
+            self._context_semaphore = asyncio.Semaphore(self._max_concurrent_contexts)
             self.log_manager.log('✓ Playwright started successfully')
+            self.log_manager.log(f'✓ Context limiter initialized (max: {self._max_concurrent_contexts} concurrent)')
             self.log_manager.log('━━━ Browser Initialization Complete ━━━')
             
             return True
@@ -18891,29 +18961,40 @@ class BrowserManager:
         CRITICAL: Fetches proxy location FIRST, then generates fingerprint matching proxy country.
         This ensures browser location matches proxy location (USA proxy → USA fingerprint).
         """
-        try:
-            if not self.playwright:
-                success = await self.initialize()
-                if not success or not self.playwright:
-                    self.log_manager.log('Cannot create context: Playwright initialization failed', 'ERROR')
-                    return None
-            
-            # CRITICAL FIX: Fetch proxy BEFORE generating fingerprint
-            # This allows fingerprint to match proxy location
-            proxy_config = None
-            proxy_location = None
-            if use_proxy:
-                proxy_config = self.proxy_manager.get_proxy_config()
-                if proxy_config:
-                    # Fetch proxy geolocation FIRST
-                    geo_manager = ProxyGeolocation()
-                    proxy_location = await geo_manager.fetch_location(proxy_config)
-                    
-                    # Validate proxy_location has required keys
-                    if proxy_location and 'country' in proxy_location and 'ip' in proxy_location:
-                        server = proxy_config.get('server', 'unknown')
-                        self.log_manager.log(f'✓ Proxy selected: {server}')
-                        self.log_manager.log(f'✓ Proxy Location: {proxy_location["country"]} ({proxy_location.get("countryCode", "?")}), IP: {proxy_location["ip"]}')
+        # Check resource limits before attempting to create context
+        if not self.resource_monitor.check_resource_limits():
+            self.log_manager.log('Cannot create context: Resource limits exceeded', 'ERROR')
+            return None
+        
+        # Use semaphore to limit concurrent context creation
+        async with self._context_semaphore:
+            try:
+                if not self.playwright:
+                    success = await self.initialize()
+                    if not success or not self.playwright:
+                        self.log_manager.log('Cannot create context: Playwright initialization failed', 'ERROR')
+                        self.resource_monitor.record_failure()
+                        return None
+                
+                # Increment context counter for monitoring
+                self.resource_monitor.increment_context_count()
+                
+                # CRITICAL FIX: Fetch proxy BEFORE generating fingerprint
+                # This allows fingerprint to match proxy location
+                proxy_config = None
+                proxy_location = None
+                if use_proxy:
+                    proxy_config = self.proxy_manager.get_proxy_config()
+                    if proxy_config:
+                        # Fetch proxy geolocation FIRST
+                        geo_manager = ProxyGeolocation()
+                        proxy_location = await geo_manager.fetch_location(proxy_config)
+                        
+                        # Validate proxy_location has required keys
+                        if proxy_location and 'country' in proxy_location and 'ip' in proxy_location:
+                            server = proxy_config.get('server', 'unknown')
+                            self.log_manager.log(f'✓ Proxy selected: {server}')
+                            self.log_manager.log(f'✓ Proxy Location: {proxy_location["country"]} ({proxy_location.get("countryCode", "?")}), IP: {proxy_location["ip"]}')
                         # Log timezone if available
                         if 'timezone' in proxy_location:
                             self.log_manager.log(f'✓ Proxy Timezone: {proxy_location["timezone"]}')
@@ -18921,129 +19002,135 @@ class BrowserManager:
                         # Invalid proxy location data
                         self.log_manager.log('⚠ Proxy location data incomplete, using without geo-matching', 'WARNING')
                         proxy_location = None
-            
-            # Generate fingerprint AFTER getting proxy location
-            # Pass proxy_location so fingerprint matches proxy country
-            self.fingerprint_manager.platform = platform
-            fingerprint = self.fingerprint_manager.generate_fingerprint(proxy_location)
-            
-            # Use imported useragent if available, otherwise use generated one
-            if self.imported_useragents:
-                user_agent = random.choice(self.imported_useragents)
-                self.log_manager.log(f'✓ Using imported user agent')
-            else:
-                user_agent = fingerprint['user_agent']
-            
-            # Create unique profile directory
-            user_data_dir = Path(f"profiles/profile_{random.randint(1000, 9999)}")
-            user_data_dir.mkdir(parents=True, exist_ok=True)
-            
-            self.log_manager.log(f'━━━ Creating Browser Persistent Context ━━━')
-            self.log_manager.log(f'Platform: {platform}')
-            self.log_manager.log(f'Profile: {user_data_dir}')
-            self.log_manager.log(f'User Agent: {user_agent[:60]}...')
-            self.log_manager.log(f'Timezone: {fingerprint["timezone"]}, Locale: {fingerprint["locale"]}')
-            if proxy_location:
-                self.log_manager.log(f'✓ Fingerprint MATCHED to proxy location: {proxy_location["country"]}')
-            
-            # Build context options for launch_persistent_context
-            context_options = {
-                'user_agent': user_agent,
-                'viewport': fingerprint['viewport'],
-                'locale': fingerprint['locale'],
-                'timezone_id': fingerprint['timezone'],
-                'headless': False,  # ALWAYS VISIBLE - headless mode removed completely
-                'channel': 'chrome',  # Use real Chrome instead of Chromium
-                'ignore_default_args': ['--enable-automation'],  # Remove automation flag
-                'args': [
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-dev-shm-usage',
-                    '--no-sandbox',
-                    '--disable-infobars',
-                    '--test-type',  # Suppress warning about --no-sandbox flag
-                    '--disable-automation',
-                    '--disable-web-security',
-                    '--disable-features=IsolateOrigins,site-per-process'
-                ]
-            }
-            
-            # Add proxy if configured
-            if proxy_config:
-                context_options['proxy'] = proxy_config
-            else:
-                self.log_manager.log('No proxy configured, using direct connection')
-            
-            # Try to create persistent context with proxy
-            try:
-                context = await self.playwright.chromium.launch_persistent_context(
-                    user_data_dir=str(user_data_dir),
-                    **context_options
-                )
-                self.active_contexts.append(context)
-            except Exception as proxy_error:
-                # Check if error is proxy-related
-                error_str = str(proxy_error).lower()
-                proxy_error_indicators = [
-                    'proxy', 'econnrefused', 'etimedout', 'enotfound',
-                    'connection refused', 'timeout', 'unreachable'
-                ]
-                is_proxy_error = any(indicator in error_str for indicator in proxy_error_indicators)
                 
-                if is_proxy_error and proxy_config:
-                    # Log proxy-specific error
-                    self.log_manager.log(f'⚠ Proxy connection failed: {proxy_error}', 'WARNING')
-                    self.log_manager.log(f'⚠ Proxy server: {proxy_config.get("server", "unknown")}', 'WARNING')
-                    self.log_manager.log('⚠ Retrying without proxy...', 'WARNING')
-                    
-                    # Mark proxy as failed
-                    self.proxy_manager.mark_proxy_failed(proxy_config)
-                    
-                    # Retry without proxy (remove proxy from options)
-                    context_options.pop('proxy', None)
+                # Generate fingerprint AFTER getting proxy location
+                # Pass proxy_location so fingerprint matches proxy country
+                self.fingerprint_manager.platform = platform
+                fingerprint = self.fingerprint_manager.generate_fingerprint(proxy_location)
+                
+                # Use imported useragent if available, otherwise use generated one
+                if self.imported_useragents:
+                    user_agent = random.choice(self.imported_useragents)
+                    self.log_manager.log(f'✓ Using imported user agent')
+                else:
+                    user_agent = fingerprint['user_agent']
+                
+                # Create unique profile directory
+                user_data_dir = Path(f"profiles/profile_{random.randint(1000, 9999)}")
+                user_data_dir.mkdir(parents=True, exist_ok=True)
+                
+                self.log_manager.log(f'━━━ Creating Browser Persistent Context ━━━')
+                self.log_manager.log(f'Platform: {platform}')
+                self.log_manager.log(f'Profile: {user_data_dir}')
+                self.log_manager.log(f'User Agent: {user_agent[:60]}...')
+                self.log_manager.log(f'Timezone: {fingerprint["timezone"]}, Locale: {fingerprint["locale"]}')
+                if proxy_location:
+                    self.log_manager.log(f'✓ Fingerprint MATCHED to proxy location: {proxy_location["country"]}')
+                
+                # Build context options for launch_persistent_context
+                context_options = {
+                    'user_agent': user_agent,
+                    'viewport': fingerprint['viewport'],
+                    'locale': fingerprint['locale'],
+                    'timezone_id': fingerprint['timezone'],
+                    'headless': False,  # ALWAYS VISIBLE - headless mode removed completely
+                    'channel': 'chrome',  # Use real Chrome instead of Chromium
+                    'ignore_default_args': ['--enable-automation'],  # Remove automation flag
+                    'args': [
+                        '--disable-blink-features=AutomationControlled',
+                        '--disable-dev-shm-usage',
+                        '--no-sandbox',
+                        '--disable-infobars',
+                        '--test-type',  # Suppress warning about --no-sandbox flag
+                        '--disable-automation',
+                        '--disable-web-security',
+                        '--disable-features=IsolateOrigins,site-per-process'
+                    ]
+                }
+                
+                # Add proxy if configured
+                if proxy_config:
+                    context_options['proxy'] = proxy_config
+                else:
+                    self.log_manager.log('No proxy configured, using direct connection')
+                
+                # Try to create persistent context with proxy
+                try:
                     context = await self.playwright.chromium.launch_persistent_context(
                         user_data_dir=str(user_data_dir),
                         **context_options
                     )
                     self.active_contexts.append(context)
-                    self.log_manager.log('✓ Browser context created with direct connection (proxy bypassed)')
-                    proxy_location = None  # Clear proxy location since not using proxy
-                else:
-                    # Re-raise if not a proxy error
-                    raise
-            
-            # Inject navigator properties via init script
-            await context.add_init_script(f"""
-                Object.defineProperty(navigator, 'hardwareConcurrency', {{
-                    get: () => {fingerprint['hardware_concurrency']}
-                }});
-                Object.defineProperty(navigator, 'webdriver', {{
-                    get: () => undefined
-                }});
-            """)
-            
-            # Store proxy location for later use (e.g., displaying in browser)
-            context._proxy_location = proxy_location
-            
-            # Inject imported cookies if available
-            if self.imported_cookies:
-                try:
-                    await context.add_cookies(self.imported_cookies)
-                    self.log_manager.log(f'✓ Injected {len(self.imported_cookies)} imported cookies')
-                except Exception as cookie_error:
-                    self.log_manager.log(f'⚠ Failed to inject cookies: {cookie_error}', 'WARNING')
-            
-            self.log_manager.log('✓ Browser persistent context created successfully')
-            self.log_manager.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-            return context
-            
-        except Exception as e:
-            self.log_manager.log(f'Context creation error: {e}', 'ERROR')
-            self.log_manager.log('This may be due to:', 'ERROR')
-            self.log_manager.log('  - Invalid proxy configuration', 'ERROR')
-            self.log_manager.log('  - Network connectivity issues', 'ERROR')
-            self.log_manager.log('  - Chrome not installed (required for channel="chrome")', 'ERROR')
-            self.log_manager.log('  - Browser crash or resource exhaustion', 'ERROR')
-            return None
+                except Exception as proxy_error:
+                    # Check if error is proxy-related
+                    error_str = str(proxy_error).lower()
+                    proxy_error_indicators = [
+                        'proxy', 'econnrefused', 'etimedout', 'enotfound',
+                        'connection refused', 'timeout', 'unreachable'
+                    ]
+                    is_proxy_error = any(indicator in error_str for indicator in proxy_error_indicators)
+                    
+                    if is_proxy_error and proxy_config:
+                        # Log proxy-specific error
+                        self.log_manager.log(f'⚠ Proxy connection failed: {proxy_error}', 'WARNING')
+                        self.log_manager.log(f'⚠ Proxy server: {proxy_config.get("server", "unknown")}', 'WARNING')
+                        self.log_manager.log('⚠ Retrying without proxy...', 'WARNING')
+                        
+                        # Mark proxy as failed
+                        self.proxy_manager.mark_proxy_failed(proxy_config)
+                        
+                        # Retry without proxy (remove proxy from options)
+                        context_options.pop('proxy', None)
+                        context = await self.playwright.chromium.launch_persistent_context(
+                            user_data_dir=str(user_data_dir),
+                            **context_options
+                        )
+                        self.active_contexts.append(context)
+                        self.log_manager.log('✓ Browser context created with direct connection (proxy bypassed)')
+                        proxy_location = None  # Clear proxy location since not using proxy
+                    else:
+                        # Re-raise if not a proxy error
+                        raise
+                
+                # Inject navigator properties via init script
+                await context.add_init_script(f"""
+                    Object.defineProperty(navigator, 'hardwareConcurrency', {{
+                        get: () => {fingerprint['hardware_concurrency']}
+                    }});
+                    Object.defineProperty(navigator, 'webdriver', {{
+                        get: () => undefined
+                    }});
+                """)
+                
+                # Store proxy location for later use (e.g., displaying in browser)
+                context._proxy_location = proxy_location
+                
+                # Inject imported cookies if available
+                if self.imported_cookies:
+                    try:
+                        await context.add_cookies(self.imported_cookies)
+                        self.log_manager.log(f'✓ Injected {len(self.imported_cookies)} imported cookies')
+                    except Exception as cookie_error:
+                        self.log_manager.log(f'⚠ Failed to inject cookies: {cookie_error}', 'WARNING')
+                
+                # Record successful context creation
+                self.resource_monitor.reset_failures()
+                
+                self.log_manager.log('✓ Browser persistent context created successfully')
+                self.log_manager.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+                return context
+                
+            except Exception as e:
+                # Decrement counter on failure
+                self.resource_monitor.decrement_context_count()
+                self.resource_monitor.record_failure()
+                self.log_manager.log(f'Context creation error: {e}', 'ERROR')
+                self.log_manager.log('This may be due to:', 'ERROR')
+                self.log_manager.log('  - Invalid proxy configuration', 'ERROR')
+                self.log_manager.log('  - Network connectivity issues', 'ERROR')
+                self.log_manager.log('  - Chrome not installed (required for channel="chrome")', 'ERROR')
+                self.log_manager.log('  - Browser crash or resource exhaustion', 'ERROR')
+                return None
     
     async def close(self):
         """Close all browser contexts and cleanup."""
@@ -19052,6 +19139,8 @@ class BrowserManager:
             for context in self.active_contexts:
                 try:
                     await context.close()
+                    # Decrement context counter for each closed context
+                    self.resource_monitor.decrement_context_count()
                 except Exception:
                     pass  # Ignore errors during cleanup
             self.active_contexts.clear()
@@ -19086,6 +19175,7 @@ class BrowserManager:
             
             # Create tasks to close all contexts concurrently (don't wait for each)
             close_tasks = []
+            context_count = len(self.active_contexts)
             for context in self.active_contexts:
                 try:
                     # Close each context without waiting
@@ -19106,6 +19196,10 @@ class BrowserManager:
                     for task in close_tasks:
                         if not task.done():
                             task.cancel()
+            
+            # Decrement context counter for all closed contexts
+            for _ in range(context_count):
+                self.resource_monitor.decrement_context_count()
             
             self.active_contexts.clear()
             
@@ -19371,7 +19465,7 @@ class AutomationWorker(QObject):
                         captcha_found = True
                         self.emit_log(f'⚠️ CAPTCHA detected with selector: {selector}')
                         break
-                except:
+                except Exception:
                     continue
             
             if not captcha_found:
@@ -19382,7 +19476,7 @@ class AutomationWorker(QObject):
                     if any(keyword in page_content.lower() for keyword in captcha_keywords):
                         captcha_found = True
                         self.emit_log('⚠️ CAPTCHA detected in page content')
-                except:
+                except Exception:
                     pass
             
             if captcha_found:
@@ -19434,7 +19528,7 @@ class AutomationWorker(QObject):
                             if element and await element.is_visible():
                                 still_present = True
                                 break
-                        except:
+                        except Exception:
                             continue
                     
                     if not still_present:
@@ -19501,7 +19595,7 @@ class AutomationWorker(QObject):
             try:
                 # Try with networkidle first (more stable, waits for network to be idle)
                 await page.goto(engine_config['url'], wait_until='networkidle', timeout=60000)
-            except:
+            except Exception:
                 # Fallback to domcontentloaded if networkidle fails
                 self.emit_log(f'Retrying with domcontentloaded...')
                 await page.goto(engine_config['url'], wait_until='domcontentloaded', timeout=60000)
@@ -19526,10 +19620,10 @@ class AutomationWorker(QObject):
                             # Wait for any navigation that might occur after consent
                             try:
                                 await page.wait_for_load_state('networkidle', timeout=10000)
-                            except:
+                            except Exception:
                                 await asyncio.sleep(2)
                             break
-                    except:
+                    except Exception:
                         continue
             except Exception as e:
                 self.emit_log(f'No consent needed or error: {e}', 'INFO')
@@ -19578,7 +19672,7 @@ class AutomationWorker(QObject):
                             search_selector = selector
                             self.emit_log(f'✓ Found search box after reload: {selector}')
                             break
-                        except:
+                        except Exception:
                             continue
                 except Exception as reload_error:
                     self.emit_log(f'Reload failed: {reload_error}', 'ERROR')
@@ -19602,11 +19696,11 @@ class AutomationWorker(QObject):
             try:
                 # Wait for network to be idle after search submission
                 await page.wait_for_load_state('networkidle', timeout=30000)
-            except:
+            except Exception:
                 # Fallback to domcontentloaded if networkidle times out
                 try:
                     await page.wait_for_load_state('domcontentloaded', timeout=15000)
-                except:
+                except Exception:
                     pass
             
             # Additional wait for page to stabilize
@@ -19621,7 +19715,7 @@ class AutomationWorker(QObject):
                     results_loaded = True
                     self.emit_log(f'✓ Results loaded: {selector}')
                     break
-                except:
+                except Exception:
                     continue
             
             if not results_loaded:
@@ -19640,7 +19734,7 @@ class AutomationWorker(QObject):
                     try:
                         await page.wait_for_selector(selector, timeout=10000)
                         break
-                    except:
+                    except Exception:
                         continue
             
             # Scroll results page to simulate reading
@@ -19680,7 +19774,7 @@ class AutomationWorker(QObject):
                             # 3. We also require specific paths (/cbclk or RU=) which are unique to Yahoo redirects
                             # 4. False positives (non-Yahoo URLs detected as Yahoo) would just skip extraction, causing no harm
                             is_yahoo_redirect = ('yahoo.com' in parsed_href.netloc) and ('/cbclk' in parsed_href.path or '/RU=' in href or 'RU=' in href)
-                        except:
+                        except Exception:
                             is_bing_redirect = False
                             is_yahoo_redirect = False
                         
@@ -19690,7 +19784,7 @@ class AutomationWorker(QObject):
                             result_links.append(link)
                             if len(result_links) >= 10:  # Limit to top 10 results
                                 break
-                except:
+                except Exception:
                     continue
             
             self.emit_log(f'Found {len(result_links)} valid search results to scan')
@@ -19721,7 +19815,7 @@ class AutomationWorker(QObject):
                         parsed_href = urlparse(href)
                         is_bing_redirect = (parsed_href.netloc.endswith('bing.com') or parsed_href.netloc == 'bing.com') and '/ck/a' in parsed_href.path
                         is_yahoo_redirect = ('yahoo.com' in parsed_href.netloc) and ('/cbclk' in parsed_href.path or 'RU=' in href)
-                    except:
+                    except Exception:
                         is_bing_redirect = False
                         is_yahoo_redirect = False
                     
@@ -19827,7 +19921,7 @@ class AutomationWorker(QObject):
                         await found_link.click(modifiers=['Control'])
                         self.emit_log('✓ Ctrl+Click executed - opening in new tab')
                         await asyncio.sleep(random.uniform(2, 3))
-                    except:
+                    except Exception:
                         # Method 2: Fallback - create new page and navigate directly
                         self.emit_log('Ctrl+Click failed, using direct new tab method...')
                         new_page = await context.new_page()
@@ -19857,7 +19951,7 @@ class AutomationWorker(QObject):
                         # Wait for the new page to load
                         try:
                             await new_page.wait_for_load_state('domcontentloaded', timeout=30000)
-                        except:
+                        except Exception:
                             pass
                         
                         await asyncio.sleep(random.uniform(2, 3))
@@ -19879,7 +19973,7 @@ class AutomationWorker(QObject):
                         # If new tab didn't open, treat it as same-tab navigation
                         try:
                             await page.wait_for_load_state('domcontentloaded', timeout=30000)
-                        except:
+                        except Exception:
                             pass
                         
                         await asyncio.sleep(random.uniform(3, 5))
@@ -19910,7 +20004,7 @@ class AutomationWorker(QObject):
                         try:
                             temp_consent_manager = ConsentManager(self.log_manager)
                             await temp_consent_manager.handle_consents(new_page, max_retries=2)
-                        except:
+                        except Exception:
                             pass
                         
                         self.emit_log('✓ Fallback navigation successful in new tab')
@@ -19948,7 +20042,7 @@ class AutomationWorker(QObject):
                     self.emit_log(f'Failed to navigate directly: {nav_error}', 'ERROR')
                     try:
                         await new_page.close()
-                    except:
+                    except Exception:
                         pass
                     await page.close()  # Close the search page if navigation fails
                     return None
@@ -19970,7 +20064,7 @@ class AutomationWorker(QObject):
                 try:
                     temp_consent_manager = ConsentManager(self.log_manager)
                     await temp_consent_manager.handle_consents(new_page, max_retries=2)
-                except:
+                except Exception:
                     pass
                 
                 self.emit_log('✓ Exception fallback successful - opened in new tab')
@@ -19978,14 +20072,14 @@ class AutomationWorker(QObject):
                 # Close the original page
                 try:
                     await page.close()
-                except:
+                except Exception:
                     pass
                 
                 return new_page  # Return the new page object for further use
-            except:
+            except Exception:
                 try:
                     await page.close()
-                except:
+                except Exception:
                     pass
                 return None
     
@@ -20016,7 +20110,7 @@ class AutomationWorker(QObject):
                             y = random.randint(100, viewport_size['height'] - 100)
                             await page.mouse.move(x, y)
                             await asyncio.sleep(random.uniform(0.3, 1.0))
-                except:
+                except Exception:
                     pass
                 
                 # Try to click a link if extra pages enabled
@@ -20043,7 +20137,7 @@ class AutomationWorker(QObject):
                                 links.extend(found_links)
                                 if len(links) >= 20:
                                     break
-                            except:
+                            except Exception:
                                 continue
                         
                         if links and len(links) > 0:
@@ -20064,7 +20158,7 @@ class AutomationWorker(QObject):
                                             text = await link.inner_text()
                                             if text and len(text.strip()) > 5:
                                                 valid_links.append(link)
-                                except:
+                                except Exception:
                                     continue
                             
                             if valid_links:
@@ -20382,7 +20476,7 @@ class AutomationWorker(QObject):
                                 href = await elem.get_attribute('href')
                                 if href and len(href) > 5:  # Basic validation
                                     visible_products.append(elem)
-                        except:
+                        except Exception:
                             continue
                     
                     if visible_products:
@@ -21188,6 +21282,18 @@ class AutomationWorker(QObject):
             self.running = False
             self.finished_signal.emit()
     
+    def _task_done_callback(self, task: asyncio.Task):
+        """Callback for when an asyncio task completes. Logs any exceptions that occurred."""
+        try:
+            exc = task.exception()
+            if exc is not None:
+                self.emit_log(f'Task error: {type(exc).__name__}: {exc}', 'ERROR')
+        except asyncio.CancelledError:
+            # Task was cancelled, which is normal during shutdown
+            pass
+        except Exception as e:
+            self.emit_log(f'Error in task callback: {e}', 'ERROR')
+    
     async def run_rpa_mode(self):
         """Execute RPA script mode with concurrent visible browsers that auto-restart.
         
@@ -21304,7 +21410,7 @@ class AutomationWorker(QObject):
                         if context:
                             try:
                                 await context.close()
-                            except:
+                            except Exception:
                                 pass  # Context might already be closed
                         
                         # Auto-restart: Check if we should continue
@@ -21324,6 +21430,7 @@ class AutomationWorker(QObject):
                 for i in range(num_concurrent):
                     thread_counter += 1
                     task = asyncio.create_task(run_rpa_thread(thread_counter))
+                    task.add_done_callback(self._task_done_callback)  # Add error tracking
                     self.active_tasks.append(task)  # Track in worker's task list
                     # No delay - start all browsers immediately to maintain N concurrent
                 
@@ -21518,6 +21625,7 @@ class AutomationWorker(QObject):
                             break
                         
                         task = asyncio.create_task(worker_task())
+                        task.add_done_callback(self._task_done_callback)  # Add error tracking
                         active_workers.append(task)
                         self.active_tasks.append(task)  # Track in worker's task list
                         # No delay - instances should start immediately
