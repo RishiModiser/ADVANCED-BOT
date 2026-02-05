@@ -18491,7 +18491,7 @@ class ProxyManager:
         
         Each call returns the NEXT proxy in sequence (no repeats).
         Returns None when all proxies are consumed.
-        This ensures each thread gets a unique proxy and bot stops when proxies run out.
+        This ensures each concurrent browser gets a unique proxy and bot stops when proxies run out.
         """
         if not self.proxy_enabled or not self.proxy_queue:
             return None
@@ -21166,7 +21166,7 @@ class AutomationWorker(QObject):
             return False
     
     async def run_automation(self):
-        """Main automation loop with multi-threading, multiple URLs, and platform mixing support."""
+        """Main automation loop with concurrent execution, multiple URLs, and platform mixing support."""
         try:
             self.running = True
             self.emit_log('Starting automation...')
@@ -21202,7 +21202,7 @@ class AutomationWorker(QObject):
             self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             
             rpa_script = self.config.get('rpa_script', {})
-            num_concurrent = self.config.get('threads', 1)
+            num_concurrent = self.config.get('concurrent', 1)
             platforms = self.config.get('platforms', ['windows'])
             enable_consent = self.config.get('enable_consent', True)
             
@@ -21246,12 +21246,12 @@ class AutomationWorker(QObject):
                 self.emit_log('Failed to initialize browser', 'ERROR')
                 return
             
-            # Track running threads in the worker's active_tasks list
-            thread_counter = 0
+            # Track running concurrent browsers in the worker's active_tasks list
+            concurrent_counter = 0
             
-            async def run_rpa_thread(thread_num):
-                """Run a single RPA thread with automatic continuous restart."""
-                nonlocal thread_counter
+            async def run_rpa_concurrent(concurrent_num):
+                """Run a single RPA concurrent browser with automatic continuous restart."""
+                nonlocal concurrent_counter
                 
                 # Continuous loop - runs indefinitely until stopped or no more proxies
                 while self.running:
@@ -21268,37 +21268,37 @@ class AutomationWorker(QObject):
                         if proxy_manager.proxy_enabled:
                             remaining = proxy_manager.get_remaining_proxies()
                             if remaining <= 0:
-                                self.emit_log(f'[Concurrent {thread_num}] No more proxies available, stopping', 'INFO')
+                                self.emit_log(f'[Concurrent {concurrent_num}] No more proxies available, stopping', 'INFO')
                                 break
-                            self.emit_log(f'[Concurrent {thread_num}] Starting | Platform: {platform} | Proxies: {remaining}')
+                            self.emit_log(f'[Concurrent {concurrent_num}] Starting | Platform: {platform} | Proxies: {remaining}')
                         else:
-                            self.emit_log(f'[Concurrent {thread_num}] Starting | Platform: {platform}')
+                            self.emit_log(f'[Concurrent {concurrent_num}] Starting | Platform: {platform}')
                         
                         # Create browser context (proxy will be assigned automatically by create_context)
-                        self.emit_log(f'[Concurrent {thread_num}] Creating visible browser context...')
+                        self.emit_log(f'[Concurrent {concurrent_num}] Creating visible browser context...')
                         context = await self.browser_manager.create_context(platform=platform, use_proxy=proxy_manager.proxy_enabled)
                         
                         if not context:
-                            self.emit_log(f'[Concurrent {thread_num}] Failed to create context, retrying in 2s...', 'WARNING')
+                            self.emit_log(f'[Concurrent {concurrent_num}] Failed to create context, retrying in 2s...', 'WARNING')
                             await asyncio.sleep(2)
                             continue
                         
                         # Execute RPA script
                         script_executor = ScriptExecutor(self.log_manager, consent_manager)
-                        self.emit_log(f'[Concurrent {thread_num}] Executing RPA script...')
+                        self.emit_log(f'[Concurrent {concurrent_num}] Executing RPA script...')
                         success = await script_executor.execute_script(rpa_script, context)
                         
                         if success:
-                            self.emit_log(f'[Concurrent {thread_num}] ✓ RPA script completed successfully')
+                            self.emit_log(f'[Concurrent {concurrent_num}] ✓ RPA script completed successfully')
                         else:
-                            self.emit_log(f'[Concurrent {thread_num}] ✗ RPA script had errors', 'WARNING')
+                            self.emit_log(f'[Concurrent {concurrent_num}] ✗ RPA script had errors', 'WARNING')
                         
                     except Exception as e:
-                        self.emit_log(f'[Concurrent {thread_num}] Error: {e}', 'ERROR')
+                        self.emit_log(f'[Concurrent {concurrent_num}] Error: {e}', 'ERROR')
                         
                         # If proxy failed, try next proxy
                         if 'proxy' in str(e).lower() or 'net::ERR' in str(e):
-                            self.emit_log(f'[Concurrent {thread_num}] Proxy failure detected, will use next proxy', 'WARNING')
+                            self.emit_log(f'[Concurrent {concurrent_num}] Proxy failure detected, will use next proxy', 'WARNING')
                     
                     finally:
                         if context:
@@ -21311,23 +21311,23 @@ class AutomationWorker(QObject):
                         should_restart = self.running
                         if proxy_manager.proxy_enabled and proxy_manager.get_remaining_proxies() <= 0:
                             should_restart = False
-                            self.emit_log(f'[Concurrent {thread_num}] No more proxies, stopping concurrent browser', 'INFO')
+                            self.emit_log(f'[Concurrent {concurrent_num}] No more proxies, stopping concurrent browser', 'INFO')
                         
                         if should_restart:
-                            self.emit_log(f'[Concurrent {thread_num}] Browser closed, immediately restarting...', 'INFO')
+                            self.emit_log(f'[Concurrent {concurrent_num}] Browser closed, immediately restarting...', 'INFO')
                             # Immediate restart - no delay to maintain N concurrent visible browsers
                 
-                self.emit_log(f'[Concurrent {thread_num}] Concurrent browser stopped')
+                self.emit_log(f'[Concurrent {concurrent_num}] Concurrent browser stopped')
             
             try:
                 # Start all concurrent browsers immediately (no delay)
                 for i in range(num_concurrent):
-                    thread_counter += 1
-                    task = asyncio.create_task(run_rpa_thread(thread_counter))
+                    concurrent_counter += 1
+                    task = asyncio.create_task(run_rpa_concurrent(concurrent_counter))
                     self.active_tasks.append(task)  # Track in worker's task list
                     # No delay - start all browsers immediately to maintain N concurrent
                 
-                # Wait for all threads to complete
+                # Wait for all concurrent browsers to complete
                 self.emit_log(f'✓ All {num_concurrent} concurrent browsers started and running')
                 self.emit_log('Browsers will automatically restart if closed. Press STOP to end automation.')
                 await asyncio.gather(*self.active_tasks, return_exceptions=True)
@@ -21359,7 +21359,7 @@ class AutomationWorker(QObject):
             stay_time = self.config.get('stay_time', 120)  # Fixed stay time in seconds
             min_time_spend = self.config.get('min_time_spend', 120)  # Min random time in seconds
             max_time_spend = self.config.get('max_time_spend', 240)  # Max random time in seconds
-            num_threads = self.config.get('threads', 1)  # Number of concurrent browser instances
+            num_concurrent = self.config.get('concurrent', 1)  # Number of concurrent browser instances
             platforms = self.config.get('platforms', ['windows'])
             content_ratio = self.config.get('content_ratio', 85) / 100
             visit_type = self.config.get('visit_type', 'direct')
@@ -21385,7 +21385,7 @@ class AutomationWorker(QObject):
             high_cpc_stay_time = self.config.get('high_cpc_stay_time', 180)
             
             
-            self.emit_log(f'Configuration: {len(url_list)} URLs, {num_threads} concurrent threads')
+            self.emit_log(f'Configuration: {len(url_list)} URLs, {num_concurrent} concurrent browsers')
             platforms_str = ', '.join(platforms)
             self.emit_log(f'Platform(s) selected: {platforms_str}')
             if high_cpc_enabled:
@@ -21408,12 +21408,12 @@ class AutomationWorker(QObject):
                     # Initialize proxy queue for sequential distribution
                     proxy_manager.initialize_queue()
                     self.emit_log(f'✓ Proxy configuration loaded: {proxy_count} proxies available')
-                    self.emit_log(f'✓ Worker pool mode: {num_threads} threads will run until all proxies consumed')
+                    self.emit_log(f'✓ Worker pool mode: {num_concurrent} concurrent browsers will run until all proxies consumed')
                 else:
                     self.emit_log('⚠ Proxy enabled but no proxies loaded', 'WARNING')
             else:
                 self.emit_log('Proxy disabled, using direct connection')
-                self.emit_log(f'Running {num_threads} concurrent browser(s) without proxy rotation')
+                self.emit_log(f'Running {num_concurrent} concurrent browser(s) without proxy rotation')
             
             # Initialize browser AFTER proxy validation
             # ALWAYS VISIBLE - headless mode removed completely
@@ -21436,7 +21436,7 @@ class AutomationWorker(QObject):
             consent_manager = ConsentManager(self.log_manager) if enable_consent else None
             
             # Semaphore to limit concurrent workers
-            semaphore = asyncio.Semaphore(num_threads)
+            semaphore = asyncio.Semaphore(num_concurrent)
             active_workers = []
             worker_counter = 0
             completed_count = 0
@@ -21488,8 +21488,8 @@ class AutomationWorker(QObject):
                         return False
             
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-            self.emit_log(f'Starting worker pool: {num_threads} concurrent threads')
-            self.emit_log(f'✓ Maintaining exactly {num_threads} visible browsers in taskbar at all times')
+            self.emit_log(f'Starting worker pool: {num_concurrent} concurrent browsers')
+            self.emit_log(f'✓ Maintaining exactly {num_concurrent} visible browsers in taskbar at all times')
             self.emit_log(f'✓ Instant replacement: New browser spawns immediately when one closes')
             if proxy_manager.proxy_enabled and proxy_manager.get_proxy_count() > 0:
                 self.emit_log(f'✓ Proxy mode: Will continue until all {proxy_manager.get_proxy_count()} proxies consumed')
@@ -21511,8 +21511,8 @@ class AutomationWorker(QObject):
                     active_workers = [w for w in active_workers if not w.done()]
                     self.active_tasks = active_workers  # Keep tracking updated
                     
-                    # Spawn new workers immediately if below thread limit
-                    while len(active_workers) < num_threads and self.running:
+                    # Spawn new workers immediately if below concurrent limit
+                    while len(active_workers) < num_concurrent and self.running:
                         # Check proxies again before spawning
                         if proxy_manager.proxy_enabled and proxy_manager.get_remaining_proxies() <= 0:
                             break
@@ -22454,13 +22454,13 @@ class AppGUI(QMainWindow):
         max_time_layout.addStretch()
         traffic_layout.addLayout(max_time_layout)
         
-        # Threads (concurrent browsers) - Fixed to open multiple profiles simultaneously
+        # Concurrent browsers - Fixed to open multiple profiles simultaneously
         traffic_layout.addWidget(QLabel('Concurrent:'))
-        self.threads_input = QSpinBox()
-        self.threads_input.setRange(1, 1000)
-        self.threads_input.setValue(1)
-        self.threads_input.setToolTip('Number of concurrent browser profiles to open simultaneously. Example: 50 = opens 50 profiles at once')
-        traffic_layout.addWidget(self.threads_input)
+        self.concurrent_input = QSpinBox()
+        self.concurrent_input.setRange(1, 1000)
+        self.concurrent_input.setValue(1)
+        self.concurrent_input.setToolTip('Number of concurrent browser profiles to open simultaneously. Example: 50 = opens 50 profiles at once')
+        traffic_layout.addWidget(self.concurrent_input)
         
         traffic_layout.addWidget(QLabel('Content Interaction % (0-100):'))
         self.content_ratio_input = QSpinBox()
@@ -22681,18 +22681,18 @@ class AppGUI(QMainWindow):
         # PySide6 stateChanged emits int (0=unchecked, 2=checked), compare with enum or value
         rpa_mode_enabled = state in (Qt.Checked, Qt.Checked.value)
         
-        # When RPA mode is enabled, disable all other features EXCEPT proxy, threads, consent handlers, and platform
+        # When RPA mode is enabled, disable all other features EXCEPT proxy, concurrent, consent handlers, and platform
         # When disabled, enable all features
         disable_features = rpa_mode_enabled
         
-        # IMPORTANT: Keep threads and proxy ENABLED when RPA mode is on
-        # Disable/enable all traffic settings except proxy and threads
+        # IMPORTANT: Keep concurrent and proxy ENABLED when RPA mode is on
+        # Disable/enable all traffic settings except proxy and concurrent
         self.stay_time_input.setEnabled(not disable_features)
         self.random_time_enabled.setEnabled(not disable_features)
         self.min_time_input.setEnabled(not disable_features and self.random_time_enabled.isChecked())
         self.max_time_input.setEnabled(not disable_features and self.random_time_enabled.isChecked())
-        # KEEP THREADS ENABLED IN RPA MODE
-        self.threads_input.setEnabled(True)  # Always enabled
+        # KEEP CONCURRENT ENABLED IN RPA MODE
+        self.concurrent_input.setEnabled(True)  # Always enabled
         self.content_ratio_input.setEnabled(not disable_features)
         
         # REQUIREMENT: Keep platform settings ENABLED when RPA mode is ON (ACTIVE)
@@ -23550,7 +23550,7 @@ class AppGUI(QMainWindow):
                 config = {
                     'rpa_mode': True,
                     'rpa_script': rpa_script,
-                    'threads': self.threads_input.value(),  # Number of concurrent browsers
+                    'concurrent': self.concurrent_input.value(),  # Number of concurrent browsers
                     'proxy_enabled': self.proxy_enabled_check.isChecked(),
                     'proxy_type': self.proxy_type_combo.currentText(),
                     'proxy_list': self.proxy_list_input.toPlainText(),
@@ -23707,7 +23707,7 @@ class AppGUI(QMainWindow):
                     'stay_time': self.stay_time_input.value(),
                     'min_time_spend': self.min_time_input.value(),
                     'max_time_spend': self.max_time_input.value(),
-                    'threads': self.threads_input.value(),
+                    'concurrent': self.concurrent_input.value(),
                     'content_ratio': self.content_ratio_input.value(),
                     'platforms': selected_platforms,
                     'headless': False,  # Always False - browser must be visible
