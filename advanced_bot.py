@@ -74,6 +74,14 @@ try:
 except ImportError:
     aiohttp = None  # Will handle gracefully in ProxyGeolocation
 
+# Import security manager for advanced protection
+try:
+    from security_manager import SecurityManager, RateLimiter, validate_and_initialize
+    SECURITY_AVAILABLE = True
+except ImportError:
+    SECURITY_AVAILABLE = False
+    print("Warning: Security manager not available. Running with basic security.")
+
 
 # ============================================================================
 # CONFIGURATION & CONSTANTS
@@ -18523,6 +18531,48 @@ class ProxyManager:
     def get_proxy_count(self) -> int:
         """Get total number of loaded proxies."""
         return len(self.proxy_list)
+    
+    def mask_proxy_for_logging(self, proxy_config: Dict[str, str]) -> str:
+        """
+        Mask sensitive proxy information for logging.
+        
+        Args:
+            proxy_config: Proxy configuration dictionary
+            
+        Returns:
+            Masked proxy string safe for logging
+        """
+        if not proxy_config:
+            return "No proxy"
+        
+        server = proxy_config.get('server', '')
+        
+        # Mask IP address (show only first and last octet)
+        parts = server.split('://')
+        if len(parts) == 2:
+            protocol, address = parts
+            if ':' in address:
+                host_port = address.split(':')
+                if len(host_port) == 2:
+                    host, port = host_port
+                    # Mask IP (e.g., 192.*.*.*:8080)
+                    if '.' in host:
+                        octets = host.split('.')
+                        if len(octets) == 4:
+                            masked_host = f"{octets[0]}.*.*.{octets[3]}"
+                        else:
+                            masked_host = host[:4] + "***"
+                    else:
+                        masked_host = host[:4] + "***"
+                    
+                    # Indicate if authentication is used (but don't show credentials)
+                    auth_indicator = ""
+                    if 'username' in proxy_config:
+                        auth_indicator = " [AUTH]"
+                    
+                    return f"{protocol}://{masked_host}:{port}{auth_indicator}"
+        
+        return "Proxy configured"
 
 
 # ============================================================================
@@ -21860,6 +21910,24 @@ class AppGUI(QMainWindow):
     
     def __init__(self):
         super().__init__()
+        
+        # Initialize security manager
+        self.security_manager = None
+        self.license_valid = False
+        if SECURITY_AVAILABLE:
+            try:
+                is_valid, message, security = validate_and_initialize()
+                self.security_manager = security
+                self.license_valid = is_valid
+                if not is_valid:
+                    QMessageBox.warning(
+                        None,
+                        "License Warning",
+                        f"{message}\n\nThe application will continue with limited functionality."
+                    )
+            except Exception as e:
+                print(f"Security initialization warning: {e}")
+        
         self.log_manager = LogManager()
         self.automation_thread = None
         self.automation_worker = None
@@ -21871,6 +21939,10 @@ class AppGUI(QMainWindow):
         # Initialize storage for imported useragents and cookies
         self.imported_useragents = []
         self.imported_cookies = []
+        
+        # Rate limiter for automation requests (max 100 starts per minute)
+        self.rate_limiter = RateLimiter(max_requests=100, time_window=60) if SECURITY_AVAILABLE else None
+        
         self.init_ui()
     
     def init_ui(self):
@@ -23497,6 +23569,32 @@ class AppGUI(QMainWindow):
     def start_automation(self):
         """Start the automation process."""
         try:
+            # Security checks
+            if SECURITY_AVAILABLE and self.security_manager:
+                # Check license
+                if not self.license_valid:
+                    license_info = self.security_manager.validate_license()
+                    if not license_info['valid']:
+                        QMessageBox.critical(
+                            self,
+                            'License Error',
+                            f"Cannot start automation: {license_info.get('error', 'Invalid license')}\n\n"
+                            "Please contact support to obtain a valid license."
+                        )
+                        return
+                    self.license_valid = True
+                
+                # Rate limiting check
+                if self.rate_limiter and not self.rate_limiter.is_allowed():
+                    wait_time = int(self.rate_limiter.get_wait_time())
+                    QMessageBox.warning(
+                        self,
+                        'Rate Limit Exceeded',
+                        f"Too many automation starts. Please wait {wait_time} seconds before trying again.\n\n"
+                        "This limit helps protect against abuse and ensures system stability."
+                    )
+                    return
+            
             # Check if RPA mode is enabled
             rpa_mode_enabled = self.enable_rpa_mode.isChecked()
             
