@@ -15,6 +15,8 @@ import logging
 import asyncio
 import uuid
 import subprocess
+import tempfile
+import shutil
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -18934,9 +18936,12 @@ class BrowserManager:
             else:
                 user_agent = fingerprint['user_agent']
             
-            # Create unique profile directory
-            user_data_dir = Path(f"profiles/profile_{random.randint(1000, 9999)}")
-            user_data_dir.mkdir(parents=True, exist_ok=True)
+            # Create temporary profile directory that will be cleaned up automatically
+            # Use tempfile.mkdtemp to create a unique temporary directory
+            # The directory will persist during browser use but can be cleaned up after
+            Path("profiles").mkdir(exist_ok=True)  # Ensure profiles dir exists
+            temp_dir = tempfile.mkdtemp(prefix="profile_", dir="profiles")
+            user_data_dir = Path(temp_dir)
             
             self.log_manager.log(f'━━━ Creating Browser Persistent Context ━━━')
             self.log_manager.log(f'Platform: {platform}')
@@ -18979,6 +18984,8 @@ class BrowserManager:
                     user_data_dir=str(user_data_dir),
                     **context_options
                 )
+                # Store the temp directory path for cleanup
+                context._temp_profile_dir = user_data_dir
                 self.active_contexts.append(context)
             except Exception as proxy_error:
                 # Check if error is proxy-related
@@ -19048,10 +19055,19 @@ class BrowserManager:
     async def close(self):
         """Close all browser contexts and cleanup."""
         try:
-            # Close all active persistent contexts
+            # Close all active persistent contexts and cleanup temp profiles
             for context in self.active_contexts:
                 try:
+                    # Get temp directory before closing
+                    temp_dir = getattr(context, '_temp_profile_dir', None)
                     await context.close()
+                    # Clean up temp profile directory after closing
+                    if temp_dir and temp_dir.exists():
+                        try:
+                            shutil.rmtree(temp_dir, ignore_errors=True)
+                            self.log_manager.log(f'✓ Cleaned up profile: {temp_dir}')
+                        except Exception as cleanup_error:
+                            self.log_manager.log(f'⚠ Profile cleanup warning: {cleanup_error}', 'WARNING')
                 except Exception:
                     pass  # Ignore errors during cleanup
             self.active_contexts.clear()
@@ -19086,8 +19102,13 @@ class BrowserManager:
             
             # Create tasks to close all contexts concurrently (don't wait for each)
             close_tasks = []
+            temp_dirs = []  # Track temp directories for cleanup
             for context in self.active_contexts:
                 try:
+                    # Get temp directory before closing
+                    temp_dir = getattr(context, '_temp_profile_dir', None)
+                    if temp_dir:
+                        temp_dirs.append(temp_dir)
                     # Close each context without waiting
                     close_tasks.append(asyncio.create_task(context.close()))
                 except Exception:
@@ -19106,6 +19127,14 @@ class BrowserManager:
                     for task in close_tasks:
                         if not task.done():
                             task.cancel()
+            
+            # Clean up temp profile directories
+            for temp_dir in temp_dirs:
+                if temp_dir and temp_dir.exists():
+                    try:
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+                    except Exception:
+                        pass
             
             self.active_contexts.clear()
             
