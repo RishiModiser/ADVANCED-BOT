@@ -116,7 +116,7 @@ def test_concurrent_count_logic():
     normal_mode_section = content[normal_start:search_pos] if search_pos < len(content) else content[normal_start:]
     
     # Verify worker pool maintains N workers
-    assert "while len(active_workers) < num_threads and self.running:" in normal_mode_section, \
+    assert "while len(active_workers) < num_concurrent and self.running:" in normal_mode_section, \
         "❌ FAILED: worker pool doesn't maintain N workers"
     print("✓ Test 11 PASSED: Normal mode maintains N workers dynamically")
     
