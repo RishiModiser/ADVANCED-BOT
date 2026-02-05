@@ -17278,7 +17278,7 @@ class HumanBehavior:
                     x = random.randint(100, viewport_width - 100)
                     y = random.randint(100, viewport_height - 100)
                     await page.mouse.move(x, y)
-                except:
+                except Exception:
                     pass
                 
                 # Use scroll behavior based on scroll_type
@@ -18295,7 +18295,7 @@ class ScriptExecutor:
                             if selector:
                                 try:
                                     condition_met = await self.current_page.is_visible(selector, timeout=2000)
-                                except:
+                                except Exception:
                                     condition_met = False
                             
                             if condition_met:
@@ -18704,7 +18704,7 @@ class ProxyGeolocation:
                 return 'Asia'
             else:
                 return 'Other'
-        except:
+        except Exception:
             return 'Unknown'
     
     def _get_country_code(self, country: str) -> str:
@@ -19371,7 +19371,7 @@ class AutomationWorker(QObject):
                         captcha_found = True
                         self.emit_log(f'⚠️ CAPTCHA detected with selector: {selector}')
                         break
-                except:
+                except Exception:
                     continue
             
             if not captcha_found:
@@ -19382,7 +19382,7 @@ class AutomationWorker(QObject):
                     if any(keyword in page_content.lower() for keyword in captcha_keywords):
                         captcha_found = True
                         self.emit_log('⚠️ CAPTCHA detected in page content')
-                except:
+                except Exception:
                     pass
             
             if captcha_found:
@@ -19434,7 +19434,7 @@ class AutomationWorker(QObject):
                             if element and await element.is_visible():
                                 still_present = True
                                 break
-                        except:
+                        except Exception:
                             continue
                     
                     if not still_present:
@@ -19501,7 +19501,7 @@ class AutomationWorker(QObject):
             try:
                 # Try with networkidle first (more stable, waits for network to be idle)
                 await page.goto(engine_config['url'], wait_until='networkidle', timeout=60000)
-            except:
+            except Exception:
                 # Fallback to domcontentloaded if networkidle fails
                 self.emit_log(f'Retrying with domcontentloaded...')
                 await page.goto(engine_config['url'], wait_until='domcontentloaded', timeout=60000)
@@ -19526,10 +19526,10 @@ class AutomationWorker(QObject):
                             # Wait for any navigation that might occur after consent
                             try:
                                 await page.wait_for_load_state('networkidle', timeout=10000)
-                            except:
+                            except Exception:
                                 await asyncio.sleep(2)
                             break
-                    except:
+                    except Exception:
                         continue
             except Exception as e:
                 self.emit_log(f'No consent needed or error: {e}', 'INFO')
@@ -19578,7 +19578,7 @@ class AutomationWorker(QObject):
                             search_selector = selector
                             self.emit_log(f'✓ Found search box after reload: {selector}')
                             break
-                        except:
+                        except Exception:
                             continue
                 except Exception as reload_error:
                     self.emit_log(f'Reload failed: {reload_error}', 'ERROR')
@@ -19602,11 +19602,11 @@ class AutomationWorker(QObject):
             try:
                 # Wait for network to be idle after search submission
                 await page.wait_for_load_state('networkidle', timeout=30000)
-            except:
+            except Exception:
                 # Fallback to domcontentloaded if networkidle times out
                 try:
                     await page.wait_for_load_state('domcontentloaded', timeout=15000)
-                except:
+                except Exception:
                     pass
             
             # Additional wait for page to stabilize
@@ -19621,7 +19621,7 @@ class AutomationWorker(QObject):
                     results_loaded = True
                     self.emit_log(f'✓ Results loaded: {selector}')
                     break
-                except:
+                except Exception:
                     continue
             
             if not results_loaded:
@@ -19640,7 +19640,7 @@ class AutomationWorker(QObject):
                     try:
                         await page.wait_for_selector(selector, timeout=10000)
                         break
-                    except:
+                    except Exception:
                         continue
             
             # Scroll results page to simulate reading
@@ -19680,7 +19680,7 @@ class AutomationWorker(QObject):
                             # 3. We also require specific paths (/cbclk or RU=) which are unique to Yahoo redirects
                             # 4. False positives (non-Yahoo URLs detected as Yahoo) would just skip extraction, causing no harm
                             is_yahoo_redirect = ('yahoo.com' in parsed_href.netloc) and ('/cbclk' in parsed_href.path or '/RU=' in href or 'RU=' in href)
-                        except:
+                        except Exception:
                             is_bing_redirect = False
                             is_yahoo_redirect = False
                         
@@ -19690,7 +19690,7 @@ class AutomationWorker(QObject):
                             result_links.append(link)
                             if len(result_links) >= 10:  # Limit to top 10 results
                                 break
-                except:
+                except Exception:
                     continue
             
             self.emit_log(f'Found {len(result_links)} valid search results to scan')
@@ -19721,7 +19721,7 @@ class AutomationWorker(QObject):
                         parsed_href = urlparse(href)
                         is_bing_redirect = (parsed_href.netloc.endswith('bing.com') or parsed_href.netloc == 'bing.com') and '/ck/a' in parsed_href.path
                         is_yahoo_redirect = ('yahoo.com' in parsed_href.netloc) and ('/cbclk' in parsed_href.path or 'RU=' in href)
-                    except:
+                    except Exception:
                         is_bing_redirect = False
                         is_yahoo_redirect = False
                     
@@ -19827,7 +19827,7 @@ class AutomationWorker(QObject):
                         await found_link.click(modifiers=['Control'])
                         self.emit_log('✓ Ctrl+Click executed - opening in new tab')
                         await asyncio.sleep(random.uniform(2, 3))
-                    except:
+                    except Exception:
                         # Method 2: Fallback - create new page and navigate directly
                         self.emit_log('Ctrl+Click failed, using direct new tab method...')
                         new_page = await context.new_page()
@@ -19857,7 +19857,7 @@ class AutomationWorker(QObject):
                         # Wait for the new page to load
                         try:
                             await new_page.wait_for_load_state('domcontentloaded', timeout=30000)
-                        except:
+                        except Exception:
                             pass
                         
                         await asyncio.sleep(random.uniform(2, 3))
@@ -19879,7 +19879,7 @@ class AutomationWorker(QObject):
                         # If new tab didn't open, treat it as same-tab navigation
                         try:
                             await page.wait_for_load_state('domcontentloaded', timeout=30000)
-                        except:
+                        except Exception:
                             pass
                         
                         await asyncio.sleep(random.uniform(3, 5))
@@ -19910,7 +19910,7 @@ class AutomationWorker(QObject):
                         try:
                             temp_consent_manager = ConsentManager(self.log_manager)
                             await temp_consent_manager.handle_consents(new_page, max_retries=2)
-                        except:
+                        except Exception:
                             pass
                         
                         self.emit_log('✓ Fallback navigation successful in new tab')
@@ -19948,7 +19948,7 @@ class AutomationWorker(QObject):
                     self.emit_log(f'Failed to navigate directly: {nav_error}', 'ERROR')
                     try:
                         await new_page.close()
-                    except:
+                    except Exception:
                         pass
                     await page.close()  # Close the search page if navigation fails
                     return None
@@ -19970,7 +19970,7 @@ class AutomationWorker(QObject):
                 try:
                     temp_consent_manager = ConsentManager(self.log_manager)
                     await temp_consent_manager.handle_consents(new_page, max_retries=2)
-                except:
+                except Exception:
                     pass
                 
                 self.emit_log('✓ Exception fallback successful - opened in new tab')
@@ -19978,14 +19978,14 @@ class AutomationWorker(QObject):
                 # Close the original page
                 try:
                     await page.close()
-                except:
+                except Exception:
                     pass
                 
                 return new_page  # Return the new page object for further use
-            except:
+            except Exception:
                 try:
                     await page.close()
-                except:
+                except Exception:
                     pass
                 return None
     
@@ -20016,7 +20016,7 @@ class AutomationWorker(QObject):
                             y = random.randint(100, viewport_size['height'] - 100)
                             await page.mouse.move(x, y)
                             await asyncio.sleep(random.uniform(0.3, 1.0))
-                except:
+                except Exception:
                     pass
                 
                 # Try to click a link if extra pages enabled
@@ -20043,7 +20043,7 @@ class AutomationWorker(QObject):
                                 links.extend(found_links)
                                 if len(links) >= 20:
                                     break
-                            except:
+                            except Exception:
                                 continue
                         
                         if links and len(links) > 0:
@@ -20064,7 +20064,7 @@ class AutomationWorker(QObject):
                                             text = await link.inner_text()
                                             if text and len(text.strip()) > 5:
                                                 valid_links.append(link)
-                                except:
+                                except Exception:
                                     continue
                             
                             if valid_links:
@@ -20382,7 +20382,7 @@ class AutomationWorker(QObject):
                                 href = await elem.get_attribute('href')
                                 if href and len(href) > 5:  # Basic validation
                                     visible_products.append(elem)
-                        except:
+                        except Exception:
                             continue
                     
                     if visible_products:
@@ -21188,6 +21188,18 @@ class AutomationWorker(QObject):
             self.running = False
             self.finished_signal.emit()
     
+    def _task_done_callback(self, task: asyncio.Task):
+        """Callback for when an asyncio task completes. Logs any exceptions that occurred."""
+        try:
+            exc = task.exception()
+            if exc is not None:
+                self.emit_log(f'Task error: {type(exc).__name__}: {exc}', 'ERROR')
+        except asyncio.CancelledError:
+            # Task was cancelled, which is normal during shutdown
+            pass
+        except Exception as e:
+            self.emit_log(f'Error in task callback: {e}', 'ERROR')
+    
     async def run_rpa_mode(self):
         """Execute RPA script mode with concurrent visible browsers that auto-restart.
         
@@ -21304,7 +21316,7 @@ class AutomationWorker(QObject):
                         if context:
                             try:
                                 await context.close()
-                            except:
+                            except Exception:
                                 pass  # Context might already be closed
                         
                         # Auto-restart: Check if we should continue
@@ -21324,6 +21336,7 @@ class AutomationWorker(QObject):
                 for i in range(num_concurrent):
                     thread_counter += 1
                     task = asyncio.create_task(run_rpa_thread(thread_counter))
+                    task.add_done_callback(self._task_done_callback)  # Add error tracking
                     self.active_tasks.append(task)  # Track in worker's task list
                     # No delay - start all browsers immediately to maintain N concurrent
                 
@@ -21518,6 +21531,7 @@ class AutomationWorker(QObject):
                             break
                         
                         task = asyncio.create_task(worker_task())
+                        task.add_done_callback(self._task_done_callback)  # Add error tracking
                         active_workers.append(task)
                         self.active_tasks.append(task)  # Track in worker's task list
                         # No delay - instances should start immediately
