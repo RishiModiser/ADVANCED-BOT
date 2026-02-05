@@ -200,7 +200,7 @@ Spawning 10 concurrent browser tasks...
 ```
 
 **Result:** 
-- All 10 browsers launch successfully (0.2s stagger between each = 2 seconds total)
+- All 10 browsers launch successfully (0.2s stagger between each = 1.8 seconds total)
 - All 10 visible in taskbar immediately after launch
 - Mix of Windows and Android platforms as configured
 - Once launched, all 10 browsers run truly concurrently
