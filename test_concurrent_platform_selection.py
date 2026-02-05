@@ -120,11 +120,13 @@ def test_concurrent_count_logic():
         "❌ FAILED: worker pool doesn't maintain N workers"
     print("✓ Test 11 PASSED: Normal mode maintains N workers dynamically")
     
-    # Verify immediate spawning (no delays)
-    assert "# No delay - instances should start immediately" in normal_mode_section or \
-           "# No delay - start all browsers immediately" in rpa_mode_section, \
-        "❌ FAILED: delay comments not found, may have delays"
-    print("✓ Test 12 PASSED: No delays in concurrent spawning")
+    # Verify controlled spawning with stagger to prevent Playwright connection overload
+    # Note: A small 0.2s stagger is intentionally added to prevent overwhelming Playwright's
+    # connection which can only handle ~5 concurrent launch_persistent_context calls
+    assert "await asyncio.sleep(0.2)" in normal_mode_section or \
+           "await asyncio.sleep(0.2)" in rpa_mode_section, \
+        "❌ FAILED: stagger delay not found, may cause connection overload"
+    print("✓ Test 12 PASSED: Stagger delay added to prevent Playwright connection overload")
 
 if __name__ == '__main__':
     print("=" * 70)
