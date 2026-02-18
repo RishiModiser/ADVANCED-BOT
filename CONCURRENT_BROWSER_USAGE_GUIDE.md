@@ -37,9 +37,9 @@ Launch time: ~10 seconds (50 × 0.2s)
 **Example:**
 ```
 Proxies loaded: 10,000
-Browser 1: Proxy 1 (8.8.8.8:8080)
-Browser 2: Proxy 2 (8.8.8.9:8080)
-Browser 3: Proxy 3 (8.8.8.10:8080)
+Browser 1: Proxy 1 (192.0.2.1:8080)
+Browser 2: Proxy 2 (192.0.2.2:8080)
+Browser 3: Proxy 3 (192.0.2.3:8080)
 ...
 Browser 50: Proxy 50
 ```
@@ -122,10 +122,10 @@ Continues until all 10,000 proxies consumed
 Create a file `proxies.txt` with your proxies:
 
 ```
-8.8.8.8:8080
-8.8.8.9:8080:username:password
-user:pass@8.8.8.10:8080
-http://8.8.8.11:8080
+192.0.2.1:8080
+192.0.2.2:8080:username:password
+user:pass@192.0.2.3:8080
+http://192.0.2.4:8080
 ...
 (10,000 proxies)
 ```
@@ -162,7 +162,7 @@ config = {
         'steps': [...]
     },
     'proxy_enabled': True,
-    'proxy_list': ['8.8.8.8:8080', '8.8.8.9:8080', ...],  # 10K proxies
+    'proxy_list': ['192.0.2.1:8080', '192.0.2.2:8080', ...],  # 10K proxies
 }
 ```
 
@@ -219,7 +219,7 @@ The bot automatically:
 
 **Example:**
 ```
-Proxy: USA (31.56.70.200)
+Proxy: USA (proxy-us.example.com)
 Browser: USA timezone (America/New_York)
 Result: Perfect match, no detection
 ```
@@ -276,12 +276,11 @@ Each of the 50 browsers executes this script independently!
 
 The bot provides detailed logging:
 
-```
 ✓ Proxy configuration loaded: 10000 proxies available
 ✓ Worker pool mode: 50 concurrent browsers
 ✓ Spawned 50/50 workers (Active: 50)
-✓ Proxy selected: 8.8.8.8:8080
-✓ Proxy Location: United States (US), IP: 8.8.8.8
+✓ Proxy selected: 192.0.2.1:8080
+✓ Proxy Location: United States (US), IP: 192.0.2.1
 ✓ Fingerprint MATCHED to proxy location: United States
 
 [Worker 1] ✓ Completed successfully (Total: 1)

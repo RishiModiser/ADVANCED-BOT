@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
-Test to verify concurrent browser management meets user requirements:
-1. N concurrent = N visible browsers
-2. Each browser uses different proxy
-3. Auto-restart on browser close
-4. Maintain concurrent count
-5. Process all proxies
+Test to verify concurrent browser management meets user requirements.
+
+This test verifies that the implementation includes the necessary features
+for concurrent browser management with proxy handling by checking for key
+code patterns. While string matching is not as robust as AST parsing,
+it provides a quick verification that the essential features are present.
+
+Note: This is a verification test, not a comprehensive unit test.
+For full functionality testing, use the existing test suites.
 """
 
 import sys
@@ -55,7 +58,7 @@ def test_concurrent_features():
             'asyncio.create_task(worker_task())' in content,
         
         "13. Proxy consumption stops automation":
-            'remaining <= 0' in content or 'No more proxies' in content,
+            ('remaining <= 0' in content or 'No more proxies' in content) and 'get_remaining_proxies()' in content,
         
         "14. Browser context close and restart":
             'await context.close()' in content,

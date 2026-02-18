@@ -30,10 +30,11 @@ example_config = {
     'proxy_type': 'HTTP',  # or HTTPS, SOCKS5
     'proxy_list': [
         # Example proxies - replace with your 10K proxies
-        '8.8.8.8:8080',
-        '8.8.8.9:8080:username:password',
-        'user:pass@8.8.8.10:8080',
-        'http://8.8.8.11:8080',
+        # Using RFC 5737 documentation addresses for examples
+        '192.0.2.1:8080',
+        '192.0.2.2:8080:username:password',
+        'user:pass@192.0.2.3:8080',
+        'http://192.0.2.4:8080',
         # ... add 9,996 more proxies here
         # Each browser gets the next proxy from this list
         # Browser 1 → Proxy 1, Browser 2 → Proxy 2, etc.
@@ -162,11 +163,11 @@ def main():
     print()
     print("Create a file 'my_proxies.txt' with your 10,000 proxies:")
     print()
-    print("  8.8.8.8:8080")
-    print("  8.8.8.9:8080")
-    print("  user:pass@8.8.8.10:8080")
-    print("  8.8.8.11:8080:username:password")
-    print("  http://8.8.8.12:8080")
+    print("  192.0.2.1:8080")
+    print("  192.0.2.2:8080")
+    print("  user:pass@192.0.2.3:8080")
+    print("  192.0.2.4:8080:username:password")
+    print("  http://192.0.2.5:8080")
     print("  ...")
     print("  (10,000 lines total)")
     print()
