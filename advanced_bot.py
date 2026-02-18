@@ -21575,13 +21575,14 @@ class AutomationWorker(QObject):
                         if not self.running:
                             return False
                         
-                        # Check if we should continue (proxies available or no proxy mode)
+                        # Log proxy status but continue even if no proxies available
+                        # This ensures all N concurrent browsers open as requested by user
                         if proxy_manager.proxy_enabled:
                             remaining = proxy_manager.get_remaining_proxies()
-                            if remaining <= 0:
-                                self.emit_log(f'[Worker {worker_num}] No more proxies available, stopping', 'INFO')
-                                return False
-                            self.emit_log(f'[Worker {worker_num}] Starting (Proxies remaining: {remaining})')
+                            if remaining > 0:
+                                self.emit_log(f'[Worker {worker_num}] Starting (Proxies remaining: {remaining})')
+                            else:
+                                self.emit_log(f'[Worker {worker_num}] Starting (No proxies remaining, using direct connection)', 'WARNING')
                         else:
                             self.emit_log(f'[Worker {worker_num}] Starting')
                         
@@ -21638,9 +21639,9 @@ class AutomationWorker(QObject):
                     # Spawn new workers with small stagger to avoid Playwright connection bottleneck
                     spawned_this_round = 0
                     while len(active_workers) < num_concurrent and self.running:
-                        # Check proxies again before spawning
-                        if proxy_manager.proxy_enabled and proxy_manager.get_remaining_proxies() <= 0:
-                            break
+                        # Don't check proxies during initial spawn - let workers handle proxy exhaustion
+                        # This ensures all N concurrent browsers spawn as requested by user
+                        # Workers will gracefully handle the case when no proxies are available
                         
                         task = asyncio.create_task(worker_task())
                         active_workers.append(task)
