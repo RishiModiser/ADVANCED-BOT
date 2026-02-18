@@ -35,7 +35,8 @@ def test_no_proxy_check_in_spawn_loop():
     
     # Check that there's NO break statement for proxy check in spawn loop
     # The old buggy code had: if proxy_manager.proxy_enabled and ... break
-    assert 'break' not in spawn_loop or 'proxy' not in spawn_loop, \
+    # New code should not have both 'break' and 'proxy' together in spawn loop
+    assert not ('break' in spawn_loop and 'proxy' in spawn_loop), \
         "❌ FAILED: Spawn loop should not break for proxy exhaustion"
     print("✓ Test 2 PASSED: Spawn loop doesn't break when proxies exhausted")
     
