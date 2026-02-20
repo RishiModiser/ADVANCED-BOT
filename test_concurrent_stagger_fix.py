@@ -92,6 +92,40 @@ def test_comment_accuracy():
         "❌ FAILED: Comments should reference launch_persistent_context"
     print("✓ Test 10 PASSED: Comments reference the problematic call (launch_persistent_context)")
 
+def test_launch_semaphore_in_create_context():
+    """Test that create_context uses a semaphore to limit concurrent browser launches."""
+    with open('advanced_bot.py', 'r') as f:
+        content = f.read()
+    
+    # Find create_context method
+    cc_start = content.find('async def create_context(')
+    # Find the next method after create_context
+    cc_end = content.find('\n    async def ', cc_start + 1)
+    cc_section = content[cc_start:cc_end] if cc_end != -1 else content[cc_start:]
+    
+    # Check that _launch_semaphore is lazily initialized in create_context
+    assert '_launch_semaphore' in cc_section, \
+        "❌ FAILED: _launch_semaphore not used in create_context"
+    print("✓ Test 11 PASSED: _launch_semaphore used in create_context")
+    
+    # Check that asyncio.Semaphore(5) is created with limit of 5
+    assert 'asyncio.Semaphore(5)' in cc_section, \
+        "❌ FAILED: Launch semaphore should be initialized with limit of 5"
+    print("✓ Test 12 PASSED: Launch semaphore initialized with limit of 5")
+    
+    # Check that the semaphore wraps the launch_persistent_context call
+    assert 'async with self._launch_semaphore:' in cc_section, \
+        "❌ FAILED: launch_persistent_context should be wrapped with semaphore"
+    print("✓ Test 13 PASSED: launch_persistent_context wrapped with launch semaphore")
+    
+    # Check that _launch_semaphore is declared in BrowserManager.__init__
+    bm_init_start = content.find('class BrowserManager:')
+    bm_init_end = content.find('\n    async def initialize(', bm_init_start)
+    bm_init_section = content[bm_init_start:bm_init_end]
+    assert '_launch_semaphore' in bm_init_section, \
+        "❌ FAILED: _launch_semaphore not declared in BrowserManager.__init__"
+    print("✓ Test 14 PASSED: _launch_semaphore declared in BrowserManager.__init__")
+
 if __name__ == '__main__':
     print("=" * 70)
     print("Testing Concurrent Browser Stagger Fix")
@@ -105,17 +139,20 @@ if __name__ == '__main__':
         print()
         test_comment_accuracy()
         print()
+        test_launch_semaphore_in_create_context()
+        print()
         print("=" * 70)
         print("✅ ALL TESTS PASSED")
         print("=" * 70)
         print()
-        print("The fix correctly adds a 0.2s stagger between browser launches")
-        print("to prevent overwhelming Playwright's connection.")
+        print("The fix correctly limits concurrent browser launches via semaphore")
+        print("and adds a 0.2s stagger between browser task creations.")
         print()
         print("Expected behavior:")
-        print("  - Setting CONCURRENT=10 will now open all 10 browsers")
-        print("  - Browsers launch with 0.2s stagger (10 browsers = 2 seconds)")
-        print("  - Once launched, all browsers run truly concurrently")
+        print("  - Setting CONCURRENT=50 will now open all 50 browsers")
+        print("  - At most 5 browsers launch simultaneously (semaphore limit)")
+        print("  - Each batch of 5 launches in parallel; next 5 wait for a slot")
+        print("  - Once launched, all N browsers run truly concurrently")
         print()
         sys.exit(0)
     except AssertionError as e:
