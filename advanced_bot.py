@@ -20240,7 +20240,7 @@ class AutomationWorker(QObject):
             self.emit_log(f'Error during interaction: {e}', 'WARNING')
     
     async def execute_high_cpc_mode(self, profile_num, high_cpc_url, target_domain, stay_time, 
-                                    consent_manager, platform='windows'):
+                                    consent_manager, platform='windows', startup_barrier=None):
         """Execute HIGH CPC/CPM Mode with 4 High CPC tabs and 1 Target Domain tab.
         
         Args:
@@ -20250,6 +20250,7 @@ class AutomationWorker(QObject):
             stay_time: Total stay time on target domain in seconds
             consent_manager: ConsentManager instance for cookie handling
             platform: Platform to use (windows/android)
+            startup_barrier: Optional dict with 'event', 'count', 'target' for startup synchronization
         """
         try:
             self.emit_log(f'━━━ Profile {profile_num} | HIGH CPC/CPM Mode | Platform: {platform} ━━━')
@@ -20259,7 +20260,22 @@ class AutomationWorker(QObject):
             context = await self.browser_manager.create_context(platform)
             if not context:
                 self.emit_log(f'Failed to create browser context', 'ERROR')
+                # Signal barrier even on failure to prevent deadlock
+                if startup_barrier is not None:
+                    startup_barrier['count'] += 1
+                    if startup_barrier['count'] >= startup_barrier['target']:
+                        startup_barrier['event'].set()
                 return False
+            
+            # STARTUP BARRIER: Signal that this browser is now open and visible,
+            # then wait until all N initial browsers have launched before starting work.
+            # This ensures all N browsers appear simultaneously in the taskbar.
+            if startup_barrier is not None:
+                startup_barrier['count'] += 1
+                if startup_barrier['count'] >= startup_barrier['target']:
+                    startup_barrier['event'].set()
+                    self.emit_log(f'✓ All {startup_barrier["target"]} browsers now visible - starting work simultaneously')
+                await startup_barrier['event'].wait()
             
             try:
                 high_cpc_tabs = []
@@ -21092,7 +21108,8 @@ class AutomationWorker(QObject):
                                      enable_interaction, enable_extra_pages, max_pages,
                                      consent_manager, enable_highlight=False,
                                      utm_campaign='', utm_medium='social', utm_term='', utm_content='',
-                                     high_cpc_enabled=False, high_cpc_url='', high_cpc_target='', high_cpc_stay_time=180):
+                                     high_cpc_enabled=False, high_cpc_url='', high_cpc_target='', high_cpc_stay_time=180,
+                                     startup_barrier=None):
         """Execute a single browser profile with one page."""
         try:
             # Check if HIGH CPC/CPM Mode is enabled
@@ -21101,7 +21118,8 @@ class AutomationWorker(QObject):
                 platform = random.choice(platforms)
                 return await self.execute_high_cpc_mode(
                     profile_num, high_cpc_url, high_cpc_target, 
-                    high_cpc_stay_time, consent_manager, platform
+                    high_cpc_stay_time, consent_manager, platform,
+                    startup_barrier=startup_barrier
                 )
             
             # Normal mode execution (existing code)
@@ -21121,7 +21139,22 @@ class AutomationWorker(QObject):
             context = await self.browser_manager.create_context(platform)
             if not context:
                 self.emit_log(f'Failed to create browser context for profile {profile_num}', 'ERROR')
+                # Signal barrier even on failure to prevent deadlock
+                if startup_barrier is not None:
+                    startup_barrier['count'] += 1
+                    if startup_barrier['count'] >= startup_barrier['target']:
+                        startup_barrier['event'].set()
                 return False
+            
+            # STARTUP BARRIER: Signal that this browser is now open and visible,
+            # then wait until all N initial browsers have launched before starting work.
+            # This ensures all N browsers appear simultaneously in the taskbar.
+            if startup_barrier is not None:
+                startup_barrier['count'] += 1
+                if startup_barrier['count'] >= startup_barrier['target']:
+                    startup_barrier['event'].set()
+                    self.emit_log(f'✓ All {startup_barrier["target"]} browsers now visible - starting work simultaneously')
+                await startup_barrier['event'].wait()
             
             try:
                 # Get proxy location once for the profile
@@ -21189,6 +21222,11 @@ class AutomationWorker(QObject):
                 
         except Exception as e:
             self.emit_log(f'Profile {profile_num} error: {e}', 'ERROR')
+            # Signal barrier on any exception to prevent deadlock
+            if startup_barrier is not None and not startup_barrier['event'].is_set():
+                startup_barrier['count'] += 1
+                if startup_barrier['count'] >= startup_barrier['target']:
+                    startup_barrier['event'].set()
             return False
     
     async def execute_browser_with_tabs(self, browser_num, url_list, num_tabs, platforms, visit_type,
@@ -21615,7 +21653,17 @@ class AutomationWorker(QObject):
             worker_counter = 0
             completed_count = 0
             
-            async def worker_task():
+            # STARTUP BARRIER: Ensures all N initial browsers are launched and visible
+            # before any starts executing its work. Same pattern as RPA mode.
+            # This guarantees all N concurrent browsers appear simultaneously in the taskbar.
+            normal_startup_barrier = {
+                'event': asyncio.Event(),
+                'count': 0,
+                'target': num_concurrent
+            }
+            initial_workers_spawned = 0
+            
+            async def worker_task(is_initial_worker=False):
                 """Single worker that processes one profile."""
                 nonlocal worker_counter, completed_count
                 
@@ -21633,12 +21681,17 @@ class AutomationWorker(QObject):
                             remaining = proxy_manager.get_remaining_proxies()
                             if remaining <= 0:
                                 self.emit_log(f'[Worker {worker_num}] No more proxies available, stopping', 'INFO')
+                                # Signal barrier on early exit to prevent deadlock
+                                if is_initial_worker and not normal_startup_barrier['event'].is_set():
+                                    normal_startup_barrier['count'] += 1
+                                    if normal_startup_barrier['count'] >= normal_startup_barrier['target']:
+                                        normal_startup_barrier['event'].set()
                                 return False
                             self.emit_log(f'[Worker {worker_num}] Starting (Proxies remaining: {remaining})')
                         else:
                             self.emit_log(f'[Worker {worker_num}] Starting')
                         
-                        # Execute single profile
+                        # Execute single profile, passing the startup barrier for initial workers
                         result = await self.execute_single_profile(
                             worker_num, url_list, platforms, visit_type,
                             search_keyword, target_domain, search_engine, referral_sources,
@@ -21646,7 +21699,8 @@ class AutomationWorker(QObject):
                             enable_interaction, enable_extra_pages, max_pages,
                             consent_manager, enable_text_highlight,
                             utm_campaign, utm_medium, utm_term, utm_content,
-                            high_cpc_enabled, high_cpc_url, high_cpc_target, high_cpc_stay_time
+                            high_cpc_enabled, high_cpc_url, high_cpc_target, high_cpc_stay_time,
+                            startup_barrier=normal_startup_barrier if is_initial_worker else None
                         )
                         
                         if result:
@@ -21659,12 +21713,18 @@ class AutomationWorker(QObject):
                         
                     except Exception as e:
                         self.emit_log(f'[Worker {worker_num}] Exception: {e}', 'ERROR')
+                        # Signal barrier on any exception to prevent deadlock
+                        if is_initial_worker and not normal_startup_barrier['event'].is_set():
+                            normal_startup_barrier['count'] += 1
+                            if normal_startup_barrier['count'] >= normal_startup_barrier['target']:
+                                normal_startup_barrier['event'].set()
                         return False
             
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             self.emit_log(f'Starting worker pool: {num_concurrent} concurrent browsers')
             self.emit_log(f'✓ Maintaining exactly {num_concurrent} visible browsers in taskbar at all times')
             self.emit_log(f'✓ Instant replacement: New browser spawns immediately when one closes')
+            self.emit_log(f'✓ Startup barrier: All {num_concurrent} browsers launch before any starts work')
             if proxy_manager.proxy_enabled and proxy_manager.get_proxy_count() > 0:
                 self.emit_log(f'✓ Proxy mode: Will continue until all {proxy_manager.get_proxy_count()} proxies consumed')
             else:
@@ -21695,7 +21755,10 @@ class AutomationWorker(QObject):
                         if proxy_manager.proxy_enabled and proxy_manager.get_remaining_proxies() <= 0:
                             break
                         
-                        task = asyncio.create_task(worker_task())
+                        # Mark the first N workers as initial (for startup barrier)
+                        is_initial = initial_workers_spawned < num_concurrent
+                        initial_workers_spawned += 1
+                        task = asyncio.create_task(worker_task(is_initial_worker=is_initial))
                         active_workers.append(task)
                         self.active_tasks.append(task)  # Track in worker's task list
                         spawned_this_round += 1
