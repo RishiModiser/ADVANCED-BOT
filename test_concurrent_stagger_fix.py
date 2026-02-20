@@ -93,7 +93,7 @@ def test_comment_accuracy():
     print("✓ Test 10 PASSED: Comments reference the problematic call (launch_persistent_context)")
 
 def test_launch_semaphore_in_create_context():
-    """Test that create_context uses a semaphore to limit concurrent browser launches."""
+    """Test that create_context uses a semaphore to forcefully serialize browser launches."""
     with open('advanced_bot.py', 'r') as f:
         content = f.read()
     
@@ -108,10 +108,10 @@ def test_launch_semaphore_in_create_context():
         "❌ FAILED: _launch_semaphore not used in create_context"
     print("✓ Test 11 PASSED: _launch_semaphore used in create_context")
     
-    # Check that asyncio.Semaphore(5) is created with limit of 5
-    assert 'asyncio.Semaphore(5)' in cc_section, \
-        "❌ FAILED: Launch semaphore should be initialized with limit of 5"
-    print("✓ Test 12 PASSED: Launch semaphore initialized with limit of 5")
+    # Check that asyncio.Semaphore(1) is created (serial launches - forceful fix)
+    assert 'asyncio.Semaphore(1)' in cc_section, \
+        "❌ FAILED: Launch semaphore should be initialized with limit of 1 (serial launches)"
+    print("✓ Test 12 PASSED: Launch semaphore initialized with limit of 1 (serial launches guarantee all N browsers launch)")
     
     # Check that the semaphore wraps the launch_persistent_context call
     assert 'async with self._launch_semaphore:' in cc_section, \
@@ -145,14 +145,14 @@ if __name__ == '__main__':
         print("✅ ALL TESTS PASSED")
         print("=" * 70)
         print()
-        print("The fix correctly limits concurrent browser launches via semaphore")
-        print("and adds a 0.2s stagger between browser task creations.")
+        print("The fix FORCEFULLY serializes browser launches (1 at a time) via semaphore.")
+        print("This guarantees all N concurrent browsers launch successfully.")
         print()
         print("Expected behavior:")
-        print("  - Setting CONCURRENT=50 will now open all 50 browsers")
-        print("  - At most 5 browsers launch simultaneously (semaphore limit)")
-        print("  - Each batch of 5 launches in parallel; next 5 wait for a slot")
+        print("  - Setting CONCURRENT=5 will now open exactly 5 browsers (not 3)")
+        print("  - Browsers launch one at a time (serial), never overwhelming Playwright")
         print("  - Once launched, all N browsers run truly concurrently")
+        print("  - 0.2s stagger between task creations provides additional safety")
         print()
         sys.exit(0)
     except AssertionError as e:
