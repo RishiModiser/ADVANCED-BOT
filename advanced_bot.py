@@ -18954,6 +18954,9 @@ class BrowserManager:
         self.active_contexts = []  # Track all active persistent contexts for cleanup
         self.imported_useragents = []  # Store imported useragents
         self.imported_cookies = []  # Store imported cookies
+        # Semaphore to limit concurrent browser launches (Playwright connection can only handle ~5)
+        # Initialized lazily in create_context() to ensure it's created in the running event loop
+        self._launch_semaphore: Optional[asyncio.Semaphore] = None
     
     async def initialize(self):
         """Initialize Playwright only (no browser launch with persistent contexts)."""
@@ -19065,12 +19068,20 @@ class BrowserManager:
             else:
                 self.log_manager.log('No proxy configured, using direct connection')
             
+            # Lazily create the launch semaphore in the running event loop.
+            # This limits concurrent launch_persistent_context calls to 5, preventing
+            # Playwright's connection from being overwhelmed when N > 5 concurrent browsers
+            # are all trying to launch at the same time.
+            if self._launch_semaphore is None:
+                self._launch_semaphore = asyncio.Semaphore(5)
+
             # Try to create persistent context with proxy
             try:
-                context = await self.playwright.chromium.launch_persistent_context(
-                    user_data_dir=str(user_data_dir),
-                    **context_options
-                )
+                async with self._launch_semaphore:
+                    context = await self.playwright.chromium.launch_persistent_context(
+                        user_data_dir=str(user_data_dir),
+                        **context_options
+                    )
                 # Store the temp directory path for cleanup
                 context._temp_profile_dir = user_data_dir
                 self.active_contexts.append(context)
@@ -19094,10 +19105,11 @@ class BrowserManager:
                     
                     # Retry without proxy (remove proxy from options)
                     context_options.pop('proxy', None)
-                    context = await self.playwright.chromium.launch_persistent_context(
-                        user_data_dir=str(user_data_dir),
-                        **context_options
-                    )
+                    async with self._launch_semaphore:
+                        context = await self.playwright.chromium.launch_persistent_context(
+                            user_data_dir=str(user_data_dir),
+                            **context_options
+                        )
                     self.active_contexts.append(context)
                     self.log_manager.log('✓ Browser context created with direct connection (proxy bypassed)')
                     proxy_location = None  # Clear proxy location since not using proxy
