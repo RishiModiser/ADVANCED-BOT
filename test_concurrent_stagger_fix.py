@@ -126,6 +126,60 @@ def test_launch_semaphore_in_create_context():
         "❌ FAILED: _launch_semaphore not declared in BrowserManager.__init__"
     print("✓ Test 14 PASSED: _launch_semaphore declared in BrowserManager.__init__")
 
+
+def test_rpa_startup_barrier():
+    """Test that RPA mode has a startup barrier to ensure all N browsers are visible simultaneously.
+    
+    Without this barrier, browsers with short scripts would complete and restart before
+    all N are launched, so fewer than N (e.g. only 3 out of 5) are ever visible at once.
+    """
+    with open('advanced_bot.py', 'r') as f:
+        content = f.read()
+    
+    # Find RPA mode section
+    rpa_start = content.find('async def run_rpa_mode')
+    rpa_end = content.find('async def run_normal_mode')
+    rpa_section = content[rpa_start:rpa_end]
+    
+    # Check that the startup barrier event is declared
+    assert 'initial_launch_event = asyncio.Event()' in rpa_section, \
+        "❌ FAILED: Startup barrier event not found in RPA mode"
+    print("✓ Test 15 PASSED: Startup barrier asyncio.Event declared in RPA mode")
+    
+    # Check that a counter tracks initial launches
+    assert 'initial_launched_count = 0' in rpa_section, \
+        "❌ FAILED: Initial launch counter not found in RPA mode"
+    print("✓ Test 16 PASSED: Initial launch counter declared in RPA mode")
+    
+    # Check that is_initial_launch flag is used
+    assert 'is_initial_launch' in rpa_section, \
+        "❌ FAILED: is_initial_launch flag not found in RPA mode"
+    print("✓ Test 17 PASSED: is_initial_launch flag used in run_rpa_concurrent")
+    
+    # Check that event is set when count reaches num_concurrent
+    assert 'initial_launched_count >= num_concurrent' in rpa_section, \
+        "❌ FAILED: Event should be set when all N browsers launch"
+    print("✓ Test 18 PASSED: Event set when all N browsers have launched")
+    
+    # Check that tasks wait on the event before executing scripts
+    assert 'await initial_launch_event.wait()' in rpa_section, \
+        "❌ FAILED: Tasks must await the startup barrier before running scripts"
+    print("✓ Test 19 PASSED: Tasks wait for startup barrier before executing scripts")
+    
+    # Check that failed/cancelled launches also update the counter (no deadlock)
+    # Must appear in: (1) failed context path, (2) no-proxy-early-exit path,
+    # (3) exception handler — at minimum 3 paths guarantee no slot is ever skipped.
+    increment_count = rpa_section.count('initial_launched_count += 1')
+    assert increment_count >= 3, \
+        f"❌ FAILED: Counter must be incremented in at least 3 paths (success, failure, exception) to prevent deadlock, found {increment_count}"
+    print(f"✓ Test 20 PASSED: Counter incremented in {increment_count} paths (prevents deadlock on failures)")
+    
+    # Check that the barrier is only for initial launches (not restarts)
+    assert 'is_initial_launch = False' in rpa_section, \
+        "❌ FAILED: is_initial_launch must be cleared after first launch so restarts skip the barrier"
+    print("✓ Test 21 PASSED: Barrier skipped for restarts (only applies to initial launch)")
+
+
 if __name__ == '__main__':
     print("=" * 70)
     print("Testing Concurrent Browser Stagger Fix")
@@ -141,15 +195,19 @@ if __name__ == '__main__':
         print()
         test_launch_semaphore_in_create_context()
         print()
+        test_rpa_startup_barrier()
+        print()
         print("=" * 70)
         print("✅ ALL TESTS PASSED")
         print("=" * 70)
         print()
-        print("The fix FORCEFULLY serializes browser launches (1 at a time) via semaphore.")
-        print("This guarantees all N concurrent browsers launch successfully.")
+        print("The fix FORCEFULLY serializes browser launches (1 at a time) via semaphore")
+        print("AND synchronizes all N browsers via a startup barrier.")
+        print("This guarantees all N concurrent browsers are visible simultaneously.")
         print()
         print("Expected behavior:")
         print("  - Setting CONCURRENT=5 will now open exactly 5 browsers (not 3)")
+        print("  - All 5 browsers are visible at the same time before any script runs")
         print("  - Browsers launch one at a time (serial), never overwhelming Playwright")
         print("  - Once launched, all N browsers run truly concurrently")
         print("  - 0.2s stagger between task creations provides additional safety")

@@ -21380,11 +21380,18 @@ class AutomationWorker(QObject):
             
             # Track running concurrent browsers in the worker's active_tasks list
             concurrent_counter = 0
-            
+
+            # STARTUP BARRIER: Ensures all N browsers are launched and visible before any
+            # starts executing scripts. Without this, browsers with short scripts complete
+            # and restart before all N are launched, so fewer than N are ever visible at once.
+            initial_launch_event = asyncio.Event()
+            initial_launched_count = 0
+
             async def run_rpa_concurrent(concurrent_num):
                 """Run a single RPA concurrent browser with automatic continuous restart."""
-                nonlocal concurrent_counter
-                
+                nonlocal concurrent_counter, initial_launched_count
+                is_initial_launch = True  # True only for the very first launch of this slot
+
                 # Continuous loop - runs indefinitely until stopped or no more proxies
                 while self.running:
                     context = None
@@ -21401,6 +21408,12 @@ class AutomationWorker(QObject):
                             remaining = proxy_manager.get_remaining_proxies()
                             if remaining <= 0:
                                 self.emit_log(f'[Concurrent {concurrent_num}] No more proxies available, stopping', 'INFO')
+                                if is_initial_launch:
+                                    # Count so other slots don't wait forever
+                                    initial_launched_count += 1
+                                    if initial_launched_count >= num_concurrent:
+                                        initial_launch_event.set()
+                                    is_initial_launch = False
                                 break
                             self.emit_log(f'[Concurrent {concurrent_num}] Starting | Platform: {platform} | Proxies: {remaining}')
                         else:
@@ -21412,9 +21425,26 @@ class AutomationWorker(QObject):
                         
                         if not context:
                             self.emit_log(f'[Concurrent {concurrent_num}] Failed to create context, retrying in 2s...', 'WARNING')
+                            if is_initial_launch:
+                                # Count failed launches so other slots don't wait forever
+                                initial_launched_count += 1
+                                if initial_launched_count >= num_concurrent:
+                                    initial_launch_event.set()
+                                is_initial_launch = False
                             await asyncio.sleep(2)
                             continue
                         
+                        # STARTUP BARRIER: signal that this slot has its first browser open,
+                        # then wait until every slot has launched before running any script.
+                        # This guarantees all N browsers are visible simultaneously.
+                        if is_initial_launch:
+                            initial_launched_count += 1
+                            if initial_launched_count >= num_concurrent:
+                                initial_launch_event.set()
+                                self.emit_log(f'✓ All {num_concurrent} browsers now visible - starting scripts simultaneously')
+                            is_initial_launch = False
+                            await initial_launch_event.wait()
+
                         # Execute RPA script
                         script_executor = ScriptExecutor(self.log_manager, consent_manager)
                         self.emit_log(f'[Concurrent {concurrent_num}] Executing RPA script...')
@@ -21427,6 +21457,13 @@ class AutomationWorker(QObject):
                         
                     except Exception as e:
                         self.emit_log(f'[Concurrent {concurrent_num}] Error: {e}', 'ERROR')
+
+                        # Ensure the barrier counter is updated even on unexpected errors
+                        if is_initial_launch:
+                            initial_launched_count += 1
+                            if initial_launched_count >= num_concurrent:
+                                initial_launch_event.set()
+                            is_initial_launch = False
                         
                         # If proxy failed, try next proxy
                         if 'proxy' in str(e).lower() or 'net::ERR' in str(e):
