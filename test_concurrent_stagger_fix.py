@@ -180,6 +180,130 @@ def test_rpa_startup_barrier():
     print("✓ Test 21 PASSED: Barrier skipped for restarts (only applies to initial launch)")
 
 
+def test_normal_mode_startup_barrier():
+    """Test that Normal mode has a startup barrier to ensure all N browsers are visible simultaneously.
+    
+    Without this barrier, browsers with short work cycles complete and close before
+    all N are launched, so fewer than N are ever visible at once.
+    """
+    with open('advanced_bot.py', 'r') as f:
+        content = f.read()
+    
+    # Find Normal mode section
+    normal_start = content.find('async def run_normal_mode')
+    # Find next top-level async def
+    search_pos = normal_start + 1000
+    while search_pos < len(content):
+        if content[search_pos:search_pos+14] == '\n    async def ':
+            break
+        search_pos += 1
+    normal_section = content[normal_start:search_pos] if search_pos < len(content) else content[normal_start:]
+    
+    # Check that startup barrier event is declared
+    assert 'normal_startup_barrier' in normal_section, \
+        "❌ FAILED: Startup barrier not found in Normal mode"
+    print("✓ Test 22 PASSED: Startup barrier declared in Normal mode")
+    
+    # Check that asyncio.Event() is used for the barrier
+    assert "asyncio.Event()" in normal_section, \
+        "❌ FAILED: asyncio.Event() not found in Normal mode"
+    print("✓ Test 23 PASSED: asyncio.Event() used for barrier in Normal mode")
+    
+    # Check that target count is num_concurrent
+    assert "'target': num_concurrent" in normal_section, \
+        "❌ FAILED: Barrier target should be num_concurrent"
+    print("✓ Test 24 PASSED: Barrier target set to num_concurrent in Normal mode")
+    
+    # Check that initial_workers_spawned tracks which workers are initial
+    assert 'initial_workers_spawned' in normal_section, \
+        "❌ FAILED: initial_workers_spawned tracker not found in Normal mode"
+    print("✓ Test 25 PASSED: initial_workers_spawned tracks initial batch in Normal mode")
+    
+    # Check that is_initial_worker flag is passed to worker_task
+    assert 'is_initial_worker=is_initial' in normal_section or 'is_initial_worker=' in normal_section, \
+        "❌ FAILED: is_initial_worker flag not passed to worker_task"
+    print("✓ Test 26 PASSED: is_initial_worker flag passed to worker_task in Normal mode")
+    
+    # Check that worker_task passes startup_barrier to execute_single_profile
+    assert 'startup_barrier=normal_startup_barrier if is_initial_worker else None' in normal_section, \
+        "❌ FAILED: startup_barrier not passed to execute_single_profile for initial workers"
+    print("✓ Test 27 PASSED: startup_barrier passed to execute_single_profile for initial workers only")
+
+
+def test_execute_single_profile_startup_barrier():
+    """Test that execute_single_profile handles the startup barrier correctly."""
+    with open('advanced_bot.py', 'r') as f:
+        content = f.read()
+    
+    # Find execute_single_profile section
+    esp_start = content.find('async def execute_single_profile(')
+    esp_end = content.find('\n    async def execute_browser_with_tabs', esp_start)
+    esp_section = content[esp_start:esp_end] if esp_end != -1 else content[esp_start:]
+    
+    # Check that startup_barrier parameter exists
+    assert 'startup_barrier=None' in esp_section, \
+        "❌ FAILED: startup_barrier parameter not in execute_single_profile"
+    print("✓ Test 28 PASSED: startup_barrier parameter added to execute_single_profile")
+    
+    # Check that barrier is signaled after successful context creation
+    assert "startup_barrier['count'] += 1" in esp_section, \
+        "❌ FAILED: Barrier count increment not found in execute_single_profile"
+    print("✓ Test 29 PASSED: Barrier count incremented after context creation in execute_single_profile")
+    
+    # Check that all N event is set when count reaches target
+    assert "startup_barrier['count'] >= startup_barrier['target']" in esp_section, \
+        "❌ FAILED: Barrier event set condition not found in execute_single_profile"
+    print("✓ Test 30 PASSED: Barrier event set when all N browsers launched in execute_single_profile")
+    
+    # Check that tasks wait on the barrier before executing
+    assert "await startup_barrier['event'].wait()" in esp_section, \
+        "❌ FAILED: Barrier wait not found in execute_single_profile"
+    print("✓ Test 31 PASSED: execute_single_profile waits on startup barrier before running")
+    
+    # Check deadlock prevention on failure paths (at least 2 paths)
+    increment_count = esp_section.count("startup_barrier['count'] += 1")
+    assert increment_count >= 2, \
+        f"❌ FAILED: Barrier increment should appear in at least 2 paths (success + failure), found {increment_count}"
+    print(f"✓ Test 32 PASSED: Barrier incremented in {increment_count} paths (prevents deadlock)")
+    
+    # Check that startup_barrier is passed through to execute_high_cpc_mode
+    assert 'startup_barrier=startup_barrier' in esp_section, \
+        "❌ FAILED: startup_barrier not passed through to execute_high_cpc_mode"
+    print("✓ Test 33 PASSED: startup_barrier forwarded to execute_high_cpc_mode")
+
+
+def test_execute_high_cpc_mode_startup_barrier():
+    """Test that execute_high_cpc_mode handles the startup barrier correctly."""
+    with open('advanced_bot.py', 'r') as f:
+        content = f.read()
+    
+    # Find execute_high_cpc_mode section
+    hcpc_start = content.find('async def execute_high_cpc_mode(')
+    hcpc_end = content.find('\n    async def execute_single_profile', hcpc_start)
+    hcpc_section = content[hcpc_start:hcpc_end] if hcpc_end != -1 else content[hcpc_start:]
+    
+    # Check that startup_barrier parameter exists
+    assert 'startup_barrier=None' in hcpc_section, \
+        "❌ FAILED: startup_barrier parameter not in execute_high_cpc_mode"
+    print("✓ Test 34 PASSED: startup_barrier parameter added to execute_high_cpc_mode")
+    
+    # Check barrier signaling after context creation
+    assert "startup_barrier['count'] += 1" in hcpc_section, \
+        "❌ FAILED: Barrier count increment not found in execute_high_cpc_mode"
+    print("✓ Test 35 PASSED: Barrier count incremented in execute_high_cpc_mode")
+    
+    # Check that all N event is set
+    assert "startup_barrier['count'] >= startup_barrier['target']" in hcpc_section, \
+        "❌ FAILED: Barrier event set condition not found in execute_high_cpc_mode"
+    print("✓ Test 36 PASSED: Barrier event set when all N browsers launched in execute_high_cpc_mode")
+    
+    # Check deadlock prevention (both success and failure paths)
+    increment_count = hcpc_section.count("startup_barrier['count'] += 1")
+    assert increment_count >= 2, \
+        f"❌ FAILED: Barrier increment should appear in at least 2 paths, found {increment_count}"
+    print(f"✓ Test 37 PASSED: Barrier incremented in {increment_count} paths in execute_high_cpc_mode")
+
+
 if __name__ == '__main__':
     print("=" * 70)
     print("Testing Concurrent Browser Stagger Fix")
@@ -197,6 +321,12 @@ if __name__ == '__main__':
         print()
         test_rpa_startup_barrier()
         print()
+        test_normal_mode_startup_barrier()
+        print()
+        test_execute_single_profile_startup_barrier()
+        print()
+        test_execute_high_cpc_mode_startup_barrier()
+        print()
         print("=" * 70)
         print("✅ ALL TESTS PASSED")
         print("=" * 70)
@@ -205,12 +335,12 @@ if __name__ == '__main__':
         print("AND synchronizes all N browsers via a startup barrier.")
         print("This guarantees all N concurrent browsers are visible simultaneously.")
         print()
-        print("Expected behavior:")
-        print("  - Setting CONCURRENT=5 will now open exactly 5 browsers (not 3)")
-        print("  - All 5 browsers are visible at the same time before any script runs")
+        print("Expected behavior (both RPA mode and Normal mode):")
+        print("  - Setting CONCURRENT=10 will open exactly 10 browsers (not fewer)")
+        print("  - All 10 browsers are visible at the same time before any work starts")
         print("  - Browsers launch one at a time (serial), never overwhelming Playwright")
-        print("  - Once launched, all N browsers run truly concurrently")
-        print("  - 0.2s stagger between task creations provides additional safety")
+        print("  - Once launched, all N browsers work truly concurrently")
+        print("  - 0.2s stagger between task/worker creations provides additional safety")
         print()
         sys.exit(0)
     except AssertionError as e:
