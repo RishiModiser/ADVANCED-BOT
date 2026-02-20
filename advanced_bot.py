@@ -18954,7 +18954,8 @@ class BrowserManager:
         self.active_contexts = []  # Track all active persistent contexts for cleanup
         self.imported_useragents = []  # Store imported useragents
         self.imported_cookies = []  # Store imported cookies
-        # Semaphore to limit concurrent browser launches (Playwright connection can only handle ~5)
+        # Semaphore to FORCEFULLY serialize browser launches (1 at a time) so Playwright's
+        # connection is never overwhelmed. Guarantees all N concurrent browsers launch successfully.
         # Initialized lazily in create_context() to ensure it's created in the running event loop
         self._launch_semaphore: Optional[asyncio.Semaphore] = None
     
@@ -19069,11 +19070,14 @@ class BrowserManager:
                 self.log_manager.log('No proxy configured, using direct connection')
             
             # Lazily create the launch semaphore in the running event loop.
-            # This limits concurrent launch_persistent_context calls to 5, preventing
-            # Playwright's connection from being overwhelmed when N > 5 concurrent browsers
-            # are all trying to launch at the same time.
+            # FORCEFUL FIX: Limit to 1 concurrent launch_persistent_context call at a time
+            # (serial launches). Playwright's connection can only handle ~5 concurrent launches,
+            # but even with 5 concurrent the connection is overwhelmed when N >= 5 is selected,
+            # causing fewer than N browsers to appear. Serializing (1 at a time) guarantees
+            # ALL N browsers launch successfully regardless of concurrent count.
+            # Once launched, all N browsers run truly concurrently — only the launch is serial.
             if self._launch_semaphore is None:
-                self._launch_semaphore = asyncio.Semaphore(5)
+                self._launch_semaphore = asyncio.Semaphore(1)
 
             # Try to create persistent context with proxy
             try:
