@@ -23,35 +23,54 @@ from pathlib import Path
 
 # Check for required dependencies before importing them
 def check_dependencies():
-    """Check if required packages are installed and provide helpful error messages."""
+    """Check if required packages are installed and auto-install if missing."""
     missing_packages = []
-    
+
     try:
         import PySide6
     except ImportError:
-        missing_packages.append('PySide6')
-    
+        missing_packages.append('PySide6>=6.6.1')
+
     try:
         import playwright
     except ImportError:
-        missing_packages.append('playwright')
-    
+        missing_packages.append('playwright>=1.40.0')
+
     if missing_packages:
         print("\n" + "="*70)
-        print("ERROR: Missing Required Dependencies")
+        print("First-Time Setup: Installing missing dependencies")
         print("="*70)
-        print(f"\nThe following packages are not installed: {', '.join(missing_packages)}")
-        print("\nTo fix this issue, please run:")
-        print("\n    pip install -r requirements.txt")
-        print("\nThis will install all required dependencies including:")
-        print("  - PySide6 (GUI framework)")
-        print("  - playwright (browser automation)")
-        print("  - python-dateutil (date utilities)")
-        print("\nAfter installation, you also need to install Playwright browsers:")
-        print("\n    playwright install chromium")
-        print("\nFor more details, see README.md")
-        print("="*70 + "\n")
-        sys.exit(1)
+        print(f"\nPackages to install: {', '.join(missing_packages)}")
+        print("\nThis is a one-time setup. Please wait...")
+        print("="*70)
+
+        try:
+            import subprocess as _sp
+            _sp.check_call(
+                [sys.executable, '-m', 'pip', 'install', '--upgrade'] + missing_packages,
+            )
+            print("\n" + "="*70)
+            print("Dependencies installed successfully!")
+            print("Installing remaining requirements...")
+            print("="*70)
+            # Install full requirements.txt for completeness
+            _req_file = Path(__file__).parent / 'requirements.txt'
+            if _req_file.exists():
+                _sp.check_call(
+                    [sys.executable, '-m', 'pip', 'install', '-r', str(_req_file)],
+                )
+            print("\nRestarting application...")
+            print("="*70 + "\n")
+            # Re-execute this script so newly installed packages are importable
+            import os
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except Exception as e:
+            print(f"\nAuto-installation failed: {e}")
+            print("\nPlease install dependencies manually:")
+            print("\n    pip install -r requirements.txt")
+            print("\nFor more details, see README.md")
+            print("="*70 + "\n")
+            sys.exit(1)
 
 # Run dependency check
 check_dependencies()
@@ -24671,39 +24690,48 @@ class AppGUI(QMainWindow):
 
 def check_browser_installation():
     """Check if Playwright browsers are installed."""
-    try:
-        result = subprocess.run(
-            ['playwright', 'install', '--dry-run', 'chromium'],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        # Check if dry-run succeeded
-        if result.returncode == 0:
-            return True
-    except Exception:
-        pass
-    
-    # Fallback: check if browser exists in cache (any version)
+    # Try using the Python-module form (most reliable across platforms)
+    for cmd in (
+        [sys.executable, '-m', 'playwright', 'install', '--dry-run', 'chromium'],
+        ['playwright', 'install', '--dry-run', 'chromium'],
+    ):
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                return True
+        except Exception:
+            continue
+
+    # Fallback: check if browser exists in the Playwright cache directory
     try:
         home_dir = Path.home()
-        playwright_cache = home_dir / '.cache' / 'ms-playwright'
-        if playwright_cache.exists():
-            # Look for any chromium-* directory
-            chromium_dirs = list(playwright_cache.glob('chromium-*'))
+        # Playwright stores browsers under ~/.cache/ms-playwright on Linux/Mac
+        # and %LOCALAPPDATA%\ms-playwright on Windows
+        import platform
+        if platform.system() == 'Windows':
+            import os
+            cache_base = Path(os.environ.get('LOCALAPPDATA', home_dir)) / 'ms-playwright'
+        else:
+            cache_base = home_dir / '.cache' / 'ms-playwright'
+        if cache_base.exists():
+            chromium_dirs = list(cache_base.glob('chromium-*'))
             if chromium_dirs:
                 return True
     except Exception:
         pass
-    
+
     return False
 
 
 def auto_install_browser(parent=None):
     """Automatically install Playwright Chromium browser with progress dialog."""
     from PySide6.QtWidgets import QProgressDialog
-    from PySide6.QtCore import QTimer
-    
+
     # Create progress dialog
     progress = QProgressDialog(
         "Downloading Playwright Chromium browser...\n\n"
@@ -24718,49 +24746,56 @@ def auto_install_browser(parent=None):
     progress.setMinimumDuration(0)
     progress.setValue(0)
     progress.show()
-    
+
     # Force UI update
     QApplication.processEvents()
-    
+
     success = False
     error_message = ""
-    
-    try:
-        # Run playwright install
-        process = subprocess.Popen(
-            ['playwright', 'install', 'chromium'],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1
-        )
-        
-        # Read output line by line
-        for line in process.stdout:
-            # Update progress dialog with current line
-            if 'Downloading' in line or 'Installing' in line or '%' in line:
-                progress.setLabelText(
-                    f"Downloading Playwright Chromium browser...\n\n"
-                    f"{line.strip()}\n\n"
-                    f"Please wait, this may take 1-2 minutes..."
-                )
-                QApplication.processEvents()
-        
-        # Wait for completion
-        process.wait()
-        
-        if process.returncode == 0:
-            success = True
-        else:
-            error_message = f"Installation failed with exit code {process.returncode}"
-    
-    except FileNotFoundError:
-        error_message = "Playwright command not found. Please ensure Playwright is installed."
-    except Exception as e:
-        error_message = f"Installation error: {str(e)}"
-    
+
+    # Prefer the Python-module invocation so it always uses the correct
+    # Playwright installation even when 'playwright' is not on PATH.
+    install_cmds = [
+        [sys.executable, '-m', 'playwright', 'install', 'chromium'],
+        ['playwright', 'install', 'chromium'],
+    ]
+
+    for cmd in install_cmds:
+        try:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+
+            # Read output line by line and update the progress dialog
+            for line in process.stdout:
+                if 'Downloading' in line or 'Installing' in line or '%' in line:
+                    progress.setLabelText(
+                        f"Downloading Playwright Chromium browser...\n\n"
+                        f"{line.strip()}\n\n"
+                        f"Please wait, this may take 1-2 minutes..."
+                    )
+                    QApplication.processEvents()
+
+            process.wait()
+
+            if process.returncode == 0:
+                success = True
+                error_message = ""
+                break
+            else:
+                error_message = f"Installation failed with exit code {process.returncode}"
+
+        except FileNotFoundError:
+            error_message = "Playwright command not found. Please ensure Playwright is installed."
+        except Exception as e:
+            error_message = f"Installation error: {str(e)}"
+
     progress.close()
-    
+
     return success, error_message
 
 
