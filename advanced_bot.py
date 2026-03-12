@@ -20957,8 +20957,52 @@ class AutomationWorker(QObject):
                     
         except Exception as e:
             self.emit_log(f'Random clicks error: {e}', 'WARNING')
-    
-    
+
+    async def _perform_custom_element_clicks(self, page: Page, selector: str, num_clicks: int):
+        """Perform clicks on elements matching a custom CSS selector."""
+        try:
+            if not selector or not selector.strip():
+                self.emit_log('Custom element click: no selector provided', 'WARNING')
+                return
+
+            selector = selector.strip()
+            elements = []
+            try:
+                elements = await page.query_selector_all(selector)
+            except Exception as sel_error:
+                self.emit_log(f'Custom element click: invalid selector "{selector}": {sel_error}', 'WARNING')
+                return
+
+            visible_elements = []
+            for elem in elements:
+                try:
+                    if await elem.is_visible():
+                        visible_elements.append(elem)
+                except Exception:
+                    continue
+
+            if not visible_elements:
+                self.emit_log(f'Custom element click: no visible elements found for selector "{selector}"')
+                return
+
+            self.emit_log(f'Custom element click: found {len(visible_elements)} visible element(s) matching "{selector}"')
+            clicks_done = 0
+            for i in range(min(num_clicks, len(visible_elements))):
+                try:
+                    element = visible_elements[i]
+                    if await element.is_visible():
+                        await HumanBehavior.random_delay(500, 1500)
+                        await element.click(timeout=5000)
+                        clicks_done += 1
+                        self.emit_log(f'Custom element click {clicks_done}/{num_clicks}: clicked "{selector}"')
+                        await asyncio.sleep(random.uniform(0.5, 1.5))
+                except Exception as click_err:
+                    self.emit_log(f'Custom element click {i+1} skipped: {str(click_err)[:60]}', 'WARNING')
+                    continue
+
+        except Exception as e:
+            self.emit_log(f'Custom element clicks error: {e}', 'WARNING')
+
     async def execute_single_visit(self, visit_num, url_list, platforms, visit_type, 
                                    search_keyword, target_domain, search_engine, referral_sources,
                                    min_time_spend, max_time_spend, enable_consent, 
@@ -21071,7 +21115,9 @@ class AutomationWorker(QObject):
                                   min_time_spend, max_time_spend, enable_consent,
                                   enable_interaction, enable_extra_pages, max_pages,
                                   consent_manager, enable_highlight=False,
-                                  utm_campaign='', utm_medium='social', utm_term='', utm_content=''):
+                                  utm_campaign='', utm_medium='social', utm_term='', utm_content='',
+                                  enable_random_clicks=False, random_clicks_count=3,
+                                  enable_custom_clicks=False, custom_click_selector='', custom_click_count=1):
         """Execute a single visit within a browser profile."""
         try:
             self.emit_log(f'[Visit {visit_num}] Processing URL: {target_url[:50]}...')
@@ -21110,6 +21156,16 @@ class AutomationWorker(QObject):
             await HumanBehavior.time_based_browsing(page, min_time_spend, max_time_spend, enable_highlight, 
                                                    consent_mgr, self.log_manager)
             
+            # Perform random clicks if enabled
+            if enable_random_clicks and random_clicks_count > 0:
+                self.emit_log(f'[Visit {visit_num}] Performing {random_clicks_count} random click(s)...')
+                await self._perform_random_clicks(page, random_clicks_count)
+
+            # Perform custom element clicks if enabled
+            if enable_custom_clicks and custom_click_selector and custom_click_count > 0:
+                self.emit_log(f'[Visit {visit_num}] Performing {custom_click_count} custom element click(s) on "{custom_click_selector}"...')
+                await self._perform_custom_element_clicks(page, custom_click_selector, custom_click_count)
+
             # Handle interaction if enabled (legacy mode)
             if enable_interaction:
                 await self.handle_interaction(page, max_pages, enable_extra_pages)
@@ -21128,7 +21184,9 @@ class AutomationWorker(QObject):
                                      consent_manager, enable_highlight=False,
                                      utm_campaign='', utm_medium='social', utm_term='', utm_content='',
                                      high_cpc_enabled=False, high_cpc_url='', high_cpc_target='', high_cpc_stay_time=180,
-                                     startup_barrier=None):
+                                     startup_barrier=None,
+                                     enable_random_clicks=False, random_clicks_count=3,
+                                     enable_custom_clicks=False, custom_click_selector='', custom_click_count=1):
         """Execute a single browser profile with one page."""
         try:
             # Check if HIGH CPC/CPM Mode is enabled
@@ -21223,7 +21281,12 @@ class AutomationWorker(QObject):
                     time_to_spend, time_to_spend, enable_consent,  # Use same time for both min/max
                     enable_interaction, enable_extra_pages, max_pages,
                     consent_manager, enable_highlight,
-                    utm_campaign, utm_medium, utm_term, utm_content
+                    utm_campaign, utm_medium, utm_term, utm_content,
+                    enable_random_clicks=enable_random_clicks,
+                    random_clicks_count=random_clicks_count,
+                    enable_custom_clicks=enable_custom_clicks,
+                    custom_click_selector=custom_click_selector,
+                    custom_click_count=custom_click_count
                 )
                 
                 # Close page
@@ -21552,10 +21615,10 @@ class AutomationWorker(QObject):
                     concurrent_counter += 1
                     task = asyncio.create_task(run_rpa_concurrent(concurrent_counter))
                     self.active_tasks.append(task)  # Track in worker's task list
-                    # Small stagger (0.2s) between launches to avoid overwhelming Playwright connection
-                    # Playwright's connection can only handle ~5 concurrent launch_persistent_context calls
+                    # Small stagger (0.05s) between task spawns. The _launch_semaphore already
+                    # serialises actual browser launches so we only need a minimal yield here.
                     if i < num_concurrent - 1:  # Don't delay after the last one
-                        await asyncio.sleep(0.2)
+                        await asyncio.sleep(0.05)
                 
                 # Verify all tasks were created
                 self.emit_log(f'✓ Created {len(self.active_tasks)} concurrent browser tasks')
@@ -21609,6 +21672,13 @@ class AutomationWorker(QObject):
             enable_popups = self.config.get('enable_popups', True)
             enable_text_highlight = self.config.get('enable_text_highlight', False)
             
+            # Click behaviour configuration
+            enable_random_clicks = self.config.get('enable_random_clicks', False)
+            random_clicks_count = self.config.get('random_clicks_count', 3)
+            enable_custom_clicks = self.config.get('enable_custom_clicks', False)
+            custom_click_selector = self.config.get('custom_click_selector', '')
+            custom_click_count = self.config.get('custom_click_count', 1)
+
             # HIGH CPC/CPM Mode configuration
             high_cpc_enabled = self.config.get('high_cpc_enabled', False)
             high_cpc_url = self.config.get('high_cpc_url', '')
@@ -21719,7 +21789,12 @@ class AutomationWorker(QObject):
                             consent_manager, enable_text_highlight,
                             utm_campaign, utm_medium, utm_term, utm_content,
                             high_cpc_enabled, high_cpc_url, high_cpc_target, high_cpc_stay_time,
-                            startup_barrier=normal_startup_barrier if is_initial_worker else None
+                            startup_barrier=normal_startup_barrier if is_initial_worker else None,
+                            enable_random_clicks=enable_random_clicks,
+                            random_clicks_count=random_clicks_count,
+                            enable_custom_clicks=enable_custom_clicks,
+                            custom_click_selector=custom_click_selector,
+                            custom_click_count=custom_click_count
                         )
                         
                         if result:
@@ -21782,10 +21857,12 @@ class AutomationWorker(QObject):
                         self.active_tasks.append(task)  # Track in worker's task list
                         spawned_this_round += 1
                         initial_spawn_count += 1
-                        # Small stagger (0.2s) to avoid overwhelming Playwright connection
-                        # Playwright's connection can only handle ~5 concurrent launch_persistent_context calls
+                        # Small stagger (0.05s) to avoid overwhelming Playwright connection.
+                        # The _launch_semaphore already serialises actual browser launches,
+                        # so the task-spawn stagger only needs to be long enough to prevent
+                        # asyncio being flooded with tasks at once.
                         if len(active_workers) < num_concurrent:  # Don't delay if we've reached the limit
-                            await asyncio.sleep(0.2)
+                            await asyncio.sleep(0.05)
                     
                     # Log initial spawn completion
                     if spawned_this_round > 0 and initial_spawn_count <= num_concurrent:
@@ -22945,6 +23022,62 @@ class AppGUI(QMainWindow):
         
         consent_group.setLayout(consent_layout)
         layout.addWidget(consent_group)
+
+        # Random Clicks
+        random_clicks_group = QGroupBox('🖱️ Random Clicks')
+        random_clicks_layout = QVBoxLayout()
+        random_clicks_layout.setSpacing(10)
+
+        self.enable_random_clicks = QCheckBox('✅ Enable Random Clicks')
+        self.enable_random_clicks.setChecked(False)
+        self.enable_random_clicks.stateChanged.connect(self.toggle_random_clicks_settings)
+        random_clicks_layout.addWidget(self.enable_random_clicks)
+
+        random_clicks_info = QLabel('ℹ️ Clicks randomly on visible links, buttons and interactive elements after browsing')
+        random_clicks_info.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
+        random_clicks_info.setWordWrap(True)
+        random_clicks_layout.addWidget(random_clicks_info)
+
+        random_clicks_layout.addWidget(QLabel('🔢 Number of Random Clicks:'))
+        self.random_clicks_count_input = QSpinBox()
+        self.random_clicks_count_input.setRange(1, 20)
+        self.random_clicks_count_input.setValue(3)
+        self.random_clicks_count_input.setEnabled(False)
+        random_clicks_layout.addWidget(self.random_clicks_count_input)
+
+        random_clicks_group.setLayout(random_clicks_layout)
+        layout.addWidget(random_clicks_group)
+
+        # Custom Element Clicks
+        custom_clicks_group = QGroupBox('🎯 Custom Element Clicks')
+        custom_clicks_layout = QVBoxLayout()
+        custom_clicks_layout.setSpacing(10)
+
+        self.enable_custom_clicks = QCheckBox('✅ Enable Custom Element Clicks')
+        self.enable_custom_clicks.setChecked(False)
+        self.enable_custom_clicks.stateChanged.connect(self.toggle_custom_clicks_settings)
+        custom_clicks_layout.addWidget(self.enable_custom_clicks)
+
+        custom_clicks_info = QLabel('ℹ️ Clicks elements matching a CSS selector (e.g. ".btn-primary", "#submit", "a.nav-link")')
+        custom_clicks_info.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
+        custom_clicks_info.setWordWrap(True)
+        custom_clicks_layout.addWidget(custom_clicks_info)
+
+        custom_clicks_layout.addWidget(QLabel('🔍 CSS Selector:'))
+        self.custom_click_selector_input = QLineEdit()
+        self.custom_click_selector_input.setPlaceholderText('e.g. .btn-primary  or  a[href*="product"]')
+        self.custom_click_selector_input.setEnabled(False)
+        custom_clicks_layout.addWidget(self.custom_click_selector_input)
+
+        custom_clicks_layout.addWidget(QLabel('🔢 Number of Clicks:'))
+        self.custom_click_count_input = QSpinBox()
+        self.custom_click_count_input.setRange(1, 20)
+        self.custom_click_count_input.setValue(1)
+        self.custom_click_count_input.setEnabled(False)
+        custom_clicks_layout.addWidget(self.custom_click_count_input)
+
+        custom_clicks_group.setLayout(custom_clicks_layout)
+        layout.addWidget(custom_clicks_group)
         
         layout.addStretch()
         
@@ -22956,7 +23089,18 @@ class AppGUI(QMainWindow):
         # PySide6 stateChanged emits int (0=unchecked, 2=checked), compare with enum or value
         enabled = state in (Qt.Checked, Qt.Checked.value)
         self.max_pages_input.setEnabled(enabled)
-    
+
+    def toggle_random_clicks_settings(self, state):
+        """Enable/disable random clicks count input based on checkbox state."""
+        enabled = state in (Qt.Checked, Qt.Checked.value)
+        self.random_clicks_count_input.setEnabled(enabled)
+
+    def toggle_custom_clicks_settings(self, state):
+        """Enable/disable custom element click inputs based on checkbox state."""
+        enabled = state in (Qt.Checked, Qt.Checked.value)
+        self.custom_click_selector_input.setEnabled(enabled)
+        self.custom_click_count_input.setEnabled(enabled)
+
     def toggle_rpa_mode(self, state):
         """Enable/disable other features based on RPA mode checkbox state.
         
@@ -23037,6 +23181,13 @@ class AppGUI(QMainWindow):
         self.enable_mouse_movement.setEnabled(not disable_features)
         self.enable_idle_pauses.setEnabled(not disable_features)
         self.max_pages_input.setEnabled(not disable_features)
+
+        # Disable click features when RPA mode is on
+        self.enable_random_clicks.setEnabled(not disable_features)
+        self.random_clicks_count_input.setEnabled(not disable_features and self.enable_random_clicks.isChecked())
+        self.enable_custom_clicks.setEnabled(not disable_features)
+        self.custom_click_selector_input.setEnabled(not disable_features and self.enable_custom_clicks.isChecked())
+        self.custom_click_count_input.setEnabled(not disable_features and self.enable_custom_clicks.isChecked())
         
         # Proxy settings remain enabled
         # Script editor remains enabled (needed for RPA mode)
@@ -24057,6 +24208,12 @@ class AppGUI(QMainWindow):
                     'high_cpc_url': self.high_cpc_url_input.text().strip(),
                     'high_cpc_target': self.high_cpc_target_input.text().strip(),
                     'high_cpc_stay_time': self.high_cpc_stay_time_input.value(),
+                    # Click behaviour configuration
+                    'enable_random_clicks': self.enable_random_clicks.isChecked(),
+                    'random_clicks_count': self.random_clicks_count_input.value(),
+                    'enable_custom_clicks': self.enable_custom_clicks.isChecked(),
+                    'custom_click_selector': self.custom_click_selector_input.text().strip(),
+                    'custom_click_count': self.custom_click_count_input.value(),
                 }
             
             # Update UI
