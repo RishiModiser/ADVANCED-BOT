@@ -24838,14 +24838,23 @@ def main():
     # Set application style
     app.setStyle('Fusion')
     
-    # Create and show main window
-    window = AppGUI()
-    window.show()
-    
-    sys.exit(app.exec())
-    
-    # Set application style
-    app.setStyle('Fusion')
+    # Set up explicit light palette to prevent dark system theme from causing
+    # black/blank rendering on systems with OS-level dark mode enabled
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, QColor(245, 245, 245))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(0, 0, 0))
+    palette.setColor(QPalette.ColorRole.Base, QColor(255, 255, 255))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor(240, 240, 240))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(255, 255, 255))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor(0, 0, 0))
+    palette.setColor(QPalette.ColorRole.Text, QColor(0, 0, 0))
+    palette.setColor(QPalette.ColorRole.Button, QColor(240, 240, 240))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor(0, 0, 0))
+    palette.setColor(QPalette.ColorRole.BrightText, QColor(255, 0, 0))
+    palette.setColor(QPalette.ColorRole.Link, QColor(52, 152, 219))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(52, 152, 219))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
+    app.setPalette(palette)
     
     # Create and show main window
     window = AppGUI()
