@@ -20,7 +20,7 @@
    
    **Option B - Using Launcher:**
    ```
-   Double-click: run_standalone.bat
+   Double-click: RUN.bat
    ```
 
 3. **First Time Only**
@@ -49,7 +49,7 @@
    
    **Option B - Using Launcher:**
    ```bash
-   ./run_standalone.sh
+   ./RUN.sh
    ```
 
 3. **First Time Only**
