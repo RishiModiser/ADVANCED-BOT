@@ -2,71 +2,59 @@
 REM ========================================================
 REM ADVANCED-BOT - ONE-CLICK LAUNCHER
 REM ========================================================
-REM Double-click this file to start ADVANCED-BOT.
-REM On first run, any missing dependencies are installed
-REM automatically - no manual steps required!
+REM Double-click this file to start ADVANCED-BOT instantly.
+REM
+REM FIRST TIME? Run INSTALL.bat once to set everything up,
+REM then use this file for instant 1-click launch!
 REM ========================================================
 
-title ADVANCED-BOT Launcher
+title ADVANCED-BOT
 
 color 0A
 echo.
 echo  ========================================================
-echo  ^|                                                      ^|
-echo  ^|      ADVANCED-BOT - One-Click Launcher              ^|
-echo  ^|                                                      ^|
+echo  ^|      ADVANCED-BOT - Starting...                     ^|
 echo  ========================================================
 echo.
 
 REM ── Option 1: Run pre-built standalone executable if present ──────────────
 if exist "dist\ADVANCED-BOT.exe" (
-    echo  Launching pre-built ADVANCED-BOT executable...
-    echo.
     start "" "dist\ADVANCED-BOT.exe"
-    timeout /t 3 /nobreak >nul
+    timeout /t 2 /nobreak >nul
     exit
 )
 
-REM ── Option 2: Run with Python (auto-installs deps on first run) ───────────
+REM ── Find Python ───────────────────────────────────────────────────────────
+set PYTHON_CMD=
 python --version >nul 2>&1
 if not errorlevel 1 (
-    echo  Python found. Starting ADVANCED-BOT...
-    echo  ^(First run will auto-install any missing dependencies^)
-    echo.
-    python advanced_bot.py
-    exit /b %errorlevel%
+    set PYTHON_CMD=python
+    goto :run_bot
 )
-
-REM Try python3 as fallback
 python3 --version >nul 2>&1
 if not errorlevel 1 (
-    echo  Python found. Starting ADVANCED-BOT...
-    echo  ^(First run will auto-install any missing dependencies^)
-    echo.
-    python3 advanced_bot.py
-    exit /b %errorlevel%
+    set PYTHON_CMD=python3
+    goto :run_bot
 )
 
 REM ── No Python found ───────────────────────────────────────────────────────
 color 0C
+echo  ERROR: Python is not installed!
 echo.
-echo  ========================================================
-echo  ^|                                                      ^|
-echo  ^|      Python is not installed!                       ^|
-echo  ^|                                                      ^|
-echo  ========================================================
-echo.
-echo  Python is required to run ADVANCED-BOT.
-echo.
-echo  Please download and install Python 3.8 or higher from:
-echo.
+echo  Please download Python 3.8+ from:
 echo      https://www.python.org/downloads/
-echo.
-echo  IMPORTANT: During installation, check the box:
-echo      "Add Python to PATH"
-echo.
-echo  After installing Python, double-click this file again.
-echo  Everything else will be set up automatically!
+echo  Check "Add Python to PATH" during install.
 echo.
 pause
 exit /b 1
+
+:run_bot
+REM ── Check if setup was done (show hint if not) ────────────────────────────
+if not exist ".bot_ready" (
+    echo  NOTE: First time? Run INSTALL.bat once for faster startup.
+    echo        Starting anyway (may take a moment to install packages)...
+    echo.
+)
+
+%PYTHON_CMD% advanced_bot.py
+exit /b %errorlevel%
