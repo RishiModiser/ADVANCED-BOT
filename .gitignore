@@ -51,3 +51,6 @@ test_ui_changes.py
 example_useragents.txt
 example_cookies.json
 profiles/
+
+# License database (contains user data – do not commit)
+license_keys.db
