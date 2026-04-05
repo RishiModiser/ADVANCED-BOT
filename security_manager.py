@@ -234,8 +234,8 @@ class SecurityManager:
                         "error": "Failed to read license file"
                     }
             else:
-                # No license file - generate trial license
-                return self._create_trial_license()
+                # No license file - require user to enter a key
+                return self._no_license_status()
         
         try:
             # Decode license
@@ -303,16 +303,34 @@ class SecurityManager:
                 "error": f"License validation error: {str(e)}"
             }
     
-    def _create_trial_license(self) -> Dict[str, Any]:
-        """Create a trial license valid for 30 days."""
-        self.generate_license_key(duration_days=30, max_instances=1)
+    def save_license_key(self, license_key: str) -> bool:
+        """
+        Save an externally-provided license key to disk.
+
+        Args:
+            license_key: The license key string to save.
+
+        Returns:
+            True if saved successfully, False otherwise.
+        """
+        try:
+            with open(self.license_file, 'w') as f:
+                f.write(license_key.strip())
+            return True
+        except (IOError, OSError, PermissionError) as exc:
+            self._log_security_event("license_save_error", {"error": str(exc)})
+            return False
+
+    def _no_license_status(self) -> Dict[str, Any]:
+        """Return an invalid status when no license key file exists."""
         return {
-            "valid": True,
-            "trial": True,
-            "days_remaining": 30,
-            "max_instances": 1,
-            "message": "Trial license created (30 days)"
+            "valid": False,
+            "error": "No license key found. Please enter a valid license key."
         }
+
+    def _create_trial_license(self) -> Dict[str, Any]:
+        """Alias kept for backwards compatibility; delegates to _no_license_status."""
+        return self._no_license_status()
     
     def encrypt_config(self, config_data: Dict[str, Any], 
                       password: Optional[str] = None) -> bool:

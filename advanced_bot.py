@@ -87,7 +87,8 @@ from PySide6.QtWidgets import (
     QComboBox, QCheckBox, QTabWidget, QGroupBox, QListWidget,
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
     QMessageBox, QFileDialog, QScrollArea, QListWidgetItem, QFormLayout,
-    QAbstractItemView, QRadioButton, QButtonGroup, QGridLayout, QStackedWidget
+    QAbstractItemView, QRadioButton, QButtonGroup, QGridLayout, QStackedWidget,
+    QDialog
 )
 from PySide6.QtCore import Qt, QThread, Signal, QObject
 from PySide6.QtGui import QFont, QColor, QPalette, QPixmap, QPainter
@@ -22153,6 +22154,257 @@ def normalize_rpa_script(data: Any) -> Dict[str, Any]:
 
 
 # ============================================================================
+# LICENSE KEY DIALOG
+# ============================================================================
+
+class LicenseKeyDialog(QDialog):
+    """
+    Startup dialog that requires the user to enter a valid license key
+    before the main application window is shown.
+    """
+
+    def __init__(self, security_manager):
+        super().__init__()
+        self.security_manager = security_manager
+        self._license_accepted = False
+        self._setup_ui()
+        self._check_existing_license()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _setup_ui(self):
+        self.setWindowTitle("HUMANEX – License Activation")
+        self.setFixedSize(520, 400)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #1a1a2e;
+            }
+            QLabel {
+                color: #e0e0e0;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+            QLineEdit {
+                background-color: #16213e;
+                color: #ffffff;
+                border: 1px solid #0f3460;
+                border-radius: 5px;
+                padding: 8px 12px;
+                font-size: 13px;
+                font-family: 'Consolas', 'Courier New', monospace;
+            }
+            QLineEdit:focus {
+                border: 1px solid #e94560;
+            }
+            QPushButton#activateBtn {
+                background-color: #e94560;
+                color: #ffffff;
+                border: none;
+                border-radius: 5px;
+                padding: 10px 24px;
+                font-size: 13px;
+                font-weight: bold;
+            }
+            QPushButton#activateBtn:hover {
+                background-color: #c73652;
+            }
+            QPushButton#activateBtn:pressed {
+                background-color: #a52d45;
+            }
+            QPushButton#exitBtn {
+                background-color: #2a2a4a;
+                color: #a0a0c0;
+                border: 1px solid #3a3a6a;
+                border-radius: 5px;
+                padding: 10px 24px;
+                font-size: 13px;
+            }
+            QPushButton#exitBtn:hover {
+                background-color: #3a3a6a;
+            }
+            QPushButton#copyBtn {
+                background-color: #0f3460;
+                color: #e0e0e0;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-size: 11px;
+            }
+            QPushButton#copyBtn:hover {
+                background-color: #1a4a80;
+            }
+            QLabel#statusLabel[status="error"] {
+                color: #e94560;
+            }
+            QLabel#statusLabel[status="success"] {
+                color: #4ecca3;
+            }
+            QLabel#statusLabel[status="info"] {
+                color: #a0c4ff;
+            }
+        """)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(36, 30, 36, 30)
+        outer.setSpacing(16)
+
+        # Title
+        title = QLabel("🔑  License Activation")
+        title.setStyleSheet("font-size: 20px; font-weight: bold; color: #ffffff;")
+        title.setAlignment(Qt.AlignCenter)
+        outer.addWidget(title)
+
+        subtitle = QLabel("Enter your license key to continue")
+        subtitle.setStyleSheet("font-size: 12px; color: #7080a0;")
+        subtitle.setAlignment(Qt.AlignCenter)
+        outer.addWidget(subtitle)
+
+        outer.addSpacing(4)
+
+        # Hardware ID row
+        hwid_row = QHBoxLayout()
+        hwid_label = QLabel("Your Hardware ID:")
+        hwid_label.setStyleSheet("font-size: 11px; color: #7080a0;")
+        hwid_row.addWidget(hwid_label)
+        hwid_row.addStretch()
+
+        self._hwid_value = self.security_manager.get_hardware_id()
+        hwid_short = self._hwid_value[:24] + "…"
+        self._hwid_display = QLabel(hwid_short)
+        self._hwid_display.setStyleSheet(
+            "font-family: 'Consolas','Courier New',monospace; font-size: 11px; color: #a0c4ff;"
+        )
+        self._hwid_display.setToolTip(self._hwid_value)
+        hwid_row.addWidget(self._hwid_display)
+
+        copy_btn = QPushButton("Copy")
+        copy_btn.setObjectName("copyBtn")
+        copy_btn.setFixedWidth(52)
+        copy_btn.clicked.connect(self._copy_hwid)
+        hwid_row.addWidget(copy_btn)
+        outer.addLayout(hwid_row)
+
+        # License key input
+        key_label = QLabel("License Key:")
+        key_label.setStyleSheet("font-size: 12px; color: #c0c8d8;")
+        outer.addWidget(key_label)
+
+        self._key_input = QLineEdit()
+        self._key_input.setPlaceholderText("Paste your license key here…")
+        self._key_input.setMinimumHeight(38)
+        self._key_input.returnPressed.connect(self._on_activate)
+        outer.addWidget(self._key_input)
+
+        # Status label
+        self._status_label = QLabel("")
+        self._status_label.setObjectName("statusLabel")
+        self._status_label.setAlignment(Qt.AlignCenter)
+        self._status_label.setWordWrap(True)
+        self._status_label.setStyleSheet("font-size: 11px; color: #a0a0c0; min-height: 24px;")
+        outer.addWidget(self._status_label)
+
+        outer.addStretch()
+
+        # Buttons row
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(12)
+
+        exit_btn = QPushButton("Exit")
+        exit_btn.setObjectName("exitBtn")
+        exit_btn.setMinimumHeight(38)
+        exit_btn.clicked.connect(self._on_exit)
+        btn_row.addWidget(exit_btn)
+
+        activate_btn = QPushButton("Activate →")
+        activate_btn.setObjectName("activateBtn")
+        activate_btn.setMinimumHeight(38)
+        activate_btn.clicked.connect(self._on_activate)
+        btn_row.addWidget(activate_btn)
+
+        outer.addLayout(btn_row)
+
+        hint = QLabel("Need a key? Share your Hardware ID with the seller.")
+        hint.setStyleSheet("font-size: 10px; color: #505070;")
+        hint.setAlignment(Qt.AlignCenter)
+        outer.addWidget(hint)
+
+    def _set_status(self, text: str, status: str = "info"):
+        """Update status label with coloured text."""
+        colors = {"error": "#e94560", "success": "#4ecca3", "info": "#a0c4ff"}
+        self._status_label.setStyleSheet(
+            f"font-size: 11px; color: {colors.get(status, '#a0c4ff')}; min-height: 24px;"
+        )
+        self._status_label.setText(text)
+
+    def _check_existing_license(self):
+        """If a valid license is already saved, accept immediately."""
+        if not SECURITY_AVAILABLE:
+            self._license_accepted = True
+            self.accept()
+            return
+        result = self.security_manager.validate_license()
+        if result.get("valid"):
+            days = result.get("days_remaining", "?")
+            self._set_status(f"✓ License valid — {days} day(s) remaining", "success")
+            self._license_accepted = True
+            # Brief pause so the user sees the success message, then auto-close
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(800, self.accept)
+
+    # ------------------------------------------------------------------
+    # Slots
+    # ------------------------------------------------------------------
+
+    def _copy_hwid(self):
+        QApplication.clipboard().setText(self._hwid_value)
+        self._set_status("Hardware ID copied to clipboard.", "info")
+
+    def _on_activate(self):
+        key = self._key_input.text().strip()
+        if not key:
+            self._set_status("⚠  Please enter a license key.", "error")
+            return
+
+        self._set_status("Validating…", "info")
+        QApplication.processEvents()
+
+        # Save key temporarily so validate_license() can read it
+        saved = self.security_manager.save_license_key(key)
+        if not saved:
+            self._set_status("⚠  Could not save license key. Check file permissions.", "error")
+            return
+
+        result = self.security_manager.validate_license()
+        if result.get("valid"):
+            days = result.get("days_remaining", "?")
+            self._set_status(f"✓ License activated! {days} day(s) remaining.", "success")
+            self._license_accepted = True
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(900, self.accept)
+        else:
+            # Remove the invalid key file so it doesn't persist
+            try:
+                self.security_manager.license_file.unlink(missing_ok=True)
+            except Exception:
+                pass
+            error = result.get("error", "Invalid license key.")
+            self._set_status(f"✗  {error}", "error")
+
+    def _on_exit(self):
+        self.reject()
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def is_license_accepted(self) -> bool:
+        return self._license_accepted
+
+
+# ============================================================================
 # MAIN GUI APPLICATION
 # ============================================================================
 
@@ -24834,7 +25086,25 @@ def auto_install_browser(parent=None):
 def main():
     """Main application entry point."""
     app = QApplication(sys.argv)
-    
+
+    # ── License gate ──────────────────────────────────────────────────
+    # Show the license key dialog before anything else. The bot only
+    # proceeds when a valid key has been entered and accepted.
+    if SECURITY_AVAILABLE:
+        from security_manager import SecurityManager
+        _security = SecurityManager()
+    else:
+        _security = None
+
+    license_dialog = LicenseKeyDialog(_security) if _security else None
+    if license_dialog is not None:
+        # If existing license is valid the dialog auto-accepts after 800 ms;
+        # otherwise the user must enter a key.
+        result = license_dialog.exec()
+        if result != QDialog.Accepted or not license_dialog.is_license_accepted():
+            sys.exit(0)
+    # ─────────────────────────────────────────────────────────────────
+
     # Check browser installation
     if not check_browser_installation():
         # Ask user if they want to auto-install
