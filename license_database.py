@@ -12,16 +12,27 @@ import hashlib
 import platform
 import socket
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 
 # Database location: beside this file so it travels with the bot
 _DB_PATH = Path(__file__).parent / "license_keys.db"
 
-# Default admin credentials (password stored as PBKDF2 hash)
+# Default admin user.  A random password is generated on first install and
+# printed to the console once – the admin must note it and change it via the
+# admin panel.  The plaintext is never stored anywhere.
 _DEFAULT_ADMIN_USER = "admin"
-_DEFAULT_ADMIN_PASSWORD = "admin1234"  # Changed on first login recommended
+
+
+def _utcnow() -> datetime:
+    """Return the current UTC time as a timezone-aware datetime."""
+    return datetime.now(timezone.utc)
+
+
+def _utcnow_str() -> str:
+    """Return the current UTC time as an ISO string without tzinfo suffix."""
+    return _utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 
 # ---------------------------------------------------------------------------
@@ -125,14 +136,24 @@ def init_database(db_path: Optional[Path] = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_logs_login_time  ON login_logs(login_time);
         """)
 
-        # Seed default admin if table is empty
+        # Seed default admin if table is empty – generate a random password
         row = conn.execute("SELECT COUNT(*) FROM admin_users").fetchone()
         if row[0] == 0:
-            ph, ps = _hash_password(_DEFAULT_ADMIN_PASSWORD)
+            # Generate a cryptographically random 16-character password
+            alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+            initial_password = "".join(secrets.choice(alphabet) for _ in range(16))
+            ph, ps = _hash_password(initial_password)
             conn.execute(
                 "INSERT INTO admin_users (username, pass_hash, pass_salt) VALUES (?, ?, ?)",
                 (_DEFAULT_ADMIN_USER, ph, ps),
             )
+            print("\n" + "=" * 60)
+            print("  ADMIN PANEL – INITIAL CREDENTIALS")
+            print("=" * 60)
+            print(f"  Username : {_DEFAULT_ADMIN_USER}")
+            print(f"  Password : {initial_password}")
+            print("  ⚠  Change this password after your first login!")
+            print("=" * 60 + "\n")
     conn.close()
 
 
@@ -193,7 +214,7 @@ def generate_key(
     key = _generate_license_key()
     expires_at = None
     if expires_days is not None:
-        expires_at = (datetime.utcnow() + timedelta(days=expires_days)).strftime(
+        expires_at = (_utcnow() + timedelta(days=expires_days)).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
     conn = get_connection(db_path)
@@ -222,7 +243,7 @@ def add_key(
     """Insert an externally supplied key. Returns True on success."""
     expires_at = None
     if expires_days is not None:
-        expires_at = (datetime.utcnow() + timedelta(days=expires_days)).strftime(
+        expires_at = (_utcnow() + timedelta(days=expires_days)).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
     conn = get_connection(db_path)
@@ -286,7 +307,7 @@ def update_key(
         fields.append("email = ?")
         params.append(email)
     if expires_days is not None:
-        expires_at = (datetime.utcnow() + timedelta(days=expires_days)).strftime(
+        expires_at = (_utcnow() + timedelta(days=expires_days)).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
         fields.append("expires_at = ?")
@@ -305,6 +326,8 @@ def update_key(
         return False
 
     params.append(key)
+    # Safe: `fields` is built exclusively from the controlled strings above,
+    # never from user input, so f-string interpolation here cannot be injected.
     sql = f"UPDATE license_keys SET {', '.join(fields)} WHERE key = ?"
     conn = get_connection(db_path)
     try:
@@ -373,7 +396,7 @@ def validate_key(key: str, db_path: Optional[Path] = None) -> Tuple[bool, str]:
     if record["expires_at"]:
         try:
             exp = datetime.strptime(record["expires_at"], "%Y-%m-%d %H:%M:%S")
-            if datetime.utcnow() > exp:
+            if _utcnow().replace(tzinfo=None) > exp:
                 _log(False, "Key expired")
                 return False, f"License expired on {exp.strftime('%Y-%m-%d')}."
         except ValueError:

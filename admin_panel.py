@@ -460,8 +460,8 @@ class ChangePasswordDialog(QDialog):
         if new != confirm:
             self.err_lbl.setText("New passwords do not match.")
             return
-        if len(new) < 6:
-            self.err_lbl.setText("Password must be at least 6 characters.")
+        if len(new) < 8:
+            self.err_lbl.setText("Password must be at least 8 characters.")
             return
         if not db.admin_login(self._username, old):
             self.err_lbl.setText("Current password is incorrect.")
