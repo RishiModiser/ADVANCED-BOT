@@ -52,8 +52,5 @@ example_useragents.txt
 example_cookies.json
 profiles/
 
-# License database (contains user data – do not commit)
-license_keys.db
-
 # Local setup marker (created by INSTALL.bat / INSTALL.sh)
 .bot_ready

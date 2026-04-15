@@ -17,7 +17,6 @@ try:
     from security_manager import (
         SecurityManager, 
         RateLimiter, 
-        validate_and_initialize,
         CRYPTO_AVAILABLE
     )
     print("   ✓ Security manager imported successfully")
@@ -44,28 +43,7 @@ except Exception as e:
     print(f"   ✗ Hardware ID failed: {e}")
     sys.exit(1)
 
-print("\n4. Testing license generation...")
-try:
-    license_key = security.generate_license_key(duration_days=365)
-    print(f"   ✓ License key: {license_key[:50]}...")
-    assert len(license_key) > 0, "License key should not be empty"
-    print("   ✓ License key generated")
-except Exception as e:
-    print(f"   ✗ License generation failed: {e}")
-    sys.exit(1)
-
-print("\n5. Testing license validation...")
-try:
-    validation = security.validate_license()
-    print(f"   ✓ License valid: {validation['valid']}")
-    if validation['valid']:
-        print(f"   ✓ Days remaining: {validation.get('days_remaining', 'N/A')}")
-        print(f"   ✓ Max instances: {validation.get('max_instances', 'N/A')}")
-except Exception as e:
-    print(f"   ✗ License validation failed: {e}")
-    sys.exit(1)
-
-print("\n6. Testing configuration encryption...")
+print("\n4. Testing configuration encryption...")
 try:
     test_config = {
         "proxy": "192.168.1.1:8080:user:password",
@@ -141,24 +119,12 @@ except Exception as e:
     print(f"   ✗ Proxy masking concept failed: {e}")
     sys.exit(1)
 
-print("\n10. Testing validate_and_initialize helper...")
-try:
-    is_valid, message, sec_mgr = validate_and_initialize()
-    print(f"   ✓ Helper function works")
-    print(f"   ✓ Valid: {is_valid}")
-    print(f"   ✓ Message: {message}")
-    assert isinstance(sec_mgr, SecurityManager), "Should return SecurityManager"
-    print("   ✓ Returns SecurityManager instance")
-except Exception as e:
-    print(f"   ✗ Helper function failed: {e}")
-    sys.exit(1)
-
-print("\n11. Testing security status reporting...")
+print("\n10. Testing security status reporting...")
 try:
     status = security.get_security_status()
     print("   ✓ Security status retrieved")
     
-    required_keys = ['timestamp', 'hardware_id', 'license', 'platform', 'crypto_available']
+    required_keys = ['timestamp', 'hardware_id', 'platform', 'crypto_available']
     for key in required_keys:
         if key in status:
             print(f"   ✓ Status has '{key}'")
@@ -174,7 +140,6 @@ print("✓ ALL INTEGRATION TESTS PASSED!")
 print("="*70)
 print("\nSecurity features are fully integrated and working correctly.")
 print("The bot is protected with:")
-print("  • Hardware-bound license system")
 print("  • AES-256 configuration encryption")
 print("  • Rate limiting for abuse prevention")
 print("  • Sensitive data masking in logs")

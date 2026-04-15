@@ -103,7 +103,7 @@ except ImportError:
 
 # Import security manager for advanced protection
 try:
-    from security_manager import SecurityManager, RateLimiter, validate_and_initialize
+    from security_manager import SecurityManager, RateLimiter
     SECURITY_AVAILABLE = True
 except ImportError:
     SECURITY_AVAILABLE = False
@@ -22137,18 +22137,9 @@ class AppGUI(QMainWindow):
         
         # Initialize security manager
         self.security_manager = None
-        self.license_valid = False
         if SECURITY_AVAILABLE:
             try:
-                is_valid, message, security = validate_and_initialize()
-                self.security_manager = security
-                self.license_valid = is_valid
-                if not is_valid:
-                    QMessageBox.warning(
-                        None,
-                        "License Warning",
-                        f"{message}\n\nThe application will continue with limited functionality."
-                    )
+                self.security_manager = SecurityManager()
             except Exception as e:
                 print(f"Security initialization warning: {e}")
         
@@ -23795,19 +23786,6 @@ class AppGUI(QMainWindow):
         try:
             # Security checks
             if SECURITY_AVAILABLE and self.security_manager:
-                # Check license
-                if not self.license_valid:
-                    license_info = self.security_manager.validate_license()
-                    if not license_info['valid']:
-                        QMessageBox.critical(
-                            self,
-                            'License Error',
-                            f"Cannot start automation: {license_info.get('error', 'Invalid license')}\n\n"
-                            "Please contact support to obtain a valid license."
-                        )
-                        return
-                    self.license_valid = True
-                
                 # Rate limiting check
                 if self.rate_limiter and not self.rate_limiter.is_allowed():
                     wait_time = int(self.rate_limiter.get_wait_time())
@@ -24896,18 +24874,6 @@ def main():
     palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
     app.setPalette(palette)
     
-    # License key check – must pass before the main window opens
-    try:
-        from license_dialog import run_license_check
-        if not run_license_check():
-            sys.exit(0)
-    except Exception as _lic_err:
-        QMessageBox.critical(
-            None, "License Error",
-            f"License system could not be loaded:\n{_lic_err}\n\nPlease reinstall the application."
-        )
-        sys.exit(1)
-
     # Create and show main window
     window = AppGUI()
     window.show()

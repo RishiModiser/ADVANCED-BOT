@@ -6,11 +6,6 @@
 
 آپ کے ADVANCED-BOT میں اب انٹرپرائز گریڈ سیکیورٹی شامل کر دی گئی ہے:
 
-#### 🔐 لائسنس سسٹم
-- **ہارڈویئر سے منسلک**: ہر لائسنس صرف ایک مشین پر کام کرتا ہے
-- **خودکار ٹرائل**: پہلی بار چلانے پر 30 دن کا ٹرائل لائسنس
-- **محفوظ**: کوئی شیئر یا کریک نہیں کر سکتا
-
 #### 🔒 انکرپشن
 - **AES-256**: انتہائی مضبوط انکرپشن
 - **خودکار**: تمام حساس ڈیٹا خودکار طور پر محفوظ
@@ -36,13 +31,7 @@
 pip install -r requirements.txt
 python advanced_bot.py
 ```
-- خودکار طور پر 30 دن کا ٹرائل لائسنس بن جائے گا
 - کوئی اضافی ترتیب کی ضرورت نہیں
-
-#### لائسنس چیک کریں
-بوٹ شروع کرتے وقت دیکھیں:
-- "Trial license active (30 days remaining)" - ٹرائل فعال
-- "Licensed (365 days remaining)" - مکمل لائسنس
 
 #### محفوظ ڈیٹا
 تمام حساس ڈیٹا خودکار طور پر:
@@ -52,11 +41,9 @@ python advanced_bot.py
 
 ### فائدے
 
-✅ **کوئی کریک نہیں کر سکتا**: ہارڈویئر سے منسلک لائسنس
 ✅ **ڈیٹا محفوظ**: AES-256 انکرپشن
 ✅ **کوڈ محفوظ**: ٹیمپرنگ کا پتہ لگاتا ہے
 ✅ **خودکار**: کچھ کرنے کی ضرورت نہیں
-✅ **آسان**: 30 دن کا ٹرائل مفت
 
 ---
 
@@ -65,11 +52,6 @@ python advanced_bot.py
 ### क्या शामिल है?
 
 आपके ADVANCED-BOT में अब एंटरप्राइज ग्रेड सुरक्षा जोड़ दी गई है:
-
-#### 🔐 लाइसेंस सिस्टम
-- **हार्डवेयर से जुड़ा**: हर लाइसेंस केवल एक मशीन पर काम करता है
-- **ऑटो ट्रायल**: पहली बार चलाने पर 30 दिन का ट्रायल लाइसेंस
-- **सुरक्षित**: कोई शेयर या क्रैक नहीं कर सकता
 
 #### 🔒 एन्क्रिप्शन
 - **AES-256**: बेहद मजबूत एन्क्रिप्शन
@@ -96,13 +78,7 @@ python advanced_bot.py
 pip install -r requirements.txt
 python advanced_bot.py
 ```
-- स्वचालित रूप से 30 दिन का ट्रायल लाइसेंस बन जाएगा
 - कोई अतिरिक्त सेटअप की जरूरत नहीं
-
-#### लाइसेंस चेक करें
-बॉट शुरू करते समय देखें:
-- "Trial license active (30 days remaining)" - ट्रायल सक्रिय
-- "Licensed (365 days remaining)" - पूर्ण लाइसेंस
 
 #### सुरक्षित डेटा
 सभी संवेदनशील डेटा स्वचालित रूप से:
@@ -112,11 +88,9 @@ python advanced_bot.py
 
 ### फायदे
 
-✅ **कोई क्रैक नहीं कर सकता**: हार्डवेयर से जुड़ा लाइसेंस
 ✅ **डेटा सुरक्षित**: AES-256 एन्क्रिप्शन
 ✅ **कोड सुरक्षित**: टैम्परिंग का पता लगाता है
 ✅ **ऑटोमैटिक**: कुछ करने की जरूरत नहीं
-✅ **आसान**: 30 दिन का ट्रायल मुफ्त
 
 ---
 
@@ -125,11 +99,6 @@ python advanced_bot.py
 ### What's Included?
 
 Your ADVANCED-BOT now has enterprise-grade security:
-
-#### 🔐 License System
-- **Hardware-Bound**: Each license works on one machine only
-- **Auto Trial**: 30-day trial license on first run
-- **Secure**: Cannot be shared or cracked
 
 #### 🔒 Encryption
 - **AES-256**: Military-grade encryption
@@ -156,13 +125,7 @@ Your ADVANCED-BOT now has enterprise-grade security:
 pip install -r requirements.txt
 python advanced_bot.py
 ```
-- Automatically creates 30-day trial license
 - No additional setup required
-
-#### Check License
-When starting the bot, you'll see:
-- "Trial license active (30 days remaining)" - Trial active
-- "Licensed (365 days remaining)" - Full license
 
 #### Secure Data
 All sensitive data is automatically:
@@ -172,11 +135,9 @@ All sensitive data is automatically:
 
 ### Benefits
 
-✅ **Cannot be cracked**: Hardware-bound license
 ✅ **Data secure**: AES-256 encryption
 ✅ **Code protected**: Tamper detection
 ✅ **Automatic**: Nothing to configure
-✅ **Easy**: Free 30-day trial
 
 ---
 
@@ -196,10 +157,7 @@ All sensitive data is automatically:
 
 آپ کا بوٹ اب مکمل طور پر محفوظ ہے! / आपका बॉट अब पूरी तरह से सुरक्षित है! / Your bot is now fully secure!
 
-- 🔐 لائسنس سسٹم / लाइसेंस सिस्टम / License System
 - 🔒 انکرپشن / एन्क्रिप्शन / Encryption  
 - 🛡️ ٹیمپر پروٹیکشن / टैम्पर प्रोटेक्शन / Tamper Protection
 - ⏱️ ریٹ لیمیٹنگ / रेट लिमिटिंग / Rate Limiting
 - 🎭 محفوظ لاگنگ / सुरक्षित लॉगिंग / Secure Logging
-
-**کوئی اسے کریک نہیں کر سکتا! / कोई इसे क्रैक नहीं कर सकता! / Nobody can crack it!**

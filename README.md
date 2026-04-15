@@ -37,14 +37,10 @@ Humanex Version 5 is an enterprise-grade RPA (Robotic Process Automation) system
 **Enterprise-grade protection against cracking and unauthorized use!**
 
 This bot now includes:
-- 🔑 **License Key System** - Hardware-bound licenses prevent unauthorized distribution
 - 🔒 **AES-256 Encryption** - Protects sensitive configs (proxies, API keys, credentials)
 - 🛡️ **Integrity Checking** - Detects file tampering with SHA-256 checksums
 - ⏱️ **Rate Limiting** - Prevents abuse and ensures stability
 - 🎭 **Secure Logging** - Auto-masks IPs, passwords, and sensitive data
-- 💻 **Hardware Binding** - Each license works only on authorized machine
-
-**First run automatically creates a 30-day trial license!**
 
 📖 See [SECURITY_FEATURES.md](SECURITY_FEATURES.md) for complete documentation.
 
@@ -413,16 +409,13 @@ For detailed information, see [UI_IMPROVEMENTS.md](UI_IMPROVEMENTS.md)
 The bot now includes enterprise-grade security to protect against cracking and unauthorized use:
 
 #### Protection Features
-- **License Key System** - Hardware-bound licenses with expiration dates
 - **Configuration Encryption** - AES-256 encryption for sensitive data (proxies, API keys)
 - **File Integrity Checking** - Detects tampering with SHA-256 checksums
 - **Rate Limiting** - Prevents abuse with configurable request limits
 - **Secure Logging** - Automatic masking of sensitive information (IPs, passwords, keys)
 - **Environment Validation** - Detects suspicious execution environments
-- **Hardware Binding** - Licenses tied to specific machines
 
 #### Security Benefits
-- ✅ Prevents unauthorized distribution and use
 - ✅ Protects credentials and sensitive configuration
 - ✅ Detects code tampering and modifications
 - ✅ Ensures legitimate usage patterns
@@ -432,9 +425,7 @@ The bot now includes enterprise-grade security to protect against cracking and u
 
 #### Quick Security Setup
 1. Install dependencies: `pip install -r requirements.txt` (includes cryptography)
-2. First run automatically creates a 30-day trial license
-3. Licensed users get hardware-bound licenses with custom expiration
-4. All sensitive configs are automatically encrypted
+2. All sensitive configs are automatically encrypted
 
 ### Blocklist
 The system blocks all interactions with:
