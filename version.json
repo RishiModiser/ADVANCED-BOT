@@ -5,7 +5,6 @@
   "build_type": "standalone",
   "author": "RishiModiser",
   "repository": "https://github.com/RishiModiser/ADVANCED-BOT",
-  "license": "Custom",
   "python_version": "3.8+",
   "dependencies": {
     "PySide6": ">=6.6.1",

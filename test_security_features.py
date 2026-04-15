@@ -18,7 +18,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from security_manager import (
     SecurityManager,
     RateLimiter,
-    validate_and_initialize,
     create_security_manager
 )
 
@@ -82,91 +81,6 @@ class TestSecurityManager:
         # Test that hardware ID is consistent
         hwid2 = security.get_hardware_id()
         self.assert_equal(hwid, hwid2, "Hardware ID is consistent")
-    
-    def test_license_generation_and_validation(self):
-        """Test license key generation and validation."""
-        print("\n[TEST] License Generation and Validation")
-        
-        security = SecurityManager(app_name="TEST_BOT")
-        
-        # Generate license
-        license_key = security.generate_license_key(
-            duration_days=365,
-            max_instances=3
-        )
-        self.assert_true(len(license_key) > 0, "License key is generated")
-        
-        # Validate license
-        validation = security.validate_license(license_key)
-        self.assert_true(validation['valid'], "License is valid")
-        self.assert_true(
-            validation['days_remaining'] <= 365,
-            f"License has correct days remaining: {validation['days_remaining']}"
-        )
-        self.assert_equal(
-            validation['max_instances'],
-            3,
-            "License has correct max instances"
-        )
-    
-    def test_license_expiry(self):
-        """Test expired license detection."""
-        print("\n[TEST] License Expiry Detection")
-        
-        security = SecurityManager(app_name="TEST_BOT")
-        
-        # Generate license that expires in 0 days (expired)
-        license_key = security.generate_license_key(duration_days=0)
-        
-        # Wait a moment to ensure it's expired
-        import time
-        time.sleep(0.1)
-        
-        # Validate should fail
-        validation = security.validate_license(license_key)
-        self.assert_false(validation['valid'], "Expired license is rejected")
-        self.assert_true(
-            'expired' in validation.get('error', '').lower(),
-            "Error message mentions expiry"
-        )
-    
-    def test_license_hardware_binding(self):
-        """Test license hardware binding."""
-        print("\n[TEST] License Hardware Binding")
-        
-        security = SecurityManager(app_name="TEST_BOT")
-        
-        # Generate license
-        license_key = security.generate_license_key(duration_days=30)
-        
-        # Decode and modify hardware ID
-        import base64
-        license_json = base64.b64decode(license_key.encode()).decode()
-        license_data = json.loads(license_json)
-        
-        # Change hardware ID
-        license_data['hwid'] = "wrong_hardware_id_12345"
-        
-        # Re-create signature (wrong signature)
-        signature = license_data.pop("signature")
-        data_string = json.dumps(license_data, sort_keys=True)
-        import hashlib
-        new_signature = hashlib.sha256(
-            (data_string + "TEST_BOT").encode()
-        ).hexdigest()
-        license_data["signature"] = new_signature
-        
-        # Encode back
-        modified_key = base64.b64encode(
-            json.dumps(license_data).encode()
-        ).decode()
-        
-        # Validate should fail
-        validation = security.validate_license(modified_key)
-        self.assert_false(
-            validation['valid'],
-            "License with wrong hardware ID is rejected"
-        )
     
     def test_config_encryption(self):
         """Test configuration encryption and decryption."""
@@ -310,7 +224,6 @@ class TestSecurityManager:
         
         self.assert_true('timestamp' in status, "Status has timestamp")
         self.assert_true('hardware_id' in status, "Status has hardware ID")
-        self.assert_true('license' in status, "Status has license info")
         self.assert_true('platform' in status, "Status has platform info")
         self.assert_true(
             isinstance(status['crypto_available'], bool),
@@ -346,20 +259,6 @@ class TestSecurityManager:
         # Should be allowed again
         self.assert_true(limiter.is_allowed(), "Request allowed after wait")
     
-    def test_validate_and_initialize(self):
-        """Test convenience function for validation."""
-        print("\n[TEST] Validate and Initialize")
-        
-        is_valid, message, security = validate_and_initialize()
-        
-        self.assert_true(isinstance(is_valid, bool), "Returns boolean validity")
-        self.assert_true(isinstance(message, str), "Returns message string")
-        self.assert_true(
-            isinstance(security, SecurityManager),
-            "Returns SecurityManager instance"
-        )
-        self.assert_true(len(message) > 0, "Message is not empty")
-    
     def run_all_tests(self):
         """Run all tests."""
         print("="*70)
@@ -371,16 +270,12 @@ class TestSecurityManager:
         try:
             # Run all tests
             self.test_hardware_id_generation()
-            self.test_license_generation_and_validation()
-            self.test_license_expiry()
-            self.test_license_hardware_binding()
             self.test_config_encryption()
             self.test_config_encryption_with_password()
             self.test_file_integrity_checking()
             self.test_sensitive_data_masking()
             self.test_security_status()
             self.test_rate_limiter()
-            self.test_validate_and_initialize()
             
         finally:
             self.teardown()

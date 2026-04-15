@@ -14,31 +14,9 @@ The bot now includes enterprise-grade security measures to prevent:
 
 ## 🔐 Security Features
 
-### 1. License Key System
+### 1. Hardware ID Binding
 
-**Purpose**: Control who can use the bot and prevent unauthorized distribution.
-
-**Features**:
-- Hardware-bound license keys (tied to specific machine)
-- Expiration dates with automatic validation
-- Trial license support (30 days by default)
-- Multi-instance control (limit concurrent bot instances)
-- Automatic license generation and validation
-
-**How it works**:
-- Each license is cryptographically signed and bound to the hardware ID
-- License is validated on bot startup
-- Invalid licenses prevent bot execution
-- Trial licenses are automatically created for first-time users
-
-**User Experience**:
-- First run: Automatically creates a 30-day trial license
-- Licensed users: Shows remaining days on startup
-- Expired licenses: Clear error message with renewal instructions
-
-### 2. Hardware ID Binding
-
-**Purpose**: Prevent license sharing and ensure one license per machine.
+**Purpose**: Generate unique hardware fingerprint for security features.
 
 **Features**:
 - Unique hardware fingerprint generation
@@ -49,9 +27,8 @@ The bot now includes enterprise-grade security measures to prevent:
 **How it works**:
 - Generates unique ID from system identifiers (UUID, machine ID, etc.)
 - Stored securely in user's home directory
-- Used for license validation
 
-### 3. Configuration Encryption
+### 2. Configuration Encryption
 
 **Purpose**: Protect sensitive data like API keys, proxies, and credentials.
 
@@ -78,7 +55,7 @@ security.encrypt_config({
 config = security.decrypt_config()
 ```
 
-### 4. File Integrity Checking
+### 3. File Integrity Checking
 
 **Purpose**: Detect tampering with bot files and prevent modified versions.
 
@@ -94,7 +71,7 @@ config = security.decrypt_config()
 - Compares on each run to detect modifications
 - Logs any detected changes
 
-### 5. Rate Limiting
+### 4. Rate Limiting
 
 **Purpose**: Prevent abuse and ensure system stability.
 
@@ -109,7 +86,7 @@ config = security.decrypt_config()
 - Blocks excessive requests within time window
 - Shows remaining wait time to user
 
-### 6. Secure Logging
+### 5. Secure Logging
 
 **Purpose**: Protect sensitive information in logs.
 
@@ -132,7 +109,7 @@ Before: Proxy: http://192.168.1.100:8080 (user:secretpass)
 After:  Proxy: http://192.*.*.100:8080 [AUTH]
 ```
 
-### 7. Environment Validation
+### 6. Environment Validation
 
 **Purpose**: Detect suspicious execution environments.
 
@@ -150,7 +127,7 @@ After:  Proxy: http://192.*.*.100:8080 [AUTH]
 
 **Note**: Detection doesn't block execution but logs warnings for monitoring.
 
-### 8. Session Security
+### 7. Session Security
 
 **Purpose**: Track and secure individual bot sessions.
 
@@ -160,7 +137,7 @@ After:  Proxy: http://192.*.*.100:8080 [AUTH]
 - Secure session initialization
 - Anti-replay measures
 
-### 9. Cryptographic Security
+### 8. Cryptographic Security
 
 **Purpose**: Ensure data integrity and authenticity.
 
@@ -181,30 +158,10 @@ After:  Proxy: http://192.*.*.100:8080 [AUTH]
 ### Initialization
 
 ```python
-from security_manager import SecurityManager, validate_and_initialize
+from security_manager import SecurityManager
 
-# Simple initialization with validation
-is_valid, message, security = validate_and_initialize()
-
-# Or manual initialization
+# Initialize security manager
 security = SecurityManager(app_name="ADVANCED-BOT")
-```
-
-### License Management
-
-```python
-# Generate license key (365 days, 1 instance)
-license_key = security.generate_license_key(
-    duration_days=365,
-    max_instances=1
-)
-
-# Validate license
-validation = security.validate_license()
-if validation['valid']:
-    print(f"License valid for {validation['days_remaining']} days")
-else:
-    print(f"License error: {validation['error']}")
 ```
 
 ### Configuration Encryption
@@ -276,7 +233,6 @@ All security files are stored in:
 
 | File | Purpose |
 |------|---------|
-| `license.key` | Encrypted license key |
 | `hwid.dat` | Hardware ID |
 | `config.enc` | Encrypted configuration |
 | `integrity.json` | File checksums |
@@ -306,27 +262,22 @@ If the cryptography library is not installed, the bot will:
 
 ### For Developers
 
-1. **Never commit license keys** to version control
-2. **Keep security_manager.py updated** with latest security patches
-3. **Use encrypted config** for all sensitive data
-4. **Enable integrity checking** for critical files
-5. **Mask sensitive data** in all logs
+1. **Keep security_manager.py updated** with latest security patches
+2. **Use encrypted config** for all sensitive data
+3. **Enable integrity checking** for critical files
+4. **Mask sensitive data** in all logs
 
 ### For Users
 
-1. **Keep your license key safe** - it's tied to your hardware
-2. **Don't share license files** - they won't work on other machines
-3. **Report suspicious activity** - check security.log regularly
-4. **Update regularly** - security patches are important
-5. **Use strong passwords** if using custom encryption
+1. **Report suspicious activity** - check security.log regularly
+2. **Update regularly** - security patches are important
+3. **Use strong passwords** if using custom encryption
 
 ### For Administrators
 
 1. **Set appropriate rate limits** based on usage patterns
 2. **Monitor security logs** for unusual activity
 3. **Verify file integrity** regularly
-4. **Backup license files** securely
-5. **Document license distribution** to track authorized users
 
 ## 🔍 Security Event Logging
 
@@ -334,11 +285,11 @@ All security events are logged to `security.log`:
 
 ```json
 {
-  "type": "license_validated",
+  "type": "environment_check",
   "timestamp": "2026-02-05T10:30:00",
   "session": "a3f2c1d4",
   "data": {
-    "days_remaining": 355
+    "platform": "Linux"
   }
 }
 ```
@@ -346,9 +297,6 @@ All security events are logged to `security.log`:
 ### Event Types
 
 - `environment_check` - Environment validation results
-- `license_validation_failed` - Failed license validation
-- `license_validated` - Successful license validation
-- `license_validation_error` - License validation error
 - `encryption_error` - Encryption operation failed
 - `decryption_error` - Decryption operation failed
 - `integrity_check_failed` - File integrity violation
@@ -358,7 +306,6 @@ All security events are logged to `security.log`:
 ### What Gets Logged
 
 Security events are logged for:
-- License validation attempts
 - Configuration encryption/decryption
 - File integrity checks
 - Environment warnings
@@ -367,25 +314,12 @@ Security events are logged for:
 ### What Doesn't Get Logged
 
 Sensitive data is NEVER logged:
-- License keys (only hashes)
 - Passwords and credentials
 - Full IP addresses
 - API keys
 - Session tokens (only partial)
 
 ## 🆘 Troubleshooting
-
-### "License not valid for this hardware"
-
-**Cause**: License is tied to different machine.
-
-**Solution**: Generate a new license for this hardware or transfer license properly.
-
-### "License expired"
-
-**Cause**: License validity period has ended.
-
-**Solution**: Contact support for license renewal or generate new trial license.
 
 ### "Rate limit exceeded"
 
@@ -417,7 +351,6 @@ Sensitive data is NEVER logged:
 
 ### Hash Functions
 
-- **License Signature**: SHA-256
 - **File Integrity**: SHA-256
 - **Hardware ID**: SHA-256
 
@@ -425,21 +358,6 @@ Sensitive data is NEVER logged:
 
 - **Method**: `secrets` module (CSPRNG)
 - **Entropy**: System-provided cryptographic quality
-
-### License Format
-
-```json
-{
-  "hwid": "abc123...",
-  "expiry": "2027-02-05T00:00:00",
-  "max_instances": 1,
-  "issued": "2026-02-05T10:30:00",
-  "version": "1.0",
-  "signature": "def456..."
-}
-```
-
-Encoded as Base64 for safe storage and transfer.
 
 ## 📚 Additional Resources
 
@@ -451,7 +369,6 @@ Encoded as Base64 for safe storage and transfer.
 
 ### Version 1.0 (Current)
 - Initial security implementation
-- License key system
 - Configuration encryption
 - File integrity checking
 - Rate limiting

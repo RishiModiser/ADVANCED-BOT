@@ -33,7 +33,6 @@ class SecurityManager:
     Comprehensive security manager for bot protection.
     
     Features:
-    - License key validation
     - Hardware ID binding
     - File integrity checking
     - Configuration encryption
@@ -47,7 +46,6 @@ class SecurityManager:
         self.security_dir = Path.home() / f".{app_name.lower()}_security"
         self.security_dir.mkdir(exist_ok=True, parents=True)
         
-        self.license_file = self.security_dir / "license.key"
         self.hwid_file = self.security_dir / "hwid.dat"
         self.config_file = self.security_dir / "config.enc"
         self.integrity_file = self.security_dir / "integrity.json"
@@ -170,149 +168,6 @@ class SecurityManager:
                 pass
         
         return self.generate_hardware_id()
-    
-    def generate_license_key(self, duration_days: int = 365, 
-                            max_instances: int = 1) -> str:
-        """
-        Generate a license key for this hardware.
-        
-        Args:
-            duration_days: License validity in days
-            max_instances: Maximum concurrent instances allowed
-            
-        Returns:
-            Encrypted license key string
-        """
-        hwid = self.get_hardware_id()
-        expiry = (datetime.now() + timedelta(days=duration_days)).isoformat()
-        
-        license_data = {
-            "hwid": hwid,
-            "expiry": expiry,
-            "max_instances": max_instances,
-            "issued": datetime.now().isoformat(),
-            "version": "1.0"
-        }
-        
-        # Create signature
-        data_string = json.dumps(license_data, sort_keys=True)
-        signature = hashlib.sha256(
-            (data_string + self.app_name).encode()
-        ).hexdigest()
-        
-        license_data["signature"] = signature
-        
-        # Encode license
-        license_json = json.dumps(license_data)
-        license_key = base64.b64encode(license_json.encode()).decode()
-        
-        # Save license
-        try:
-            with open(self.license_file, 'w') as f:
-                f.write(license_key)
-        except Exception:
-            pass
-        
-        return license_key
-    
-    def validate_license(self, license_key: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Validate license key.
-        
-        Returns:
-            Dict with validation result and details
-        """
-        # Try to load from file if not provided
-        if license_key is None:
-            if self.license_file.exists():
-                try:
-                    with open(self.license_file, 'r') as f:
-                        license_key = f.read().strip()
-                except Exception:
-                    return {
-                        "valid": False,
-                        "error": "Failed to read license file"
-                    }
-            else:
-                # No license file - generate trial license
-                return self._create_trial_license()
-        
-        try:
-            # Decode license
-            license_json = base64.b64decode(license_key.encode()).decode()
-            license_data = json.loads(license_json)
-            
-            # Validate signature
-            signature = license_data.pop("signature")
-            data_string = json.dumps(license_data, sort_keys=True)
-            expected_signature = hashlib.sha256(
-                (data_string + self.app_name).encode()
-            ).hexdigest()
-            
-            if signature != expected_signature:
-                self._log_security_event("license_validation_failed", {
-                    "reason": "Invalid signature"
-                })
-                return {
-                    "valid": False,
-                    "error": "Invalid license signature"
-                }
-            
-            # Validate hardware ID
-            current_hwid = self.get_hardware_id()
-            if license_data.get("hwid") != current_hwid:
-                self._log_security_event("license_validation_failed", {
-                    "reason": "Hardware ID mismatch"
-                })
-                return {
-                    "valid": False,
-                    "error": "License not valid for this hardware"
-                }
-            
-            # Check expiry
-            expiry = datetime.fromisoformat(license_data["expiry"])
-            if datetime.now() > expiry:
-                self._log_security_event("license_validation_failed", {
-                    "reason": "License expired"
-                })
-                return {
-                    "valid": False,
-                    "error": f"License expired on {expiry.strftime('%Y-%m-%d')}"
-                }
-            
-            # License is valid
-            days_remaining = (expiry - datetime.now()).days
-            self._log_security_event("license_validated", {
-                "days_remaining": days_remaining
-            })
-            
-            return {
-                "valid": True,
-                "expiry": expiry.isoformat(),
-                "days_remaining": days_remaining,
-                "max_instances": license_data.get("max_instances", 1),
-                "issued": license_data.get("issued")
-            }
-            
-        except Exception as e:
-            self._log_security_event("license_validation_error", {
-                "error": str(e)
-            })
-            return {
-                "valid": False,
-                "error": f"License validation error: {str(e)}"
-            }
-    
-    def _create_trial_license(self) -> Dict[str, Any]:
-        """Create a trial license valid for 30 days."""
-        self.generate_license_key(duration_days=30, max_instances=1)
-        return {
-            "valid": True,
-            "trial": True,
-            "days_remaining": 30,
-            "max_instances": 1,
-            "message": "Trial license created (30 days)"
-        }
     
     def encrypt_config(self, config_data: Dict[str, Any], 
                       password: Optional[str] = None) -> bool:
@@ -512,12 +367,9 @@ class SecurityManager:
     
     def get_security_status(self) -> Dict[str, Any]:
         """Get comprehensive security status."""
-        license_status = self.validate_license()
-        
         status = {
             "timestamp": datetime.now().isoformat(),
             "hardware_id": self.get_hardware_id()[:16] + "...",  # Partial HWID
-            "license": license_status,
             "crypto_available": CRYPTO_AVAILABLE,
             "session_active": self._session_token is not None,
             "platform": platform.system(),
@@ -579,27 +431,6 @@ def create_security_manager(app_name: str = "ADVANCED-BOT") -> SecurityManager:
     return SecurityManager(app_name)
 
 
-def validate_and_initialize() -> tuple[bool, str, SecurityManager]:
-    """
-    Validate license and initialize security.
-    
-    Returns:
-        Tuple of (is_valid, message, security_manager)
-    """
-    security = SecurityManager()
-    license_info = security.validate_license()
-    
-    if license_info["valid"]:
-        if license_info.get("trial"):
-            message = f"Trial license active ({license_info['days_remaining']} days remaining)"
-        else:
-            message = f"Licensed ({license_info['days_remaining']} days remaining)"
-        return True, message, security
-    else:
-        message = f"License error: {license_info.get('error', 'Unknown error')}"
-        return False, message, security
-
-
 if __name__ == "__main__":
     # Demo usage
     print("=== Advanced Security Manager Demo ===\n")
@@ -609,18 +440,6 @@ if __name__ == "__main__":
     # Generate hardware ID
     hwid = security.get_hardware_id()
     print(f"Hardware ID: {hwid[:32]}...")
-    
-    # Generate license key
-    license_key = security.generate_license_key(duration_days=365, max_instances=3)
-    print(f"\nLicense Key Generated:\n{license_key[:60]}...")
-    
-    # Validate license
-    validation = security.validate_license()
-    print(f"\nLicense Validation:")
-    print(f"  Valid: {validation['valid']}")
-    if validation['valid']:
-        print(f"  Days Remaining: {validation.get('days_remaining')}")
-        print(f"  Max Instances: {validation.get('max_instances')}")
     
     # Test encryption
     test_config = {
@@ -643,6 +462,5 @@ if __name__ == "__main__":
     print(f"\nSecurity Status:")
     print(f"  Platform: {status['platform']}")
     print(f"  Crypto Available: {status['crypto_available']}")
-    print(f"  License Valid: {status['license']['valid']}")
     
     print("\n=== Demo Complete ===")
