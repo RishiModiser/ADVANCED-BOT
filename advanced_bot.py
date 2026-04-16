@@ -18978,10 +18978,6 @@ class BrowserManager:
         self.active_contexts = []  # Track all active persistent contexts for cleanup
         self.imported_useragents = []  # Store imported useragents
         self.imported_cookies = []  # Store imported cookies
-        # Semaphore to FORCEFULLY serialize browser launches (1 at a time) so Playwright's
-        # connection is never overwhelmed. Guarantees all N concurrent browsers launch successfully.
-        # Initialized lazily in create_context() to ensure it's created in the running event loop
-        self._launch_semaphore: Optional[asyncio.Semaphore] = None
     
     async def initialize(self):
         """Initialize Playwright only (no browser launch with persistent contexts)."""
@@ -19093,23 +19089,12 @@ class BrowserManager:
             else:
                 self.log_manager.log('No proxy configured, using direct connection')
             
-            # Lazily create the launch semaphore in the running event loop.
-            # FORCEFUL FIX: Limit to 1 concurrent launch_persistent_context call at a time
-            # (serial launches). Playwright's connection can only handle ~5 concurrent launches,
-            # but even with 5 concurrent the connection is overwhelmed when N >= 5 is selected,
-            # causing fewer than N browsers to appear. Serializing (1 at a time) guarantees
-            # ALL N browsers launch successfully regardless of concurrent count.
-            # Once launched, all N browsers run truly concurrently — only the launch is serial.
-            if self._launch_semaphore is None:
-                self._launch_semaphore = asyncio.Semaphore(1)
-
             # Try to create persistent context with proxy
             try:
-                async with self._launch_semaphore:
-                    context = await self.playwright.chromium.launch_persistent_context(
-                        user_data_dir=str(user_data_dir),
-                        **context_options
-                    )
+                context = await self.playwright.chromium.launch_persistent_context(
+                    user_data_dir=str(user_data_dir),
+                    **context_options
+                )
                 # Store the temp directory path for cleanup
                 context._temp_profile_dir = user_data_dir
                 self.active_contexts.append(context)
@@ -19133,11 +19118,10 @@ class BrowserManager:
                     
                     # Retry without proxy (remove proxy from options)
                     context_options.pop('proxy', None)
-                    async with self._launch_semaphore:
-                        context = await self.playwright.chromium.launch_persistent_context(
-                            user_data_dir=str(user_data_dir),
-                            **context_options
-                        )
+                    context = await self.playwright.chromium.launch_persistent_context(
+                        user_data_dir=str(user_data_dir),
+                        **context_options
+                    )
                     self.active_contexts.append(context)
                     self.log_manager.log('✓ Browser context created with direct connection (proxy bypassed)')
                     proxy_location = None  # Clear proxy location since not using proxy
@@ -22742,7 +22726,9 @@ class AppGUI(QMainWindow):
         traffic_layout.addLayout(max_time_layout)
         
         # Concurrent browsers - Fixed to open multiple profiles simultaneously
-        traffic_layout.addWidget(QLabel('Concurrent:'))
+        concurrent_label = QLabel('Concurrent:')
+        concurrent_label.setStyleSheet('color: red; font-weight: bold;')
+        traffic_layout.addWidget(concurrent_label)
         self.concurrent_input = QSpinBox()
         self.concurrent_input.setRange(1, 1000)
         self.concurrent_input.setValue(1)

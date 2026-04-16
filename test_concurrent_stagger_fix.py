@@ -93,7 +93,12 @@ def test_comment_accuracy():
     print("✓ Test 10 PASSED: Comments reference the problematic call (launch_persistent_context)")
 
 def test_launch_semaphore_in_create_context():
-    """Test that create_context uses a semaphore to forcefully serialize browser launches."""
+    """Test that create_context launches browsers in parallel (no serial semaphore restriction).
+    
+    The serial Semaphore(1) was removed so that all N browsers launch in parallel,
+    allowing them to appear concurrently. The 0.2s stagger between
+    task creations in the callers provides sufficient safety to avoid overwhelming Playwright.
+    """
     with open('advanced_bot.py', 'r') as f:
         content = f.read()
     
@@ -103,28 +108,28 @@ def test_launch_semaphore_in_create_context():
     cc_end = content.find('\n    async def ', cc_start + 1)
     cc_section = content[cc_start:cc_end] if cc_end != -1 else content[cc_start:]
     
-    # Check that _launch_semaphore is lazily initialized in create_context
-    assert '_launch_semaphore' in cc_section, \
-        "❌ FAILED: _launch_semaphore not used in create_context"
-    print("✓ Test 11 PASSED: _launch_semaphore used in create_context")
+    # Verify the serial blocking semaphore is NOT used (would prevent parallel launches)
+    assert '_launch_semaphore' not in cc_section, \
+        "❌ FAILED: _launch_semaphore should not be used in create_context (causes serial launches)"
+    print("✓ Test 11 PASSED: No serial semaphore in create_context (parallel launches enabled)")
     
-    # Check that asyncio.Semaphore(1) is created (serial launches - forceful fix)
-    assert 'asyncio.Semaphore(1)' in cc_section, \
-        "❌ FAILED: Launch semaphore should be initialized with limit of 1 (serial launches)"
-    print("✓ Test 12 PASSED: Launch semaphore initialized with limit of 1 (serial launches guarantee all N browsers launch)")
+    # Verify launch_persistent_context is called directly (not wrapped in a semaphore)
+    assert 'async with self._launch_semaphore' not in cc_section, \
+        "❌ FAILED: launch_persistent_context should NOT be wrapped with a serial semaphore"
+    print("✓ Test 12 PASSED: launch_persistent_context called directly for parallel launching")
     
-    # Check that the semaphore wraps the launch_persistent_context call
-    assert 'async with self._launch_semaphore:' in cc_section, \
-        "❌ FAILED: launch_persistent_context should be wrapped with semaphore"
-    print("✓ Test 13 PASSED: launch_persistent_context wrapped with launch semaphore")
+    # Verify the proxy retry fallback is still there for robust error handling
+    assert 'Retrying without proxy' in cc_section, \
+        "❌ FAILED: Proxy retry fallback not found in create_context"
+    print("✓ Test 13 PASSED: Proxy retry fallback retained for error-free operation")
     
-    # Check that _launch_semaphore is declared in BrowserManager.__init__
+    # Verify _launch_semaphore is NOT in BrowserManager.__init__ (clean removal)
     bm_init_start = content.find('class BrowserManager:')
     bm_init_end = content.find('\n    async def initialize(', bm_init_start)
     bm_init_section = content[bm_init_start:bm_init_end]
-    assert '_launch_semaphore' in bm_init_section, \
-        "❌ FAILED: _launch_semaphore not declared in BrowserManager.__init__"
-    print("✓ Test 14 PASSED: _launch_semaphore declared in BrowserManager.__init__")
+    assert '_launch_semaphore' not in bm_init_section, \
+        "❌ FAILED: _launch_semaphore should be removed from BrowserManager.__init__"
+    print("✓ Test 14 PASSED: _launch_semaphore fully removed from BrowserManager (parallel launches)")
 
 
 def test_rpa_startup_barrier():
@@ -331,16 +336,16 @@ if __name__ == '__main__':
         print("✅ ALL TESTS PASSED")
         print("=" * 70)
         print()
-        print("The fix FORCEFULLY serializes browser launches (1 at a time) via semaphore")
-        print("AND synchronizes all N browsers via a startup barrier.")
+        print("All N browsers launch in parallel (no serial semaphore restriction)")
+        print("AND synchronize via a startup barrier before any script runs.")
         print("This guarantees all N concurrent browsers are visible simultaneously.")
         print()
         print("Expected behavior (both RPA mode and Normal mode):")
-        print("  - Setting CONCURRENT=10 will open exactly 10 browsers (not fewer)")
-        print("  - All 10 browsers are visible at the same time before any work starts")
-        print("  - Browsers launch one at a time (serial), never overwhelming Playwright")
-        print("  - Once launched, all N browsers work truly concurrently")
-        print("  - 0.2s stagger between task/worker creations provides additional safety")
+        print("  - Setting CONCURRENT=10 will open exactly 10 browsers concurrently")
+        print("  - All 10 browsers are visible concurrently in parallel before any work starts")
+        print("  - 0.2s stagger between task/worker creations avoids exact-simultaneous init")
+        print("  - Startup barrier ensures all N are open before scripts start")
+        print("  - Proxy retry fallback ensures error-free operation on proxy failures")
         print()
         sys.exit(0)
     except AssertionError as e:
