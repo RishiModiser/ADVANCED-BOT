@@ -18995,7 +18995,7 @@ class BrowserManager:
             self.log_manager.log(f'Playwright initialization error: {error_msg}', 'ERROR')
             return False
     
-    async def create_context(self, platform: str = 'windows', use_proxy: bool = True) -> Optional[BrowserContext]:
+    async def create_context(self, platform: str = 'windows', use_proxy: bool = True, proxy_override: Optional[Dict] = None) -> Optional[BrowserContext]:
         """Create a new browser persistent context with unique profile.
         
         Uses launch_persistent_context to create real Chrome windows with their own taskbar icons.
@@ -19016,7 +19016,11 @@ class BrowserManager:
             proxy_config = None
             proxy_location = None
             if use_proxy:
-                proxy_config = self.proxy_manager.get_proxy_config()
+                if proxy_override is not None:
+                    # Use provided proxy directly (retry scenario — don't consume from queue)
+                    proxy_config = proxy_override
+                else:
+                    proxy_config = self.proxy_manager.get_proxy_config()
                 if proxy_config:
                     # Fetch proxy geolocation FIRST
                     geo_manager = ProxyGeolocation()
@@ -19141,6 +19145,7 @@ class BrowserManager:
             
             # Store proxy location for later use (e.g., displaying in browser)
             context._proxy_location = proxy_location
+            context._proxy_config = proxy_config  # Store for proxy-retry tracking
             
             # Inject imported cookies if available
             if self.imported_cookies:
@@ -20268,7 +20273,7 @@ class AutomationWorker(QObject):
             self.emit_log(f'Error during interaction: {e}', 'WARNING')
     
     async def execute_high_cpc_mode(self, profile_num, high_cpc_url, target_domain, stay_time, 
-                                    consent_manager, platform='windows', startup_barrier=None):
+                                    consent_manager, platform='windows', startup_barrier=None, proxy_override=None):
         """Execute HIGH CPC/CPM Mode with 4 High CPC tabs and 1 Target Domain tab.
         
         Args:
@@ -20279,13 +20284,14 @@ class AutomationWorker(QObject):
             consent_manager: ConsentManager instance for cookie handling
             platform: Platform to use (windows/android)
             startup_barrier: Optional dict with 'event', 'count', 'target' for startup synchronization
+            proxy_override: Optional proxy config dict to use directly (skips queue consumption)
         """
         try:
             self.emit_log(f'━━━ Profile {profile_num} | HIGH CPC/CPM Mode | Platform: {platform} ━━━')
             
             # Create browser context
             self.emit_log(f'Creating browser context for HIGH CPC mode...')
-            context = await self.browser_manager.create_context(platform)
+            context = await self.browser_manager.create_context(platform, proxy_override=proxy_override)
             if not context:
                 self.emit_log(f'Failed to create browser context', 'ERROR')
                 # Signal barrier even on failure to prevent deadlock
@@ -21030,7 +21036,7 @@ class AutomationWorker(QObject):
                                      consent_manager, enable_highlight=False,
                                      utm_campaign='', utm_medium='social', utm_term='', utm_content='',
                                      high_cpc_enabled=False, high_cpc_url='', high_cpc_target='', high_cpc_stay_time=180,
-                                     startup_barrier=None):
+                                     startup_barrier=None, proxy_override=None):
         """Execute a single browser profile with one page."""
         try:
             # Check if HIGH CPC/CPM Mode is enabled
@@ -21040,7 +21046,7 @@ class AutomationWorker(QObject):
                 return await self.execute_high_cpc_mode(
                     profile_num, high_cpc_url, high_cpc_target, 
                     high_cpc_stay_time, consent_manager, platform,
-                    startup_barrier=startup_barrier
+                    startup_barrier=startup_barrier, proxy_override=proxy_override
                 )
             
             # Normal mode execution (existing code)
@@ -21057,7 +21063,7 @@ class AutomationWorker(QObject):
             
             # Create new context for this profile (session isolation)
             self.emit_log(f'Creating browser context for profile {profile_num}...')
-            context = await self.browser_manager.create_context(platform)
+            context = await self.browser_manager.create_context(platform, proxy_override=proxy_override)
             if not context:
                 self.emit_log(f'Failed to create browser context for profile {profile_num}', 'ERROR')
                 # Signal barrier even on failure to prevent deadlock
@@ -21343,6 +21349,9 @@ class AutomationWorker(QObject):
             # Track running concurrent browsers in the worker's active_tasks list
             concurrent_counter = 0
 
+            # Active browser count — shared counter so logs always show the real running total
+            active_browser_count = 0
+
             # STARTUP BARRIER: Ensures all N browsers are launched and visible before any
             # starts executing scripts. Without this, browsers with short scripts complete
             # and restart before all N are launched, so fewer than N are ever visible at once.
@@ -21350,13 +21359,17 @@ class AutomationWorker(QObject):
             initial_launched_count = 0
 
             async def run_rpa_concurrent(concurrent_num):
-                """Run a single RPA concurrent browser with automatic continuous restart."""
-                nonlocal concurrent_counter, initial_launched_count
+                """Run a single RPA browser slot with automatic continuous restart and proxy retry."""
+                nonlocal concurrent_counter, initial_launched_count, active_browser_count
                 is_initial_launch = True  # True only for the very first launch of this slot
+                retry_proxy = None   # Proxy to retry on crash (None = get fresh from queue)
+                proxy_retries = 0    # Retry counter to avoid infinite loops on same proxy
 
                 # Continuous loop - runs indefinitely until stopped or no more proxies
                 while self.running:
                     context = None
+                    is_browser_open = False
+                    used_proxy = None
                     try:
                         # Check stop immediately at start of each iteration
                         if not self.running:
@@ -21365,36 +21378,58 @@ class AutomationWorker(QObject):
                         # Select random platform for this concurrent browser
                         platform = random.choice(platforms)
                         
-                        # Check if proxies are available (if proxy mode enabled)
+                        # Check proxy availability and determine which proxy to use
                         if proxy_manager.proxy_enabled:
                             remaining = proxy_manager.get_remaining_proxies()
-                            if remaining <= 0:
-                                self.emit_log(f'[Concurrent {concurrent_num}] No more proxies available, stopping', 'INFO')
+                            if remaining <= 0 and retry_proxy is None:
+                                self.emit_log(f'[Slot {concurrent_num}] ⛔ No more proxies available, stopping slot', 'INFO')
                                 if is_initial_launch:
-                                    # Count so other slots don't wait forever
                                     initial_launched_count += 1
                                     if initial_launched_count >= num_concurrent:
                                         initial_launch_event.set()
                                     is_initial_launch = False
                                 break
-                            self.emit_log(f'[Concurrent {concurrent_num}] Starting | Platform: {platform} | Proxies: {remaining}')
+                            if retry_proxy is not None:
+                                masked = proxy_manager.mask_proxy_for_logging(retry_proxy)
+                                self.emit_log(f'[Slot {concurrent_num}] ♻ Retrying same proxy (attempt {proxy_retries + 1}): {masked} | Platform: {platform}')
+                            else:
+                                self.emit_log(f'[Slot {concurrent_num}] 🟢 Launching browser | Platform: {platform} | Remaining proxies: {remaining}')
                         else:
-                            self.emit_log(f'[Concurrent {concurrent_num}] Starting | Platform: {platform}')
+                            self.emit_log(f'[Slot {concurrent_num}] 🟢 Launching browser | Platform: {platform}')
                         
-                        # Create browser context (proxy will be assigned automatically by create_context)
-                        self.emit_log(f'[Concurrent {concurrent_num}] Creating visible browser context...')
-                        context = await self.browser_manager.create_context(platform=platform, use_proxy=proxy_manager.proxy_enabled)
+                        # Create browser context (retry_proxy passed so queue is NOT re-consumed on retry)
+                        self.emit_log(f'[Slot {concurrent_num}] Creating visible browser context...')
+                        context = await self.browser_manager.create_context(
+                            platform=platform,
+                            use_proxy=proxy_manager.proxy_enabled,
+                            proxy_override=retry_proxy
+                        )
                         
                         if not context:
-                            self.emit_log(f'[Concurrent {concurrent_num}] Failed to create context, retrying in 2s...', 'WARNING')
+                            self.emit_log(f'[Slot {concurrent_num}] ⚠ Failed to create context, retrying in 2s...', 'WARNING')
                             if is_initial_launch:
-                                # Count failed launches so other slots don't wait forever
                                 initial_launched_count += 1
                                 if initial_launched_count >= num_concurrent:
                                     initial_launch_event.set()
                                 is_initial_launch = False
+                            # Context creation failed — clear retry so next attempt gets a fresh proxy
+                            retry_proxy = None
+                            proxy_retries = 0
                             await asyncio.sleep(2)
                             continue
+                        
+                        # Store which proxy is in use so we can retry with it on crash
+                        used_proxy = getattr(context, '_proxy_config', None)
+                        is_browser_open = True
+                        active_browser_count += 1
+                        
+                        # Log proxy in use and current active count
+                        if proxy_manager.proxy_enabled and used_proxy:
+                            masked = proxy_manager.mask_proxy_for_logging(used_proxy)
+                            remaining_now = proxy_manager.get_remaining_proxies()
+                            self.emit_log(f'[Slot {concurrent_num}] 🔷 Proxy in use: {masked}')
+                            self.emit_log(f'[Slot {concurrent_num}] 📊 Remaining proxies: {remaining_now}')
+                        self.emit_log(f'📊 Active browsers: {active_browser_count}/{num_concurrent}')
                         
                         # STARTUP BARRIER: signal that this slot has its first browser open,
                         # then wait until every slot has launched before running any script.
@@ -21409,16 +21444,20 @@ class AutomationWorker(QObject):
 
                         # Execute RPA script
                         script_executor = ScriptExecutor(self.log_manager, consent_manager)
-                        self.emit_log(f'[Concurrent {concurrent_num}] Executing RPA script...')
+                        self.emit_log(f'[Slot {concurrent_num}] Executing RPA script...')
                         success = await script_executor.execute_script(rpa_script, context)
                         
                         if success:
-                            self.emit_log(f'[Concurrent {concurrent_num}] ✓ RPA script completed successfully')
+                            self.emit_log(f'[Slot {concurrent_num}] ✓ RPA script completed successfully')
                         else:
-                            self.emit_log(f'[Concurrent {concurrent_num}] ✗ RPA script had errors', 'WARNING')
+                            self.emit_log(f'[Slot {concurrent_num}] ✗ RPA script had errors', 'WARNING')
+                        
+                        # Script finished (success or clean error) — use fresh proxy next time
+                        retry_proxy = None
+                        proxy_retries = 0
                         
                     except Exception as e:
-                        self.emit_log(f'[Concurrent {concurrent_num}] Error: {e}', 'ERROR')
+                        self.emit_log(f'[Slot {concurrent_num}] ❌ Error: {e}', 'ERROR')
 
                         # Ensure the barrier counter is updated even on unexpected errors
                         if is_initial_launch:
@@ -21427,32 +21466,55 @@ class AutomationWorker(QObject):
                                 initial_launch_event.set()
                             is_initial_launch = False
                         
-                        # If proxy failed, try next proxy
-                        if 'proxy' in str(e).lower() or 'net::ERR' in str(e):
-                            self.emit_log(f'[Concurrent {concurrent_num}] Proxy failure detected, will use next proxy', 'WARNING')
+                        # Decide retry strategy
+                        is_proxy_err = 'proxy' in str(e).lower() or 'net::ERR' in str(e)
+                        if is_proxy_err:
+                            self.emit_log(f'[Slot {concurrent_num}] ⚠ Proxy failure — moving to next proxy', 'WARNING')
+                            retry_proxy = None
+                            proxy_retries = 0
+                        elif used_proxy and proxy_manager.proxy_enabled and proxy_retries < 3:
+                            self.emit_log(f'[Slot {concurrent_num}] 🔄 Browser crashed — retrying with same proxy', 'WARNING')
+                            retry_proxy = used_proxy
+                            proxy_retries += 1
+                        else:
+                            self.emit_log(f'[Slot {concurrent_num}] ⚠ Max retries reached — moving to next proxy', 'WARNING')
+                            retry_proxy = None
+                            proxy_retries = 0
                     
                     finally:
+                        if is_browser_open:
+                            active_browser_count -= 1
+                            self.emit_log(f'🔴 [Slot {concurrent_num}] Browser closed | Active: {active_browser_count}/{num_concurrent}')
                         if context:
                             try:
                                 await context.close()
                             except:
                                 pass  # Context might already be closed
                         
-                        # Auto-restart: Check if we should continue
+                        # Decide whether to restart immediately
                         should_restart = self.running
-                        if proxy_manager.proxy_enabled and proxy_manager.get_remaining_proxies() <= 0:
+                        if proxy_manager.proxy_enabled and proxy_manager.get_remaining_proxies() <= 0 and retry_proxy is None:
                             should_restart = False
-                            self.emit_log(f'[Concurrent {concurrent_num}] No more proxies, stopping concurrent browser', 'INFO')
+                            self.emit_log(f'[Slot {concurrent_num}] ⛔ No more proxies, stopping slot', 'INFO')
                         
                         if should_restart:
-                            self.emit_log(f'[Concurrent {concurrent_num}] Browser closed, immediately restarting...', 'INFO')
-                            # Immediate restart - no delay to maintain N concurrent visible browsers
+                            self.emit_log(f'[Slot {concurrent_num}] ⟳ Immediately launching replacement browser...')
+                            # Immediate restart — no delay maintains the configured concurrent count
                 
-                self.emit_log(f'[Concurrent {concurrent_num}] Concurrent browser stopped')
+                self.emit_log(f'[Slot {concurrent_num}] ■ Browser slot stopped')
             
             try:
-                # Start all concurrent browsers with small stagger to avoid Playwright connection bottleneck
-                self.emit_log(f'Spawning {num_concurrent} concurrent browser tasks...')
+                # Start all concurrent browser slots with small stagger to avoid Playwright bottleneck
+                self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+                self.emit_log(f'Spawning {num_concurrent} concurrent browser slots...')
+                self.emit_log(f'✓ Maintaining exactly {num_concurrent} browsers in taskbar at all times')
+                self.emit_log(f'✓ Instant restart: Browser restarts immediately when closed')
+                self.emit_log(f'✓ Proxy retry: Same proxy reused if browser crashes before completing')
+                if proxy_manager.proxy_enabled and proxy_manager.get_proxy_count() > 0:
+                    self.emit_log(f'✓ Proxy mode: Will continue until all {proxy_manager.get_proxy_count()} proxies consumed')
+                else:
+                    self.emit_log(f'✓ No-proxy mode: Will run continuously until stopped')
+                self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
                 for i in range(num_concurrent):
                     concurrent_counter += 1
                     task = asyncio.create_task(run_rpa_concurrent(concurrent_counter))
@@ -21462,9 +21524,8 @@ class AutomationWorker(QObject):
                     if i < num_concurrent - 1:  # Don't delay after the last one
                         await asyncio.sleep(0.2)
                 
-                # Verify all tasks were created
-                self.emit_log(f'✓ Created {len(self.active_tasks)} concurrent browser tasks')
-                self.emit_log(f'✓ All {num_concurrent} concurrent browsers started and running')
+                self.emit_log(f'✓ Created {len(self.active_tasks)} concurrent browser slots')
+                self.emit_log(f'✓ All {num_concurrent} browser slots started and running')
                 self.emit_log('Browsers will automatically restart if closed. Press STOP to end automation.')
                 await asyncio.gather(*self.active_tasks, return_exceptions=True)
                 
@@ -21574,83 +21635,141 @@ class AutomationWorker(QObject):
             # Reset active_tasks so stale references from any prior run don't affect stop()
             self.active_tasks = []
             
-            # Semaphore to limit concurrent workers
-            semaphore = asyncio.Semaphore(num_concurrent)
-            active_workers = []
-            worker_counter = 0
+            # Active browser count and slot tracking
+            active_browser_count = 0
+            slot_counter = 0
             completed_count = 0
             
             # STARTUP BARRIER: Ensures all N initial browsers are launched and visible
-            # before any starts executing its work. Same pattern as RPA mode.
+            # before any starts executing its work.  Same pattern as RPA mode.
             # This guarantees all N concurrent browsers appear simultaneously in the taskbar.
             normal_startup_barrier = {
                 'event': asyncio.Event(),
                 'count': 0,
                 'target': num_concurrent
             }
-            initial_workers_spawned = 0
             
-            async def worker_task(is_initial_worker=False):
-                """Single worker that processes one profile."""
-                nonlocal worker_counter, completed_count
+            async def worker_slot(slot_num):
+                """Long-running slot: manages one proxy at a time with automatic retry on crash."""
+                nonlocal active_browser_count, completed_count
                 
-                async with semaphore:
-                    worker_num = worker_counter
-                    worker_counter += 1
+                is_initial_launch = True
+                retry_proxy = None   # Proxy to retry (None = get fresh from queue)
+                proxy_retries = 0    # Retry counter to avoid infinite loops on same proxy
+                
+                while self.running:
+                    current_proxy = None
+                    is_browser_open = False
                     
                     try:
-                        # Check stop immediately at start
                         if not self.running:
-                            return False
+                            break
                         
-                        # Check if we should continue (proxies available or no proxy mode)
+                        # Proxy selection for this iteration
                         if proxy_manager.proxy_enabled:
-                            remaining = proxy_manager.get_remaining_proxies()
-                            if remaining <= 0:
-                                self.emit_log(f'[Worker {worker_num}] No more proxies available, stopping', 'INFO')
-                                # Signal barrier on early exit to prevent deadlock
-                                if is_initial_worker and not normal_startup_barrier['event'].is_set():
-                                    normal_startup_barrier['count'] += 1
-                                    if normal_startup_barrier['count'] >= normal_startup_barrier['target']:
-                                        normal_startup_barrier['event'].set()
-                                return False
-                            self.emit_log(f'[Worker {worker_num}] Starting (Proxies remaining: {remaining})')
+                            if retry_proxy is not None:
+                                # Retry with same proxy — don't consume a new one from queue
+                                current_proxy = retry_proxy
+                                retry_proxy = None
+                                masked = proxy_manager.mask_proxy_for_logging(current_proxy)
+                                self.emit_log(f'[Slot {slot_num}] ♻ Retrying same proxy (attempt {proxy_retries + 1}): {masked}')
+                            else:
+                                proxy_retries = 0
+                                remaining = proxy_manager.get_remaining_proxies()
+                                if remaining <= 0:
+                                    self.emit_log(f'[Slot {slot_num}] ⛔ No more proxies, stopping slot', 'INFO')
+                                    if is_initial_launch and not normal_startup_barrier['event'].is_set():
+                                        normal_startup_barrier['count'] += 1
+                                        if normal_startup_barrier['count'] >= normal_startup_barrier['target']:
+                                            normal_startup_barrier['event'].set()
+                                        is_initial_launch = False
+                                    break
+                                current_proxy = proxy_manager.get_proxy_config()
+                                if current_proxy is None:
+                                    self.emit_log(f'[Slot {slot_num}] ⛔ No more proxies, stopping slot', 'INFO')
+                                    if is_initial_launch and not normal_startup_barrier['event'].is_set():
+                                        normal_startup_barrier['count'] += 1
+                                        if normal_startup_barrier['count'] >= normal_startup_barrier['target']:
+                                            normal_startup_barrier['event'].set()
+                                        is_initial_launch = False
+                                    break
+                                masked = proxy_manager.mask_proxy_for_logging(current_proxy)
+                                remaining_after = proxy_manager.get_remaining_proxies()
+                                self.emit_log(f'[Slot {slot_num}] 🟢 Launching browser | 🔷 Proxy: {masked} | 📊 Remaining proxies: {remaining_after}')
                         else:
-                            self.emit_log(f'[Worker {worker_num}] Starting')
+                            self.emit_log(f'[Slot {slot_num}] 🟢 Launching browser (no proxy)')
                         
-                        # Execute single profile, passing the startup barrier for initial workers
+                        is_browser_open = True
+                        active_browser_count += 1
+                        self.emit_log(f'📊 Active browsers: {active_browser_count}/{num_concurrent}')
+                        
                         result = await self.execute_single_profile(
-                            worker_num, url_list, platforms, visit_type,
+                            slot_num, url_list, platforms, visit_type,
                             search_keyword, target_domain, search_engine, referral_sources,
                             random_time_enabled, stay_time, min_time_spend, max_time_spend, enable_consent,
                             enable_interaction, enable_extra_pages, max_pages,
                             consent_manager, enable_text_highlight,
                             utm_campaign, utm_medium, utm_term, utm_content,
                             high_cpc_enabled, high_cpc_url, high_cpc_target, high_cpc_stay_time,
-                            startup_barrier=normal_startup_barrier if is_initial_worker else None
+                            startup_barrier=normal_startup_barrier if is_initial_launch else None,
+                            proxy_override=current_proxy
                         )
+                        is_initial_launch = False
                         
                         if result:
                             completed_count += 1
-                            self.emit_log(f'[Worker {worker_num}] ✓ Completed successfully (Total: {completed_count})')
+                            self.emit_log(f'[Slot {slot_num}] ✓ Profile completed successfully (Total: {completed_count})')
+                            retry_proxy = None
+                            proxy_retries = 0
                         else:
-                            self.emit_log(f'[Worker {worker_num}] ✗ Failed', 'WARNING')
-                        
-                        return result
-                        
+                            # Profile failed — retry with same proxy up to 3 times so browsers
+                            # that closed/crashed before finishing work are immediately restarted
+                            if current_proxy and proxy_manager.proxy_enabled and proxy_retries < 3:
+                                self.emit_log(f'[Slot {slot_num}] ✗ Profile failed — retrying with same proxy', 'WARNING')
+                                retry_proxy = current_proxy
+                                proxy_retries += 1
+                            else:
+                                self.emit_log(f'[Slot {slot_num}] ✗ Profile failed — moving to next proxy', 'WARNING')
+                                retry_proxy = None
+                                proxy_retries = 0
+                    
                     except Exception as e:
-                        self.emit_log(f'[Worker {worker_num}] Exception: {e}', 'ERROR')
-                        # Signal barrier on any exception to prevent deadlock
-                        if is_initial_worker and not normal_startup_barrier['event'].is_set():
-                            normal_startup_barrier['count'] += 1
-                            if normal_startup_barrier['count'] >= normal_startup_barrier['target']:
-                                normal_startup_barrier['event'].set()
-                        return False
+                        self.emit_log(f'[Slot {slot_num}] ❌ Exception: {e}', 'ERROR')
+                        is_initial_launch = False
+                        
+                        is_proxy_err = 'proxy' in str(e).lower() or 'net::ERR' in str(e)
+                        if is_proxy_err:
+                            self.emit_log(f'[Slot {slot_num}] ⚠ Proxy failure — moving to next proxy', 'WARNING')
+                            retry_proxy = None
+                            proxy_retries = 0
+                        elif current_proxy and proxy_manager.proxy_enabled and proxy_retries < 3:
+                            self.emit_log(f'[Slot {slot_num}] 🔄 Browser crashed — retrying with same proxy', 'WARNING')
+                            retry_proxy = current_proxy
+                            proxy_retries += 1
+                        else:
+                            retry_proxy = None
+                            proxy_retries = 0
+                    
+                    finally:
+                        if is_browser_open:
+                            active_browser_count -= 1
+                            self.emit_log(f'🔴 [Slot {slot_num}] Browser closed | Active: {active_browser_count}/{num_concurrent}')
+                        
+                        if self.running:
+                            if retry_proxy is not None:
+                                self.emit_log(f'[Slot {slot_num}] ⟳ Immediately launching replacement browser (same proxy)...')
+                            elif proxy_manager.proxy_enabled and proxy_manager.get_remaining_proxies() > 0:
+                                self.emit_log(f'[Slot {slot_num}] ⟳ Immediately launching replacement browser with next proxy...')
+                            elif not proxy_manager.proxy_enabled:
+                                self.emit_log(f'[Slot {slot_num}] ⟳ Immediately restarting browser...')
+                
+                self.emit_log(f'[Slot {slot_num}] ■ Browser slot stopped')
             
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-            self.emit_log(f'Starting worker pool: {num_concurrent} concurrent browsers')
+            self.emit_log(f'Starting {num_concurrent} concurrent browser slots')
             self.emit_log(f'✓ Maintaining exactly {num_concurrent} visible browsers in taskbar at all times')
-            self.emit_log(f'✓ Instant replacement: New browser spawns immediately when one closes')
+            self.emit_log(f'✓ Instant replacement: Browser restarts immediately when one closes')
+            self.emit_log(f'✓ Proxy retry: Same proxy reused if browser crashes before completing')
             self.emit_log(f'✓ Startup barrier: All {num_concurrent} browsers launch before any starts work')
             if proxy_manager.proxy_enabled and proxy_manager.get_proxy_count() > 0:
                 self.emit_log(f'✓ Proxy mode: Will continue until all {proxy_manager.get_proxy_count()} proxies consumed')
@@ -21658,98 +21777,33 @@ class AutomationWorker(QObject):
                 self.emit_log(f'✓ No-proxy mode: Will run continuously until stopped')
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             
-            # Keep spawning workers until stopped or proxies exhausted
             try:
-                # Initial spawn - start all N workers immediately
-                self.emit_log(f'Spawning initial batch of {num_concurrent} workers...')
-                initial_spawn_count = 0
-                while self.running:
-                    # Check if we should continue
-                    if proxy_manager.proxy_enabled:
-                        remaining = proxy_manager.get_remaining_proxies()
-                        if remaining <= 0:
-                            self.emit_log('All proxies consumed, waiting for active workers to finish...')
-                            break
-                    
-                    # Remove completed tasks and update active_tasks tracking independently
-                    active_workers = [w for w in active_workers if not w.done()]
-                    self.active_tasks = [t for t in self.active_tasks if not t.done()]
-                    
-                    # Spawn new workers with small stagger to avoid Playwright connection bottleneck
-                    spawned_this_round = 0
-                    while len(active_workers) < num_concurrent and self.running:
-                        # Check proxies again before spawning
-                        if proxy_manager.proxy_enabled and proxy_manager.get_remaining_proxies() <= 0:
-                            break
-                        
-                        # Mark the first N workers as initial (for startup barrier)
-                        is_initial = initial_workers_spawned < num_concurrent
-                        initial_workers_spawned += 1
-                        task = asyncio.create_task(worker_task(is_initial_worker=is_initial))
-                        active_workers.append(task)
-                        self.active_tasks.append(task)  # Track separately for stop() cancellation
-                        spawned_this_round += 1
-                        initial_spawn_count += 1
-                        # Small stagger (0.2s) to avoid overwhelming Playwright connection
-                        # Playwright's connection can only handle ~5 concurrent launch_persistent_context calls
-                        if len(active_workers) < num_concurrent:  # Don't delay if we've reached the limit
-                            await asyncio.sleep(0.2)
-                    
-                    # Log initial spawn completion
-                    if spawned_this_round > 0 and initial_spawn_count <= num_concurrent:
-                        self.emit_log(f'✓ Spawned {initial_spawn_count}/{num_concurrent} workers (Active: {len(active_workers)})')
-                    
-                    # If no active workers and no more proxies/work to do, break
-                    if not active_workers:
-                        if proxy_manager.proxy_enabled:
-                            # Only break if truly no more proxies
-                            if proxy_manager.get_remaining_proxies() <= 0:
-                                self.emit_log('All work completed (no proxies remaining)')
-                                break
-                            else:
-                                # This shouldn't happen, but if it does, log it and continue
-                                self.emit_log('Warning: No active workers but proxies remain - retrying...', 'WARNING')
-                                await asyncio.sleep(1)
-                                continue
-                        else:
-                            # No proxy mode - keep spawning workers continuously to maintain N concurrent
-                            # This maintains N visible browsers in taskbar at all times
-                            self.emit_log('No active workers, spawning new batch to maintain concurrent count...')
-                            await asyncio.sleep(0.1)
-                            continue
-                    
-                    # Maintain exactly N concurrent browsers - check frequently and spawn immediately
-                    # Short sleep to prevent busy-wait, but fast enough to maintain concurrent count
-                    if active_workers:
-                        # Wait briefly for any worker completion, then immediately check and spawn
-                        done, pending = await asyncio.wait(active_workers, timeout=0.1, return_when=asyncio.FIRST_COMPLETED)
-                    else:
-                        # Very short pause before checking again
-                        await asyncio.sleep(0.1)
+                # Spawn N long-running concurrent browser slots with small stagger
+                self.emit_log(f'Spawning {num_concurrent} concurrent browser slots...')
+                for i in range(num_concurrent):
+                    slot_counter += 1
+                    task = asyncio.create_task(worker_slot(slot_counter))
+                    self.active_tasks.append(task)
+                    # Small stagger (0.2s) to avoid overwhelming Playwright connection
+                    # Playwright's connection can only handle ~5 concurrent launch_persistent_context calls
+                    if i < num_concurrent - 1:
+                        await asyncio.sleep(0.2)
                 
-                # Wait for all remaining workers to finish (with short timeout when stopping)
-                if active_workers:
-                    if self.running:
-                        # Normal completion - wait for all
-                        self.emit_log(f'Waiting for {len(active_workers)} active worker(s) to finish...')
-                        await asyncio.gather(*active_workers, return_exceptions=True)
-                    else:
-                        # Stop requested - force close immediately
-                        self.emit_log(f'Stop requested - force closing {len(active_workers)} active worker(s)...')
-                        for task in active_workers:
-                            if not task.done():
-                                task.cancel()
-                        # Give them a moment to cancel gracefully
-                        await asyncio.sleep(0.5)
+                self.emit_log(f'✓ Created {len(self.active_tasks)} concurrent browser slots')
+                self.emit_log(f'✓ All {num_concurrent} browser slots started and running')
+                self.emit_log('Browsers will automatically restart if closed. Press STOP to end automation.')
+                await asyncio.gather(*self.active_tasks, return_exceptions=True)
                 
+                self.emit_log('✓ All concurrent browsers stopped')
+            
             except Exception as e:
-                self.emit_log(f'Worker pool error: {e}', 'ERROR')
+                self.emit_log(f'Slot pool error: {e}', 'ERROR')
             
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             self.emit_log(f'✓ Automation completed: {completed_count} profiles processed successfully')
             self.emit_log(f'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             
-            # Cleanup - force close all browsers immediately
+            # Cleanup — force close all browsers immediately
             await self.browser_manager.force_close_all()
             self.emit_log('Browser closed, automation finished')
             

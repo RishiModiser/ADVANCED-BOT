@@ -29,8 +29,8 @@ def test_platform_selection_in_rpa_mode():
         "❌ FAILED: platform not randomly selected in RPA mode"
     print("✓ Test 2 PASSED: Platform randomly selected for each concurrent browser")
     
-    # Verify platform parameter is passed to create_context
-    assert "create_context(platform=platform, use_proxy=" in rpa_mode_section, \
+    # Verify platform parameter is passed to create_context (call may span multiple lines)
+    assert "platform=platform" in rpa_mode_section and "use_proxy=" in rpa_mode_section, \
         "❌ FAILED: platform parameter not passed to create_context in RPA mode"
     print("✓ Test 3 PASSED: Platform parameter passed to create_context in RPA mode")
     
@@ -81,8 +81,8 @@ def test_execute_single_profile_uses_platform():
         "❌ FAILED: platform not selected in execute_single_profile"
     print("✓ Test 7 PASSED: Platform selected in execute_single_profile")
     
-    # Verify platform is passed to create_context
-    assert "context = await self.browser_manager.create_context(platform)" in profile_section, \
+    # Verify platform is passed to create_context (may include proxy_override parameter)
+    assert "self.browser_manager.create_context(platform" in profile_section, \
         "❌ FAILED: platform not passed to create_context in execute_single_profile"
     print("✓ Test 8 PASSED: Platform passed to create_context in execute_single_profile")
 
@@ -115,8 +115,8 @@ def test_concurrent_count_logic():
         search_pos += 1
     normal_mode_section = content[normal_start:search_pos] if search_pos < len(content) else content[normal_start:]
     
-    # Verify worker pool maintains N workers
-    assert "while len(active_workers) < num_concurrent and self.running:" in normal_mode_section, \
+    # Verify slot-based approach maintains N slots (replacing old spawner loop)
+    assert "for i in range(num_concurrent):" in normal_mode_section, \
         "❌ FAILED: worker pool doesn't maintain N workers"
     print("✓ Test 11 PASSED: Normal mode maintains N workers dynamically")
     
