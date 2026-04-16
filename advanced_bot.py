@@ -20948,113 +20948,6 @@ class AutomationWorker(QObject):
             self.emit_log(f'Random clicks error: {e}', 'WARNING')
     
     
-    async def execute_single_visit(self, visit_num, url_list, platforms, visit_type, 
-                                   search_keyword, target_domain, search_engine, referral_sources,
-                                   min_time_spend, max_time_spend, enable_consent, 
-                                   enable_interaction, enable_extra_pages, max_pages,
-                                   consent_manager, enable_highlight=False,
-                                   utm_campaign='', utm_medium='social', utm_term='', utm_content=''):
-        """Execute a single visit/profile session."""
-        try:
-            # Select random URL and platform
-            target_url = random.choice(url_list)
-            platform = random.choice(platforms)
-            
-            self.emit_log(f'━━━ Profile {visit_num} | Platform: {platform} | URL: {target_url[:50]}... ━━━')
-            
-            # Create new context for this visit (session isolation)
-            self.emit_log(f'Creating browser context for profile {visit_num}...')
-            context = await self.browser_manager.create_context(platform)
-            if not context:
-                self.emit_log(f'Failed to create browser context for profile {visit_num}', 'ERROR')
-                return False
-            
-            try:
-                # Get the first page from persistent context (instead of creating new page)
-                page = context.pages[0] if context.pages else await context.new_page()
-                
-                # Display proxy location in page title if available
-                proxy_location = getattr(context, '_proxy_location', None)
-                if proxy_location:
-                    # Sanitize location text to prevent XSS
-                    import json
-                    country = proxy_location.get('country', 'Unknown')
-                    ip = proxy_location.get('ip', 'unknown')
-                    
-                    # Create safe JSON-encoded strings
-                    location_text_safe = json.dumps(f"Proxy: {country} | IP: {ip}")
-                    
-                    self.emit_log(f'[INFO] Proxy: {country} | IP: {ip}')
-                    # Inject location display into page with proper escaping and null check
-                    await page.add_init_script(f"""
-                        window.addEventListener('load', () => {{
-                            if (document.body) {{
-                                const locationDiv = document.createElement('div');
-                                locationDiv.id = 'proxy-location-display';
-                                locationDiv.style.cssText = `
-                                    position: fixed;
-                                    top: 10px;
-                                    right: 10px;
-                                    background: rgba(0, 0, 0, 0.8);
-                                    color: #00ff00;
-                                    padding: 10px 15px;
-                                    border-radius: 5px;
-                                    font-family: monospace;
-                                    font-size: 12px;
-                                    z-index: 999999;
-                                    pointer-events: none;
-                                `;
-                                locationDiv.textContent = {location_text_safe};
-                                document.body.appendChild(locationDiv);
-                            }}
-                        }});
-                    """)
-                
-                # Navigate based on visit type
-                if visit_type == 'referral':
-                    await self.handle_referral_visit(page, target_url, referral_sources,
-                                                    utm_medium, utm_campaign, utm_term, utm_content)
-                elif visit_type == 'search':
-                    # Search visit - opens selected search engine in a NEW tab, searches, and clicks target domain
-                    search_page = await self.handle_search_visit(context, target_domain, search_keyword, search_engine)
-                    if not search_page:
-                        self.emit_log(f'Target domain not found in search for profile {visit_num}', 'WARNING')
-                        return False
-                    # Replace page with the search result page for further interactions
-                    page = search_page
-                else:
-                    # Direct visit
-                    self.emit_log(f'[INFO] Direct visit to {target_url}')
-                    await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
-                
-                # Handle consents if enabled
-                if consent_manager and enable_consent:
-                    await consent_manager.handle_consents(page)
-                
-                # Time-based human scrolling behavior with highlighting and continuous consent monitoring
-                self.emit_log(f'Starting time-based browsing ({min_time_spend}-{max_time_spend} seconds)...')
-                consent_mgr = consent_manager if enable_consent else None
-                await HumanBehavior.time_based_browsing(page, min_time_spend, max_time_spend, enable_highlight, 
-                                                       consent_mgr, self.log_manager)
-                
-                # Handle interaction if enabled (legacy mode)
-                if enable_interaction:
-                    await self.handle_interaction(page, max_pages, enable_extra_pages)
-                
-                # Close page
-                await page.close()
-                
-                self.emit_log(f'✓ Profile {visit_num} completed successfully')
-                return True
-                
-            finally:
-                # Always close context after visit (session isolation)
-                await context.close()
-                
-        except Exception as e:
-            self.emit_log(f'✗ Profile {visit_num} error: {e}', 'ERROR')
-            return False
-    
     async def execute_single_visit(self, page, visit_num, target_url, visit_type,
                                   search_keyword, target_domain, search_engine, referral_sources,
                                   min_time_spend, max_time_spend, enable_consent,
@@ -21424,6 +21317,9 @@ class AutomationWorker(QObject):
                 self.emit_log('Failed to initialize browser', 'ERROR')
                 return
             
+            # Reset active_tasks so stale references from any prior run don't affect stop()
+            self.active_tasks = []
+            
             # Track running concurrent browsers in the worker's active_tasks list
             concurrent_counter = 0
 
@@ -21655,6 +21551,9 @@ class AutomationWorker(QObject):
             # Create consent manager
             consent_manager = ConsentManager(self.log_manager) if enable_consent else None
             
+            # Reset active_tasks so stale references from any prior run don't affect stop()
+            self.active_tasks = []
+            
             # Semaphore to limit concurrent workers
             semaphore = asyncio.Semaphore(num_concurrent)
             active_workers = []
@@ -21752,9 +21651,9 @@ class AutomationWorker(QObject):
                             self.emit_log('All proxies consumed, waiting for active workers to finish...')
                             break
                     
-                    # Remove completed tasks and update active_tasks tracking
+                    # Remove completed tasks and update active_tasks tracking independently
                     active_workers = [w for w in active_workers if not w.done()]
-                    self.active_tasks = active_workers  # Keep tracking updated
+                    self.active_tasks = [t for t in self.active_tasks if not t.done()]
                     
                     # Spawn new workers with small stagger to avoid Playwright connection bottleneck
                     spawned_this_round = 0
@@ -21768,7 +21667,7 @@ class AutomationWorker(QObject):
                         initial_workers_spawned += 1
                         task = asyncio.create_task(worker_task(is_initial_worker=is_initial))
                         active_workers.append(task)
-                        self.active_tasks.append(task)  # Track in worker's task list
+                        self.active_tasks.append(task)  # Track separately for stop() cancellation
                         spawned_this_round += 1
                         initial_spawn_count += 1
                         # Small stagger (0.2s) to avoid overwhelming Playwright connection
