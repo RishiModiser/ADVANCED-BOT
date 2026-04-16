@@ -43,7 +43,13 @@ def test_rpa_mode_stagger():
     print("✓ Test 4 PASSED: Stagger delay is conditional (skipped after last task)")
 
 def test_normal_mode_stagger():
-    """Test that Normal mode has stagger delay between slot spawns."""
+    """Test that Normal mode has stagger delay between concurrent slot spawns.
+    
+    'Slot spawns' refers to the creation of N long-running asyncio tasks (worker_slot)
+    that each manage their own proxy lifecycle.  A 0.2 s stagger is inserted between
+    each asyncio.create_task() call to avoid overwhelming the Playwright connection
+    when all N browser contexts are being initialised at nearly the same time.
+    """
     with open('advanced_bot.py', 'r') as f:
         content = f.read()
     
