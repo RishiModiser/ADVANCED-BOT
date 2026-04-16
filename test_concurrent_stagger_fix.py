@@ -96,7 +96,7 @@ def test_launch_semaphore_in_create_context():
     """Test that create_context launches browsers in parallel (no serial semaphore restriction).
     
     The serial Semaphore(1) was removed so that all N browsers launch in parallel,
-    making them appear simultaneously as the user expects. The 0.2s stagger between
+    allowing them to appear concurrently. The 0.2s stagger between
     task creations in the callers provides sufficient safety to avoid overwhelming Playwright.
     """
     with open('advanced_bot.py', 'r') as f:
@@ -341,8 +341,8 @@ if __name__ == '__main__':
         print("This guarantees all N concurrent browsers are visible simultaneously.")
         print()
         print("Expected behavior (both RPA mode and Normal mode):")
-        print("  - Setting CONCURRENT=10 will open exactly 10 browsers at the same time")
-        print("  - All 10 browsers are visible instantly in parallel before any work starts")
+        print("  - Setting CONCURRENT=10 will open exactly 10 browsers concurrently")
+        print("  - All 10 browsers are visible concurrently in parallel before any work starts")
         print("  - 0.2s stagger between task/worker creations avoids exact-simultaneous init")
         print("  - Startup barrier ensures all N are open before scripts start")
         print("  - Proxy retry fallback ensures error-free operation on proxy failures")
