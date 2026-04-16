@@ -43,7 +43,7 @@ def test_rpa_mode_stagger():
     print("✓ Test 4 PASSED: Stagger delay is conditional (skipped after last task)")
 
 def test_normal_mode_stagger():
-    """Test that Normal mode has stagger delay between worker spawns."""
+    """Test that Normal mode has stagger delay between slot spawns."""
     with open('advanced_bot.py', 'r') as f:
         content = f.read()
     
@@ -57,8 +57,8 @@ def test_normal_mode_stagger():
         search_pos += 1
     normal_section = content[normal_start:search_pos] if search_pos < len(content) else content[normal_start:]
     
-    # Check for worker spawn loop
-    assert 'while len(active_workers) < num_concurrent' in normal_section, \
+    # Check for slot spawn loop
+    assert 'for i in range(num_concurrent):' in normal_section, \
         "❌ FAILED: Worker spawn loop not found in Normal mode"
     print("✓ Test 5 PASSED: Worker spawn loop exists in Normal mode")
     
@@ -73,7 +73,7 @@ def test_normal_mode_stagger():
     print("✓ Test 7 PASSED: Comment explains Playwright connection limitation in Normal mode")
     
     # Check that delay is conditional
-    assert 'if len(active_workers) < num_concurrent' in normal_section, \
+    assert 'if i < num_concurrent - 1' in normal_section, \
         "❌ FAILED: Stagger delay should be conditional in Normal mode"
     print("✓ Test 8 PASSED: Stagger delay is conditional in Normal mode")
 
@@ -219,20 +219,20 @@ def test_normal_mode_startup_barrier():
         "❌ FAILED: Barrier target should be num_concurrent"
     print("✓ Test 24 PASSED: Barrier target set to num_concurrent in Normal mode")
     
-    # Check that initial_workers_spawned tracks which workers are initial
-    assert 'initial_workers_spawned' in normal_section, \
-        "❌ FAILED: initial_workers_spawned tracker not found in Normal mode"
-    print("✓ Test 25 PASSED: initial_workers_spawned tracks initial batch in Normal mode")
+    # Check that is_initial_launch tracks which iteration is the first for each slot
+    assert 'is_initial_launch' in normal_section, \
+        "❌ FAILED: is_initial_launch tracker not found in Normal mode"
+    print("✓ Test 25 PASSED: is_initial_launch tracks initial browser launch per slot in Normal mode")
     
-    # Check that is_initial_worker flag is passed to worker_task
-    assert 'is_initial_worker=is_initial' in normal_section or 'is_initial_worker=' in normal_section, \
-        "❌ FAILED: is_initial_worker flag not passed to worker_task"
-    print("✓ Test 26 PASSED: is_initial_worker flag passed to worker_task in Normal mode")
+    # Check that is_initial_launch flag is used to gate the startup barrier
+    assert 'startup_barrier=normal_startup_barrier if is_initial_launch else None' in normal_section, \
+        "❌ FAILED: is_initial_launch flag not used to pass startup barrier to execute_single_profile"
+    print("✓ Test 26 PASSED: is_initial_launch flag controls startup barrier in Normal mode")
     
-    # Check that worker_task passes startup_barrier to execute_single_profile
-    assert 'startup_barrier=normal_startup_barrier if is_initial_worker else None' in normal_section, \
+    # Check that worker_slot passes startup_barrier to execute_single_profile
+    assert 'startup_barrier=normal_startup_barrier if is_initial_launch else None' in normal_section, \
         "❌ FAILED: startup_barrier not passed to execute_single_profile for initial workers"
-    print("✓ Test 27 PASSED: startup_barrier passed to execute_single_profile for initial workers only")
+    print("✓ Test 27 PASSED: startup_barrier passed to execute_single_profile for initial launch only")
 
 
 def test_execute_single_profile_startup_barrier():
