@@ -16931,7 +16931,7 @@ REFERRER_URLS = {
 SEARCH_ENGINES = {
     'Google': {
         'url': 'https://www.google.com',
-        'search_box_selectors': ['textarea[name="q"]', 'input[name="q"]'],
+        'search_box_selectors': ['textarea[name="q"]', 'input[name="q"]', 'textarea[title="Search"]'],
         'results_selector': ['div#search', '[id="rso"]'],
         'result_links_selector': 'div#search a[href], div#rso a[href]'
     },
@@ -19636,19 +19636,39 @@ class AutomationWorker(QObject):
         page = await context.new_page()
         
         try:
-            # Navigate to search engine in the new tab with networkidle for stable loading
-            self.emit_log(f'Opening {search_engine} in new tab...')
-            try:
-                # Try with networkidle first (more stable, waits for network to be idle)
-                await page.goto(engine_config['url'], wait_until='networkidle', timeout=60000)
-            except:
-                # Fallback to domcontentloaded if networkidle fails
-                self.emit_log(f'Retrying with domcontentloaded...')
-                await page.goto(engine_config['url'], wait_until='domcontentloaded', timeout=60000)
-            
-            # Wait longer to ensure page is fully stable and loaded
+            # Navigate to search engine with automatic retry (up to 3 attempts)
+            max_nav_retries = 3
+            nav_success = False
+            for nav_attempt in range(1, max_nav_retries + 1):
+                self.emit_log(f'Opening {search_engine}... (attempt {nav_attempt}/{max_nav_retries})')
+                try:
+                    # Try networkidle first for fully-stable load
+                    await page.goto(engine_config['url'], wait_until='networkidle', timeout=60000)
+                    nav_success = True
+                except Exception as nav_err:
+                    self.emit_log(f'networkidle failed on attempt {nav_attempt}: {nav_err}', 'WARNING')
+                    try:
+                        # Fallback: domcontentloaded is lighter and faster
+                        await page.goto(engine_config['url'], wait_until='domcontentloaded', timeout=60000)
+                        nav_success = True
+                    except Exception as nav_err2:
+                        self.emit_log(f'domcontentloaded also failed on attempt {nav_attempt}: {nav_err2}', 'ERROR')
+
+                if nav_success:
+                    break
+
+                if nav_attempt < max_nav_retries:
+                    self.emit_log(f'{search_engine} did not open, retrying in 3 s...')
+                    await asyncio.sleep(3)
+
+            if not nav_success:
+                self.emit_log(f'Could not open {search_engine} after {max_nav_retries} attempts', 'ERROR')
+                await page.close()
+                return None
+
+            # Wait for the page to fully stabilise after navigation
             await asyncio.sleep(random.uniform(3, 5))
-            self.emit_log(f'✓ {search_engine} page loaded successfully')
+            self.emit_log(f'✓ {search_engine} loaded successfully')
             
             # Handle consent popups first
             self.emit_log('Checking for consent dialogs...')
