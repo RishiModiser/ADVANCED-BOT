@@ -57,7 +57,7 @@ echo        This may take several minutes...
 echo.
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
-%PYTHON_CMD% -m PyInstaller --onefile --windowed advanced_bot.py
+%PYTHON_CMD% -m PyInstaller --clean --noconfirm advanced_bot.spec
 
 if errorlevel 1 (
     echo.

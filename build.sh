@@ -43,7 +43,7 @@ echo "[3/3] Building executable..."
 echo "      This may take several minutes..."
 echo ""
 rm -rf build dist
-"$PYTHON_CMD" -m PyInstaller --onefile --windowed advanced_bot.py
+"$PYTHON_CMD" -m PyInstaller --clean --noconfirm advanced_bot.spec
 
 if [ -f "dist/advanced_bot" ]; then
     chmod +x "dist/advanced_bot"

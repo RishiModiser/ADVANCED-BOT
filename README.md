@@ -96,7 +96,7 @@ chmod +x build.sh && ./build.sh
 
 Or run PyInstaller directly:
 ```bash
-pyinstaller --onefile --windowed advanced_bot.py
+pyinstaller --clean --noconfirm advanced_bot.spec
 ```
 
 The resulting executable will be at `dist/advanced_bot` (or `dist/advanced_bot.exe` on Windows).
