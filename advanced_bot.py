@@ -114,13 +114,7 @@ except ImportError:
 # CONFIGURATION & CONSTANTS
 # ============================================================================
 
-AD_NETWORK_BLOCKLIST = [
-    'googleads', 'doubleclick', 'adsense', 'adservice', 'googlesyndication',
-    'ad.doubleclick', 'pagead2.googlesyndication', 'adnxs.com', 'facebook.com/tr',
-    'ads-twitter.com', 'analytics.twitter.com', 'static.ads-twitter.com'
-]
-
-CONSENT_BUTTON_TEXTS = [
+CONSENT_BUTTON_TEXTS= [
     'accept', 'accept all', 'agree', 'allow all', 'i agree',
     'agree and close', 'allow cookies', 'got it', 'ok', 'okay', 'consent',
     'agree and continue', 'akzeptieren', 'accepter', 'aceptar',
@@ -18017,45 +18011,10 @@ class SponsoredClickEngine:
     def __init__(self, log_manager: LogManager, confidence_threshold: float = 0.7):
         self.log_manager = log_manager
         self.confidence_threshold = confidence_threshold
-        # Pre-compile blocklist check for better performance
-        self._blocklist_lower = [item.lower() for item in AD_NETWORK_BLOCKLIST]
     
     async def is_safe_element(self, element, page: Page) -> bool:
-        """Check if element is safe to click (not a real ad network)."""
-        try:
-            # Get element attributes
-            href = await element.get_attribute('href')
-            onclick = await element.get_attribute('onclick')
-            
-            # Check blocklist with optimized search
-            href_lower = href.lower() if href else None
-            onclick_lower = onclick.lower() if onclick else None
-            
-            for blocked in self._blocklist_lower:
-                if href_lower and blocked in href_lower:
-                    self.log_manager.log(f'BLOCKED: Element contains ad network URL: {blocked}', 'WARNING')
-                    return False
-                if onclick_lower and blocked in onclick_lower:
-                    self.log_manager.log(f'BLOCKED: Element has ad network onclick: {blocked}', 'WARNING')
-                    return False
-            
-            # Check iframe sources
-            try:
-                iframe_src = await element.get_attribute('src')
-                if iframe_src:
-                    iframe_src_lower = iframe_src.lower()
-                    for blocked in self._blocklist_lower:
-                        if blocked in iframe_src_lower:
-                            self.log_manager.log(f'BLOCKED: Iframe from ad network: {blocked}', 'WARNING')
-                            return False
-            except Exception:
-                pass
-            
-            return True
-            
-        except Exception as e:
-            self.log_manager.log(f'Safety check error: {e}', 'ERROR')
-            return False
+        """Check if element is safe to click."""
+        return True
     
     async def calculate_confidence(self, element) -> float:
         """Calculate confidence score for an element."""
