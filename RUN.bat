@@ -17,13 +17,6 @@ echo  ^|      ADVANCED-BOT - Starting...                     ^|
 echo  ========================================================
 echo.
 
-REM ── Option 1: Run pre-built standalone executable if present ──────────────
-if exist "dist\ADVANCED-BOT.exe" (
-    start "" "dist\ADVANCED-BOT.exe"
-    timeout /t 2 /nobreak >nul
-    exit
-)
-
 REM ── Find Python ───────────────────────────────────────────────────────────
 set PYTHON_CMD=
 python --version >nul 2>&1

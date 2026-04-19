@@ -2,7 +2,6 @@
   "name": "ADVANCED-BOT",
   "version": "5.2.0",
   "description": "Enterprise-grade RPA system for advanced traffic simulation and behavioral analysis",
-  "build_type": "standalone",
   "author": "RishiModiser",
   "repository": "https://github.com/RishiModiser/ADVANCED-BOT",
   "python_version": "3.8+",

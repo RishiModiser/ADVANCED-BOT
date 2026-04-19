@@ -233,6 +233,5 @@ All properties in your original JSON are preserved, even if not explicitly mappe
 ## Support
 
 For issues or questions, please refer to:
-- `test_normalization_standalone.py` - Unit tests for normalization
 - `test_rpa_integration.py` - Integration tests
 - `QUICK_REFERENCE_NEW_RPA_ACTIONS.md` - Full action reference
