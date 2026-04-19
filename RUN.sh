@@ -19,13 +19,6 @@ echo "|      ADVANCED-BOT - Starting...                     |"
 echo "========================================================"
 echo ""
 
-# ── Option 1: Run pre-built standalone executable if present ─────────────
-if [ -f "dist/ADVANCED-BOT" ]; then
-    chmod +x "dist/ADVANCED-BOT"
-    ./dist/ADVANCED-BOT
-    exit $?
-fi
-
 # ── Find Python ────────────────────────────────────────────────────────────
 PYTHON_CMD=""
 if command -v python3 &> /dev/null; then

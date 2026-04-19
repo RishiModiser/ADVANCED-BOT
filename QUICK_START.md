@@ -1,95 +1,56 @@
-# ⚡ Quick Start - Standalone Executable
+# ⚡ Quick Start - ADVANCED-BOT
 
-## 🎯 Make Your Bot Run with 1 Click!
+## 🚀 Running the Application
 
-### For Windows Users:
+### Step 1 – Install Dependencies (once)
 
-1. **Build the Standalone Executable**
-   ```
-   Double-click: build_standalone.bat
-   ```
-   Wait 5-10 minutes for the first build to complete (subsequent builds take 2-3 minutes).
-
-2. **Run Your Bot**
-   
-   **Option A - Direct:**
-   ```
-   Go to: dist folder
-   Double-click: ADVANCED-BOT.exe
-   ```
-   
-   **Option B - Using Launcher:**
-   ```
-   Double-click: RUN.bat
-   ```
-
-3. **First Time Only**
-   - The app will download browser (1-2 minutes)
-   - After that, it runs instantly!
-
-✅ **Done! Now you can run it on ANY Windows computer with just 1 click!**
-
----
-
-### For Linux/Mac Users:
-
-1. **Build the Standalone Executable**
-   ```bash
-   chmod +x build_standalone.sh
-   ./build_standalone.sh
-   ```
-   Wait 5-10 minutes for the first build to complete (subsequent builds take 2-3 minutes).
-
-2. **Run Your Bot**
-   
-   **Option A - Direct:**
-   ```bash
-   ./dist/ADVANCED-BOT
-   ```
-   
-   **Option B - Using Launcher:**
-   ```bash
-   ./RUN.sh
-   ```
-
-3. **First Time Only**
-   - The app will download browser (1-2 minutes)
-   - After that, it runs instantly!
-
-✅ **Done! Now you can run it on ANY Linux/Mac with just 1 click!**
-
----
-
-## 📤 Share with Others
-
-You can share the `dist/ADVANCED-BOT.exe` (Windows) or `dist/ADVANCED-BOT` (Linux/Mac) file with anyone!
-
-They just need to:
-1. Copy the file to their computer
-2. Double-click (Windows) or run from terminal (Linux/Mac)
-3. Wait for first-time browser download
-4. Start using!
-
-**No Python, no installation, no dependencies needed!**
-
----
-
-## 📁 File Locations
-
-After building, you'll have:
-```
-dist/
-└── ADVANCED-BOT(.exe)    ← This is your 1-click executable!
+**Windows:**
+```bat
+INSTALL.bat
 ```
 
-File size: ~200-300 MB (includes everything!)
+**Linux/macOS:**
+```bash
+chmod +x INSTALL.sh && ./INSTALL.sh
+```
+
+### Step 2 – Start the Bot
+
+**Windows:**
+```bat
+RUN.bat
+```
+
+**Linux/macOS:**
+```bash
+./RUN.sh
+```
+
+Or run directly with Python:
+```bash
+python advanced_bot.py
+```
+
+---
+
+## 🔨 Build an Executable
+
+To create a single portable executable:
+
+**Windows:**
+```bat
+build.bat
+```
+
+**Linux/macOS:**
+```bash
+chmod +x build.sh && ./build.sh
+```
+
+The resulting executable will be at `dist/advanced_bot` (or `dist/advanced_bot.exe` on Windows).
 
 ---
 
 ## 🔧 Need Help?
 
-See detailed guide: [STANDALONE_GUIDE.md](STANDALONE_GUIDE.md)
-
----
-
-**🎉 Enjoy your standalone bot that runs with just 1 click on any system!**
+See [README.md](README.md) for full documentation.
