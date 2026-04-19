@@ -146,6 +146,44 @@ AD_DETECTION_SELECTORS = [
     'div[id*="ad-"]', 'div[class*="ad-"]'
 ]
 
+# ============================================================================
+# SAFE/DEMO SPONSORED SELECTOR LISTS
+# All safe sponsored selectors are centralised here for easy future expansion.
+# To add more safe sponsored selectors, append them to the lists below.
+# ============================================================================
+
+# Safe sponsored / promo element selectors (demo/test only – NOT real ad networks)
+SAFE_SPONSORED_SELECTORS = [
+    '.promo',
+    '.featured',
+    '.recommended',
+    '.sponsored-demo',
+    '.demo-ad',
+    '.test-ad',
+    '[data-sponsored="true"]',
+    '[data-demo-click="true"]',
+    # Add additional safe sponsored selectors here
+]
+
+# Safe iFrame selectors (demo/test only – NOT real ad networks)
+SAFE_IFRAME_SELECTORS = [
+    'iframe[data-demo-sponsored="true"]',
+    'iframe[data-safe-click="true"]',
+    '.demo-sponsored iframe',
+    '.test-click-frame',
+    # Add additional safe iframe selectors here
+]
+
+# Click targets to search for inside safe iframes
+SAFE_CLICK_TARGETS = [
+    'a[href]',
+    'button',
+    '.demo-link',
+    '.demo-button',
+    '[data-clickable="true"]',
+    # Add additional safe click targets here
+]
+
 
 
 # Referrer URLs for different sources
@@ -1258,52 +1296,81 @@ class ConsentManager:
 
 class SponsoredClickEngine:
     """Safely handles sponsored content interactions with strict rules."""
-    
-    def __init__(self, log_manager: LogManager, confidence_threshold: float = 0.7):
+
+    def __init__(self, log_manager: LogManager, confidence_threshold: float = 0.7,
+                 use_custom_selectors: bool = False,
+                 custom_sponsored_selectors: Optional[List[str]] = None,
+                 custom_iframe_selectors: Optional[List[str]] = None,
+                 iframe_click_enabled: bool = False):
         self.log_manager = log_manager
         self.confidence_threshold = confidence_threshold
-    
+        self.iframe_click_enabled = iframe_click_enabled
+
+        # Pre-compute merged selector lists once at construction time
+        # to avoid repeated allocations on every call.
+        _custom_sponsored = custom_sponsored_selectors or []
+        _custom_iframe = custom_iframe_selectors or []
+
+        if use_custom_selectors:
+            sponsored_base = list(SAFE_SPONSORED_SELECTORS)
+            for s in _custom_sponsored:
+                if s and s not in sponsored_base:
+                    sponsored_base.append(s)
+            self._sponsored_selectors: List[str] = sponsored_base
+
+            iframe_base = list(SAFE_IFRAME_SELECTORS)
+            for s in _custom_iframe:
+                if s and s not in iframe_base:
+                    iframe_base.append(s)
+            self._iframe_selectors: List[str] = iframe_base
+        else:
+            self._sponsored_selectors = list(SAFE_SPONSORED_SELECTORS)
+            self._iframe_selectors = list(SAFE_IFRAME_SELECTORS)
+
     async def is_safe_element(self, element, page: Page) -> bool:
         """Check if element is safe to click."""
         return True
-    
+
     async def calculate_confidence(self, element) -> float:
         """Calculate confidence score for an element."""
         try:
             score = 0.0
-            
+
             # Check visibility
             is_visible = await element.is_visible()
             if not is_visible:
                 return 0.0
-            
+
             score += 0.3
-            
+
             # Check size
             box = await element.bounding_box()
             if box and box['width'] > 50 and box['height'] > 30:
                 score += 0.3
-            
+
             # Check position (not hidden off-screen)
             if box and box['x'] >= 0 and box['y'] >= 0:
                 score += 0.2
-            
+
             # Check if has text or image
             text = await element.inner_text()
             if text and len(text.strip()) > 0:
                 score += 0.2
-            
+
             return score
-            
+
         except Exception:
             return 0.0
-    
+
     async def find_sponsored_elements(self, page: Page) -> List:
-        """Find safe sponsored/promo elements on page."""
+        """Find safe sponsored/promo elements on page using built-in and custom selectors."""
         safe_elements = []
-        
+
         try:
-            for selector in SPONSORED_SELECTORS:
+            selectors = self._sponsored_selectors
+            self.log_manager.log(f'Sponsored search: checking {len(selectors)} selector(s)')
+
+            for selector in selectors:
                 try:
                     elements = await page.query_selector_all(selector)
                     for element in elements:
@@ -1311,7 +1378,7 @@ class SponsoredClickEngine:
                         is_safe = await self.is_safe_element(element, page)
                         if not is_safe:
                             continue
-                        
+
                         # Confidence check
                         confidence = await self.calculate_confidence(element)
                         if confidence >= self.confidence_threshold:
@@ -1320,42 +1387,152 @@ class SponsoredClickEngine:
                                 'selector': selector,
                                 'confidence': confidence
                             })
-                
+
                 except Exception as e:
-                    self.log_manager.log(f'Error finding elements for {selector}: {e}', 'ERROR')
+                    self.log_manager.log(f'Error finding elements for selector "{selector}": {e}', 'WARNING')
                     continue
-            
-            self.log_manager.log(f'Found {len(safe_elements)} safe sponsored elements')
+
+            self.log_manager.log(f'Found {len(safe_elements)} safe sponsored element(s)')
             return safe_elements
-            
+
         except Exception as e:
             self.log_manager.log(f'Find sponsored elements error: {e}', 'ERROR')
             return []
-    
+
+    async def find_safe_iframes(self, page: Page) -> List:
+        """Find visible safe iframes using built-in and custom iframe selectors."""
+        safe_iframes = []
+
+        try:
+            selectors = self._iframe_selectors
+            self.log_manager.log(f'iFrame search: checking {len(selectors)} iframe selector(s)')
+
+            for selector in selectors:
+                try:
+                    elements = await page.query_selector_all(selector)
+                    for element in elements:
+                        try:
+                            # Only include visible iframes
+                            if await element.is_visible():
+                                safe_iframes.append(element)
+                        except Exception:
+                            continue
+                except Exception as e:
+                    self.log_manager.log(f'Error finding iframes for selector "{selector}": {e}', 'WARNING')
+                    continue
+
+            self.log_manager.log(f'Found {len(safe_iframes)} safe iframe(s)')
+            return safe_iframes
+
+        except Exception as e:
+            self.log_manager.log(f'Find safe iframes error: {e}', 'ERROR')
+            return []
+
+    async def click_inside_safe_iframe(self, page: Page, iframe_element) -> bool:
+        """Search inside a safe iframe for clickable targets and perform a human-like click."""
+        try:
+            # Obtain the content frame of the iframe element
+            frame = await iframe_element.content_frame()
+            if not frame:
+                self.log_manager.log('iFrame has no accessible content frame – skipping', 'WARNING')
+                return False
+
+            # Search for clickable targets inside the frame using SAFE_CLICK_TARGETS
+            # Add additional safe click targets to SAFE_CLICK_TARGETS at the top of the file
+            for target_selector in SAFE_CLICK_TARGETS:
+                try:
+                    elements = await frame.query_selector_all(target_selector)
+                    for element in elements:
+                        try:
+                            if not await element.is_visible():
+                                continue
+                            box = await element.bounding_box()
+                            if not box:
+                                continue
+
+                            # Human-like mouse movement to element centre, then click
+                            x = box['x'] + box['width'] / 2
+                            y = box['y'] + box['height'] / 2
+                            await HumanBehavior.mouse_movement(page, round(x), round(y))
+                            await asyncio.sleep(random.uniform(0.1, 0.3))
+                            await element.click()
+                            await asyncio.sleep(random.uniform(0.3, 0.8))
+
+                            self.log_manager.log(
+                                f'✓ iFrame click success – target selector: "{target_selector}"'
+                            )
+                            return True  # Return immediately on first successful click
+                        except Exception:
+                            continue
+                except Exception as e:
+                    self.log_manager.log(
+                        f'Error searching inside iframe for "{target_selector}": {e}', 'WARNING'
+                    )
+                    continue
+
+            self.log_manager.log('No clickable target found inside iframe')
+            return False
+
+        except Exception as e:
+            self.log_manager.log(f'click_inside_safe_iframe error: {e}', 'ERROR')
+            return False
+
     async def click_sponsored_content(self, page: Page, ratio: float):
-        """Click sponsored content based on ratio."""
+        """Click sponsored content based on ratio, with iframe fallback and retry logic."""
+        MAX_RETRIES = 3
+
         try:
             # Random decision based on ratio
             if random.random() > ratio:
                 self.log_manager.log('Skipping sponsored click (ratio check)')
                 return False
-            
-            # Find safe sponsored elements
-            sponsored = await self.find_sponsored_elements(page)
-            
-            if not sponsored:
-                self.log_manager.log('No safe sponsored elements found')
-                return False
-            
-            # Select random element
-            selected = random.choice(sponsored)
-            
-            # Natural click
-            self.log_manager.log(f'Clicking sponsored element (confidence: {selected["confidence"]:.2f})')
-            success = await HumanBehavior.natural_click(page, selected['selector'])
-            
-            return success
-            
+
+            for attempt in range(1, MAX_RETRIES + 1):
+                if attempt > 1:
+                    self.log_manager.log(f'Sponsored click retry attempt {attempt}/{MAX_RETRIES}')
+
+                # --- Normal sponsored element path ---
+                sponsored = await self.find_sponsored_elements(page)
+                self.log_manager.log(
+                    f'Sponsored selector scan: {len(sponsored)} element(s) found (attempt {attempt})'
+                )
+
+                if sponsored:
+                    selected = random.choice(sponsored)
+                    self.log_manager.log(
+                        f'Clicking sponsored element (confidence: {selected["confidence"]:.2f}, '
+                        f'selector: "{selected["selector"]}")'
+                    )
+                    success = await HumanBehavior.natural_click(page, selected['selector'])
+                    if success:
+                        self.log_manager.log('✓ Sponsored click succeeded')
+                        return True
+                    self.log_manager.log('Sponsored element click returned False – will retry', 'WARNING')
+                    continue
+
+                # --- iFrame fallback path ---
+                if self.iframe_click_enabled:
+                    iframes = await self.find_safe_iframes(page)
+                    self.log_manager.log(
+                        f'iFrame scan: {len(iframes)} iframe(s) found (attempt {attempt})'
+                    )
+                    for iframe in iframes:
+                        success = await self.click_inside_safe_iframe(page, iframe)
+                        if success:
+                            self.log_manager.log('✓ iFrame sponsored click succeeded')
+                            return True
+                else:
+                    self.log_manager.log('No sponsored elements found; iFrame clicks disabled')
+
+                self.log_manager.log(
+                    f'No click target found on attempt {attempt}/{MAX_RETRIES}', 'WARNING'
+                )
+
+            self.log_manager.log(
+                f'Sponsored click gave up after {MAX_RETRIES} attempt(s)', 'WARNING'
+            )
+            return False
+
         except Exception as e:
             self.log_manager.log(f'Sponsored click error: {e}', 'ERROR')
             return False
@@ -4189,7 +4366,10 @@ class AutomationWorker(QObject):
                                   min_time_spend, max_time_spend, enable_consent,
                                   enable_interaction, enable_extra_pages, max_pages,
                                   consent_manager, enable_highlight=False,
-                                  utm_campaign='', utm_medium='social', utm_term='', utm_content=''):
+                                  utm_campaign='', utm_medium='social', utm_term='', utm_content='',
+                                  sponsored_click_enabled=False, iframe_click_enabled=False,
+                                  sponsored_click_ratio=0.5, use_custom_selectors=False,
+                                  custom_sponsored_selectors=None, custom_iframe_selectors=None):
         """Execute a single visit within a browser profile."""
         try:
             self.emit_log(f'[Visit {visit_num}] Processing URL: {target_url[:50]}...')
@@ -4228,6 +4408,17 @@ class AutomationWorker(QObject):
             await HumanBehavior.time_based_browsing(page, min_time_spend, max_time_spend, enable_highlight, 
                                                    consent_mgr, self.log_manager)
             
+            # Sponsored content clicking (if enabled)
+            if sponsored_click_enabled:
+                sponsored_engine = SponsoredClickEngine(
+                    log_manager=self.log_manager,
+                    use_custom_selectors=use_custom_selectors,
+                    custom_sponsored_selectors=custom_sponsored_selectors or [],
+                    custom_iframe_selectors=custom_iframe_selectors or [],
+                    iframe_click_enabled=iframe_click_enabled,
+                )
+                await sponsored_engine.click_sponsored_content(page, sponsored_click_ratio)
+            
             # Handle interaction if enabled (legacy mode)
             if enable_interaction:
                 await self.handle_interaction(page, max_pages, enable_extra_pages)
@@ -4246,7 +4437,10 @@ class AutomationWorker(QObject):
                                      consent_manager, enable_highlight=False,
                                      utm_campaign='', utm_medium='social', utm_term='', utm_content='',
                                      high_cpc_enabled=False, high_cpc_url='', high_cpc_target='', high_cpc_stay_time=180,
-                                     startup_barrier=None, proxy_override=None):
+                                     startup_barrier=None, proxy_override=None,
+                                     sponsored_click_enabled=False, iframe_click_enabled=False,
+                                     sponsored_click_ratio=0.5, use_custom_selectors=False,
+                                     custom_sponsored_selectors=None, custom_iframe_selectors=None):
         """Execute a single browser profile with one page."""
         try:
             # Check if HIGH CPC/CPM Mode is enabled
@@ -4341,7 +4535,13 @@ class AutomationWorker(QObject):
                     time_to_spend, time_to_spend, enable_consent,  # Use same time for both min/max
                     enable_interaction, enable_extra_pages, max_pages,
                     consent_manager, enable_highlight,
-                    utm_campaign, utm_medium, utm_term, utm_content
+                    utm_campaign, utm_medium, utm_term, utm_content,
+                    sponsored_click_enabled=sponsored_click_enabled,
+                    iframe_click_enabled=iframe_click_enabled,
+                    sponsored_click_ratio=sponsored_click_ratio,
+                    use_custom_selectors=use_custom_selectors,
+                    custom_sponsored_selectors=custom_sponsored_selectors,
+                    custom_iframe_selectors=custom_iframe_selectors,
                 )
                 
                 # Close page
@@ -4790,6 +4990,14 @@ class AutomationWorker(QObject):
             high_cpc_url = self.config.get('high_cpc_url', '')
             high_cpc_target = self.config.get('high_cpc_target', '')
             high_cpc_stay_time = self.config.get('high_cpc_stay_time', 180)
+
+            # Sponsored click configuration
+            sponsored_click_enabled = self.config.get('sponsored_click_enabled', False)
+            iframe_click_enabled = self.config.get('iframe_click_enabled', False)
+            sponsored_click_ratio = self.config.get('sponsored_click_ratio', 50) / 100
+            use_custom_selectors = self.config.get('use_custom_selectors', False)
+            custom_sponsored_selectors = self.config.get('custom_sponsored_selectors', [])
+            custom_iframe_selectors = self.config.get('custom_iframe_selectors', [])
             
             
             self.emit_log(f'Configuration: {len(url_list)} URLs, {num_concurrent} concurrent browsers')
@@ -4922,7 +5130,13 @@ class AutomationWorker(QObject):
                             utm_campaign, utm_medium, utm_term, utm_content,
                             high_cpc_enabled, high_cpc_url, high_cpc_target, high_cpc_stay_time,
                             startup_barrier=normal_startup_barrier if is_initial_launch else None,
-                            proxy_override=current_proxy
+                            proxy_override=current_proxy,
+                            sponsored_click_enabled=sponsored_click_enabled,
+                            iframe_click_enabled=iframe_click_enabled,
+                            sponsored_click_ratio=sponsored_click_ratio,
+                            use_custom_selectors=use_custom_selectors,
+                            custom_sponsored_selectors=custom_sponsored_selectors,
+                            custom_iframe_selectors=custom_iframe_selectors,
                         )
                         is_initial_launch = False
                         
@@ -6111,6 +6325,60 @@ class AppGUI(QMainWindow):
         consent_group.setLayout(consent_layout)
         layout.addWidget(consent_group)
         
+        # Sponsored Click Settings
+        sponsored_group = QGroupBox('🎯 Sponsored Click Settings')
+        sponsored_layout = QVBoxLayout()
+        sponsored_layout.setSpacing(10)
+        
+        self.enable_sponsored_clicks = QCheckBox('✅ Enable Sponsored Clicks')
+        self.enable_sponsored_clicks.setChecked(False)
+        sponsored_layout.addWidget(self.enable_sponsored_clicks)
+        
+        self.enable_iframe_clicks = QCheckBox('🖼 Enable Safe iFrame Clicks')
+        self.enable_iframe_clicks.setChecked(False)
+        sponsored_layout.addWidget(self.enable_iframe_clicks)
+        
+        sponsored_layout.addWidget(QLabel('Sponsored Click Ratio % (1–100):'))
+        self.sponsored_click_ratio_input = QSpinBox()
+        self.sponsored_click_ratio_input.setRange(1, 100)
+        self.sponsored_click_ratio_input.setValue(50)
+        sponsored_layout.addWidget(self.sponsored_click_ratio_input)
+        
+        self.use_custom_selectors_check = QCheckBox('Use Custom Selectors')
+        self.use_custom_selectors_check.setChecked(False)
+        sponsored_layout.addWidget(self.use_custom_selectors_check)
+        
+        # Custom Sponsored Selectors (one per line)
+        sponsored_layout.addWidget(QLabel('Custom Sponsored Selectors (one per line):'))
+        self.custom_sponsored_selectors_input = QTextEdit()
+        self.custom_sponsored_selectors_input.setPlaceholderText('.my-promo\n[data-custom-ad="true"]\n# Add additional selectors here')
+        self.custom_sponsored_selectors_input.setMaximumHeight(80)
+        sponsored_layout.addWidget(self.custom_sponsored_selectors_input)
+        
+        # Custom iFrame Selectors (one per line)
+        sponsored_layout.addWidget(QLabel('Custom iFrame Selectors (one per line):'))
+        self.custom_iframe_selectors_input = QTextEdit()
+        self.custom_iframe_selectors_input.setPlaceholderText('iframe[data-my-frame="true"]\n.custom-frame iframe\n# Add additional iframe selectors here')
+        self.custom_iframe_selectors_input.setMaximumHeight(80)
+        sponsored_layout.addWidget(self.custom_iframe_selectors_input)
+        
+        sponsored_group.setLayout(sponsored_layout)
+        layout.addWidget(sponsored_group)
+        
+        # Browser Engine Selection
+        browser_engine_group = QGroupBox('⚙️ Browser Engine')
+        browser_engine_layout = QVBoxLayout()
+        browser_engine_layout.setSpacing(10)
+        
+        browser_engine_layout.addWidget(QLabel('Select browser engine:'))
+        self.browser_engine_combo = QComboBox()
+        self.browser_engine_combo.addItems(['Chromium', 'Firefox', 'WebKit'])
+        self.browser_engine_combo.setCurrentText('Chromium')
+        browser_engine_layout.addWidget(self.browser_engine_combo)
+        
+        browser_engine_group.setLayout(browser_engine_layout)
+        layout.addWidget(browser_engine_group)
+        
         layout.addStretch()
         
         scroll_area.setWidget(widget)
@@ -7209,6 +7477,22 @@ class AppGUI(QMainWindow):
                     'high_cpc_url': self.high_cpc_url_input.text().strip(),
                     'high_cpc_target': self.high_cpc_target_input.text().strip(),
                     'high_cpc_stay_time': self.high_cpc_stay_time_input.value(),
+                    # Sponsored click configuration
+                    'sponsored_click_enabled': self.enable_sponsored_clicks.isChecked(),
+                    'iframe_click_enabled': self.enable_iframe_clicks.isChecked(),
+                    'sponsored_click_ratio': self.sponsored_click_ratio_input.value(),
+                    'use_custom_selectors': self.use_custom_selectors_check.isChecked(),
+                    'custom_sponsored_selectors': [
+                        s.strip() for s in
+                        self.custom_sponsored_selectors_input.toPlainText().splitlines()
+                        if s.strip() and not s.strip().startswith('#')
+                    ],
+                    'custom_iframe_selectors': [
+                        s.strip() for s in
+                        self.custom_iframe_selectors_input.toPlainText().splitlines()
+                        if s.strip() and not s.strip().startswith('#')
+                    ],
+                    'browser_engine': self.browser_engine_combo.currentText(),
                 }
             
             # Update UI
