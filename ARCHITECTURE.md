@@ -81,22 +81,18 @@
 │  │  ┌────────────────────────────────────────┐    │          │
 │  │  │ SAFETY CHECKS                          │    │          │
 │  │  │                                        │    │          │
-│  │  │ 1. Blocklist Validation                │    │          │
-│  │  │    - 11 ad networks blocked            │    │          │
-│  │  │    - Pre-compiled for performance      │    │          │
-│  │  │                                        │    │          │
-│  │  │ 2. Element Confidence Scoring          │    │          │
+│  │  │ 1. Element Confidence Scoring          │    │          │
 │  │  │    - Visibility (30%)                  │    │          │
 │  │  │    - Size (30%)                        │    │          │
 │  │  │    - Position (20%)                    │    │          │
 │  │  │    - Text (20%)                        │    │          │
 │  │  │    - Threshold: 0.7                    │    │          │
 │  │  │                                        │    │          │
-│  │  │ 3. Safe Selector Whitelist             │    │          │
+│  │  │ 2. Safe Selector Whitelist             │    │          │
 │  │  │    - 8 safe patterns                   │    │          │
 │  │  │    - CSS class/attribute based         │    │          │
 │  │  │                                        │    │          │
-│  │  │ 4. Ratio-Based Logic                   │    │          │
+│  │  │ 3. Ratio-Based Logic                   │    │          │
 │  │  │    - Content %: 85% (default)          │    │          │
 │  │  │    - Sponsored %: 15% (default)        │    │          │
 │  │  └────────────────────────────────────────┘    │          │
@@ -190,7 +186,6 @@ For each visit:
     │   │
     │   ├─ If sponsored:
     │   │   ├─ Find safe elements (SponsoredClickEngine)
-    │   │   ├─ Check blocklist
     │   │   ├─ Calculate confidence
     │   │   └─ Natural click if safe
     │   │
@@ -209,12 +204,6 @@ Find elements matching safe selectors
 For each candidate element:
     │
     ├─ Get href, onclick, src attributes
-    │
-    ├─ Check against AD_NETWORK_BLOCKLIST
-    │   ├─ googleads? → ABORT
-    │   ├─ doubleclick? → ABORT
-    │   ├─ adsense? → ABORT
-    │   └─ ... (11 networks total)
     │
     ├─ Calculate confidence score:
     │   ├─ Is visible? +0.3
@@ -319,7 +308,6 @@ Layer 1: Input Validation
     └─ JSON schema validation
 
 Layer 2: Element Safety Checks
-    ├─ Blocklist matching (pre-compiled)
     ├─ Attribute inspection (href, onclick, src)
     └─ Immediate abort on detection
 

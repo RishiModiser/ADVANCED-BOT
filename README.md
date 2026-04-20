@@ -31,7 +31,7 @@ This bot includes:
 - Consent flow validation
 
 **STRICTLY FORBIDDEN:**
-- Clicking real third-party ad networks (Google Ads, AdSense, DoubleClick, etc.)
+- Clicking real third-party ad networks
 - Traffic fraud or click fraud
 - Unauthorized automation
 - Any illegal activities
@@ -241,7 +241,6 @@ The application provides a modern, fully responsive GUI with improved navigation
 - Ratio-based interaction logic
 - Safe element detection
 - Confidence scoring system
-- Strict ad network blocklist
 - Element visibility verification
 
 ## 🛡️ Security & Compliance
@@ -252,15 +251,6 @@ The application provides a modern, fully responsive GUI with improved navigation
 - **Rate Limiting** - Prevents abuse with configurable request limits
 - **Secure Logging** - Automatic masking of sensitive information (IPs, passwords, keys)
 - **Environment Validation** - Detects suspicious execution environments
-
-### Blocklist
-The system blocks all interactions with:
-- googleads
-- doubleclick
-- adsense
-- adservice
-- googlesyndication
-- Other major ad networks
 
 ### Logging
 - All actions are logged

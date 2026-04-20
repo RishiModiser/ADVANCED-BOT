@@ -3,8 +3,6 @@
 Windows Desktop Automation System
 Enterprise-grade RPA software for UX testing, sponsored content simulation,
 and traffic behavior research.
-
-⚠️ IMPORTANT: This system MUST NOT click real third-party ad networks.
 """
 
 import sys
