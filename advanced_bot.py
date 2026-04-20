@@ -1910,7 +1910,7 @@ def parse_proxy(proxy_string: str) -> Dict[str, str]:
         "username": username,
         "password": password,
     }
-    logging.info(f"Proxy parsed successfully: {host}:{port} (user: {username})")
+    logging.info("Proxy parsed successfully: %s:%s", host, port)
     return proxy_config
 
 
@@ -2007,7 +2007,9 @@ class ProxyManager:
                         if len(parts) == 4:
                             # host:port:username:password
                             parsed = parse_proxy(line)
-                            proxy_config['server'] = parsed['server'].replace('http://', f'{proxy_type}://', 1)
+                            # Rebuild server URL with the selected proxy protocol
+                            server_host_port = parsed['server'][len('http://'):]
+                            proxy_config['server'] = f"{proxy_type}://{server_host_port}"
                             proxy_config['username'] = parsed['username']
                             proxy_config['password'] = parsed['password']
                         elif len(parts) == 2:
@@ -2023,11 +2025,7 @@ class ProxyManager:
 
                 if proxy_config.get('server'):
                     proxies.append(proxy_config)
-                    logging.info(
-                        "Proxy parsed successfully: %s (user: %s)",
-                        proxy_config['server'],
-                        proxy_config.get('username', '<none>'),
-                    )
+                    logging.info("Proxy parsed successfully: %s", proxy_config['server'])
 
             except Exception as e:
                 # Log parsing error but continue with other proxies
