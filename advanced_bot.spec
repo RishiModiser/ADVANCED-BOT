@@ -4,10 +4,7 @@ a = Analysis(
     ['advanced_bot.py'],
     pathex=[],
     binaries=[],
-    datas=[
-        ('example_script.json', '.'),
-        ('example_proxies.txt', '.'),
-    ],
+    datas=[],
     hiddenimports=[
         'PySide6.QtCore',
         'PySide6.QtGui',

@@ -352,12 +352,7 @@ ADVANCED-BOT/
 │
 ├── README.md                    # Quick start (6.4KB)
 ├── USAGE_GUIDE.md              # User manual (10.6KB)
-├── IMPLEMENTATION_SUMMARY.md   # Technical docs (9.7KB)
-│
-├── example_script.json          # Sample RPA script
-│
-├── test_components.py           # Component tests
-└── validate_implementation.py   # Structure validator
+└── IMPLEMENTATION_SUMMARY.md   # Technical docs (9.7KB)
 ```
 
 ## Technology Stack
