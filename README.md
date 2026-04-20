@@ -269,8 +269,6 @@ user_agents.py         # User agent rotation
 requirements.txt       # Python dependencies
 build.bat              # Windows build script
 build.sh               # Linux/macOS build script
-example_script.json    # Sample RPA script
-example_proxies.txt    # Example proxy list
 ```
 
 ## 📊 System Requirements
