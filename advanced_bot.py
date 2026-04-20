@@ -1878,6 +1878,42 @@ class ScriptExecutor:
 # PROXY MANAGER
 # ============================================================================
 
+def parse_proxy(proxy_string: str) -> Dict[str, str]:
+    """Parse a single proxy string into a unified configuration dict.
+
+    Supported formats:
+    - ``username:password@host:port``
+    - ``host:port:username:password``
+
+    Returns:
+        Dict with keys ``server``, ``username``, and ``password``.
+
+    Raises:
+        ValueError: If the proxy string cannot be parsed.
+    """
+    proxy_string = proxy_string.strip()
+    if not proxy_string:
+        raise ValueError("Empty proxy string")
+
+    try:
+        if "@" in proxy_string:
+            auth, address = proxy_string.split("@", 1)
+            username, password = auth.split(":", 1)
+            host, port = address.rsplit(":", 1)
+        else:
+            host, port, username, password = proxy_string.split(":", 3)
+    except ValueError:
+        raise ValueError(f"Unable to parse proxy: {proxy_string!r}")
+
+    proxy_config = {
+        "server": f"http://{host}:{port}",
+        "username": username,
+        "password": password,
+    }
+    logging.info("Proxy parsed successfully: %s:%s", host, port)
+    return proxy_config
+
+
 class ProxyManager:
     """Manages proxy configurations with thread-safe queue."""
     
@@ -1932,7 +1968,7 @@ class ProxyManager:
                         username, password = auth_part.split(':', 1)
                         proxy_config['username'] = username
                         proxy_config['password'] = password
-                    
+
                     # Build server URL from host:port
                     if ':' in server_part:
                         # Handle IPv6 addresses [ipv6]:port
@@ -1965,14 +2001,17 @@ class ProxyManager:
                                     proxy_config['username'] = rest_parts[1]
                                     proxy_config['password'] = rest_parts[2]
                     else:
-                        # Check for host:port:username:password format
+                        # Use parse_proxy for both host:port:username:password and
+                        # simple host:port formats
                         parts = line.split(':')
                         if len(parts) == 4:
-                            # Assume host:port:username:password
-                            host, port, username, password = parts
-                            proxy_config['server'] = f"{proxy_type}://{host}:{port}"
-                            proxy_config['username'] = username
-                            proxy_config['password'] = password
+                            # host:port:username:password
+                            parsed = parse_proxy(line)
+                            # Rebuild server URL with the selected proxy protocol
+                            server_host_port = parsed['server'][len('http://'):]
+                            proxy_config['server'] = f"{proxy_type}://{server_host_port}"
+                            proxy_config['username'] = parsed['username']
+                            proxy_config['password'] = parsed['password']
                         elif len(parts) == 2:
                             # Simple host:port format
                             host, port = parts
@@ -1983,13 +2022,14 @@ class ProxyManager:
                             port = parts[-1]
                             host = ':'.join(parts[:-1])
                             proxy_config['server'] = f"{proxy_type}://{host}:{port}"
-                
+
                 if proxy_config.get('server'):
                     proxies.append(proxy_config)
-                    
+                    logging.info("Proxy parsed successfully: %s", proxy_config['server'])
+
             except Exception as e:
                 # Log parsing error but continue with other proxies
-                print(f"Warning: Failed to parse proxy on line {line_num}: {line} - {e}")
+                logging.warning("Failed to parse proxy on line %d: %r - %s", line_num, line, e)
                 continue
         
         return proxies
