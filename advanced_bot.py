@@ -185,6 +185,38 @@ SAFE_CLICK_TARGETS = [
     # Add additional safe click targets here
 ]
 
+# Default ad selectors shown in the Ad Selectors panel.
+# Users can add/remove/toggle selectors from the GUI; this list is the factory default.
+AD_SELECTORS: List[Dict[str, Any]] = [
+    {"selector": "iframe[src*='ads']", "enabled": True},
+    {"selector": "iframe[src*='ad']", "enabled": True},
+    {"selector": "div[id*='ad']", "enabled": True},
+    {"selector": "div[class*='ad']", "enabled": True},
+    {"selector": "ins[id*='ad']", "enabled": True},
+    {"selector": "ins[class*='ads']", "enabled": True},
+    {"selector": "a[href*='ad']", "enabled": True},
+    {"selector": "a[href*='ads']", "enabled": True},
+    {"selector": "div[data-ad-*]", "enabled": True},
+    {"selector": "div[data-ads-*]", "enabled": True},
+    {"selector": "[id*='banner']", "enabled": True},
+    {"selector": "[class*='banner']", "enabled": True},
+    {"selector": "[id*='sponsor']", "enabled": True},
+    {"selector": "[class*='sponsor']", "enabled": True},
+    {"selector": "div[aria-label*='ad']", "enabled": True},
+    {"selector": "div[aria-label*='sponsor']", "enabled": True},
+    {"selector": "div[role='button']:has-text('Ad')", "enabled": True},
+    {"selector": "div:has-text('Sponsored')", "enabled": True},
+    {"selector": "div:has-text('Advertisement')", "enabled": True},
+    {"selector": "div:has-text('Promoted')", "enabled": True},
+    {"selector": "a[href*='click']", "enabled": True},
+    {"selector": "a[href*='go']", "enabled": True},
+    {"selector": "a[href*='out']", "enabled": True},
+    {"selector": "a[href*='redirect']", "enabled": True},
+    {"selector": "a[href*='track']", "enabled": True},
+]
+
+# Path to the bot settings file used for selector persistence
+_BOT_SETTINGS_FILE = Path(__file__).parent / 'bot_settings.json'
 
 
 # Referrer URLs for different sources
@@ -5058,12 +5090,25 @@ class AutomationWorker(QObject):
                 'random_click_ratio',
                 self.config.get('sponsored_click_ratio', 50)
             ) / 100
-            # Merge legacy separate selectors into unified list when loading old configs
+            # Merge legacy separate selectors into unified list when loading old configs.
+            # New configs carry `ad_selectors` (list of {selector, enabled} dicts).
+            # Older configs may carry `custom_random_targets` (plain list of strings) or
+            # the even older `custom_sponsored_selectors` / `custom_iframe_selectors` keys.
             _legacy_sponsored = self.config.get('custom_sponsored_selectors', [])
             _legacy_iframe = self.config.get('custom_iframe_selectors', [])
             _legacy_sponsored_set = set(_legacy_sponsored)
             _legacy_combined = _legacy_sponsored + [s for s in _legacy_iframe if s not in _legacy_sponsored_set]
-            custom_random_targets = self.config.get('custom_random_targets', _legacy_combined)
+
+            if 'ad_selectors' in self.config:
+                # New format: extract only enabled selectors
+                custom_random_targets = [
+                    entry['selector']
+                    for entry in self.config['ad_selectors']
+                    if isinstance(entry, dict) and entry.get('enabled', True) and entry.get('selector', '').strip()
+                ]
+            else:
+                # Fall back to old flat list or legacy keys
+                custom_random_targets = self.config.get('custom_random_targets', _legacy_combined)
             selected_browser_engines = self.config.get('selected_browser_engines', ['Chromium'])
             
             
@@ -5603,7 +5648,10 @@ class AppGUI(QMainWindow):
         
         # Rate limiter for automation requests (max 100 starts per minute)
         self.rate_limiter = RateLimiter(max_requests=100, time_window=60) if SECURITY_AVAILABLE else None
-        
+
+        # Load ad selector data before init_ui so the widget can populate itself
+        self._ad_selector_data: List[Dict[str, Any]] = self._load_ad_selectors_settings()
+
         self.init_ui()
     
     def init_ui(self):
@@ -6435,31 +6483,55 @@ class AppGUI(QMainWindow):
         ratio_row.addWidget(self.random_click_ratio_label)
         random_ad_layout.addLayout(ratio_row)
 
-        # Unified selector input
-        targets_label = QLabel('Custom Random Click Targets (one per line):')
-        targets_label.setStyleSheet('color: #cc0000; font-weight: bold;')
-        random_ad_layout.addWidget(targets_label)
+        # ── Ad Selectors panel ────────────────────────────────────────────
+        ad_sel_label = QLabel('Ad Selectors:')
+        ad_sel_label.setStyleSheet('color: #cc0000; font-weight: bold;')
+        random_ad_layout.addWidget(ad_sel_label)
 
-        self.custom_random_targets_input = QTextEdit()
-        self.custom_random_targets_input.setPlaceholderText(
-            '.demo-ad\n'
-            "iframe[data-demo='true']\n"
-            "div[class*='promo']\n"
-            'ins[data-demo]\n'
-            "a[href*='offer']\n"
-            "[href*='campaign']\n"
-            '# Lines starting with # are ignored'
+        # Scrollable checklist
+        self.ad_selectors_list = QListWidget()
+        self.ad_selectors_list.setSelectionMode(QListWidget.ExtendedSelection)
+        self.ad_selectors_list.setMinimumHeight(180)
+        self.ad_selectors_list.setStyleSheet(
+            'QListWidget { background: #1e1e1e; color: #ffffff; border: 1px solid #cc0000;'
+            '  border-radius: 4px; padding: 4px; }'
+            'QListWidget::item { padding: 3px 6px; border-radius: 3px; }'
+            'QListWidget::item:selected { background: #cc0000; color: #ffffff; }'
+            'QListWidget::indicator:checked { background: #cc0000; border: 2px solid #cc0000; border-radius: 2px; }'
+            'QListWidget::indicator:unchecked { background: #333; border: 2px solid #888; border-radius: 2px; }'
         )
-        self.custom_random_targets_input.setMaximumHeight(120)
-        random_ad_layout.addWidget(self.custom_random_targets_input)
+        # Populate the list from the current in-memory selector data
+        for entry in self._ad_selector_data:
+            item = QListWidgetItem(entry['selector'])
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if entry['enabled'] else Qt.Unchecked)
+            self.ad_selectors_list.addItem(item)
+        random_ad_layout.addWidget(self.ad_selectors_list)
 
-        targets_info = QLabel(
-            'ℹ️ Supports any CSS selector – iframes, href links, div/ins/anchor elements.\n'
-            'Each type is detected automatically.'
+        # Bottom action buttons
+        ad_btn_row = QHBoxLayout()
+        ad_btn_style = (
+            'QPushButton { background: #2a2a2a; color: #ffffff; border: 1px solid #cc0000;'
+            '  border-radius: 4px; padding: 5px 12px; font-weight: bold; }'
+            'QPushButton:hover { background: #cc0000; }'
         )
-        targets_info.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
-        targets_info.setWordWrap(True)
-        random_ad_layout.addWidget(targets_info)
+        btn_add_sel = QPushButton('+ Add')
+        btn_add_sel.setStyleSheet(ad_btn_style)
+        btn_add_sel.clicked.connect(self._ad_selector_add)
+
+        btn_rem_sel = QPushButton('Remove')
+        btn_rem_sel.setStyleSheet(ad_btn_style)
+        btn_rem_sel.clicked.connect(self._ad_selector_remove)
+
+        btn_tog_sel = QPushButton('Toggle all')
+        btn_tog_sel.setStyleSheet(ad_btn_style)
+        btn_tog_sel.clicked.connect(self._ad_selector_toggle_all)
+
+        ad_btn_row.addWidget(btn_add_sel)
+        ad_btn_row.addWidget(btn_rem_sel)
+        ad_btn_row.addWidget(btn_tog_sel)
+        ad_btn_row.addStretch()
+        random_ad_layout.addLayout(ad_btn_row)
 
         random_ad_group.setLayout(random_ad_layout)
         layout.addWidget(random_ad_group)
@@ -6475,6 +6547,7 @@ class AppGUI(QMainWindow):
         engine_info.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
         engine_info.setWordWrap(True)
         browser_engine_layout.addWidget(engine_info)
+
 
         self.engine_chromium_check = QCheckBox('Chrome / Chromium')
         self.engine_chromium_check.setChecked(True)
@@ -7592,11 +7665,7 @@ class AppGUI(QMainWindow):
                     # Random ad click configuration
                     'random_ad_clicking_enabled': self.enable_random_ad_clicking.isChecked(),
                     'random_click_ratio': self.random_click_ratio_slider.value(),
-                    'custom_random_targets': [
-                        s.strip() for s in
-                        self.custom_random_targets_input.toPlainText().splitlines()
-                        if s.strip() and not s.strip().startswith('#')
-                    ],
+                    'ad_selectors': self._get_ad_selector_data_from_widget(),
                     'selected_browser_engines': [
                         e for e, chk in [
                             ('Chromium', self.engine_chromium_check),
@@ -8212,9 +8281,116 @@ class AppGUI(QMainWindow):
             QMessageBox.information(self, 'Info', 'No cookies to clear.')
     
     # ========================================================================
-    
+    # AD SELECTORS HELPERS
+    # ========================================================================
+
+    def _load_ad_selectors_settings(self) -> List[Dict[str, Any]]:
+        """Load ad selector list from bot_settings.json, or return the factory default."""
+        try:
+            if _BOT_SETTINGS_FILE.exists():
+                with open(_BOT_SETTINGS_FILE, 'r', encoding='utf-8') as fh:
+                    data = json.load(fh)
+                stored = data.get('ad_selectors')
+                if isinstance(stored, list) and stored:
+                    # Validate each entry
+                    validated = [
+                        {'selector': str(e['selector']), 'enabled': bool(e.get('enabled', True))}
+                        for e in stored
+                        if isinstance(e, dict) and 'selector' in e
+                    ]
+                    if validated:
+                        return validated
+        except Exception:
+            pass
+        return [dict(e) for e in AD_SELECTORS]
+
+    def _save_ad_selectors_settings(self):
+        """Persist the current ad selector list (with checked state) to bot_settings.json."""
+        try:
+            # Load existing settings so we don't overwrite unrelated keys
+            existing: Dict[str, Any] = {}
+            if _BOT_SETTINGS_FILE.exists():
+                try:
+                    with open(_BOT_SETTINGS_FILE, 'r', encoding='utf-8') as fh:
+                        existing = json.load(fh)
+                except Exception:
+                    pass
+            existing['ad_selectors'] = self._get_ad_selector_data_from_widget()
+            with open(_BOT_SETTINGS_FILE, 'w', encoding='utf-8') as fh:
+                json.dump(existing, fh, indent=2)
+        except Exception as e:
+            self.log_manager.log(f'Could not save ad selector settings: {e}', 'WARNING')
+
+    def _get_ad_selector_data_from_widget(self) -> List[Dict[str, Any]]:
+        """Read current selector list + checked state from the QListWidget."""
+        result = []
+        for i in range(self.ad_selectors_list.count()):
+            item = self.ad_selectors_list.item(i)
+            result.append({
+                'selector': item.text(),
+                'enabled': item.checkState() == Qt.Checked,
+            })
+        return result
+
+    def get_active_ad_selectors(self) -> List[str]:
+        """Return only the checked (enabled) selectors from the Ad Selectors panel."""
+        return [
+            entry['selector']
+            for entry in self._get_ad_selector_data_from_widget()
+            if entry['enabled']
+        ]
+
+    # ── Button slots for Ad Selectors ──────────────────────────────────────
+
+    def _ad_selector_add(self):
+        """Open an input dialog, add a new selector (checked by default)."""
+        from PySide6.QtWidgets import QInputDialog
+        text, ok = QInputDialog.getText(
+            self, 'Add Ad Selector', 'Enter CSS selector:',
+        )
+        if not ok:
+            return
+        selector = text.strip()
+        if not selector:
+            return
+        # Check for duplicates
+        for i in range(self.ad_selectors_list.count()):
+            if self.ad_selectors_list.item(i).text() == selector:
+                QMessageBox.information(self, 'Duplicate', 'This selector already exists.')
+                return
+        item = QListWidgetItem(selector)
+        item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+        item.setCheckState(Qt.Checked)
+        self.ad_selectors_list.addItem(item)
+        self._save_ad_selectors_settings()
+
+    def _ad_selector_remove(self):
+        """Remove currently selected items (no-op if nothing selected)."""
+        selected = self.ad_selectors_list.selectedItems()
+        for item in selected:
+            self.ad_selectors_list.takeItem(self.ad_selectors_list.row(item))
+        if selected:
+            self._save_ad_selectors_settings()
+
+    def _ad_selector_toggle_all(self):
+        """If not all checked → check all.  If all checked → uncheck all."""
+        count = self.ad_selectors_list.count()
+        if count == 0:
+            return
+        all_checked = all(
+            self.ad_selectors_list.item(i).checkState() == Qt.Checked
+            for i in range(count)
+        )
+        new_state = Qt.Unchecked if all_checked else Qt.Checked
+        for i in range(count):
+            self.ad_selectors_list.item(i).setCheckState(new_state)
+        self._save_ad_selectors_settings()
+
+    # ========================================================================
+
     def closeEvent(self, event):
         """Handle application close."""
+        self._save_ad_selectors_settings()
         if self.automation_worker and self.automation_worker.running:
             reply = QMessageBox.question(
                 self, 'Confirm Exit',
@@ -8229,6 +8405,7 @@ class AppGUI(QMainWindow):
                 event.ignore()
         else:
             event.accept()
+
 
 
 # ============================================================================
