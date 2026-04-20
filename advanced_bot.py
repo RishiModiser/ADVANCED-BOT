@@ -4797,7 +4797,7 @@ class AutomationWorker(QObject):
             self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
             
             rpa_script = self.config.get('rpa_script', {})
-            num_concurrent = self.config.get('concurrent', 1)
+            num_concurrent = self.config.get('number_of_browsers', self.config.get('concurrent', 1))
             platforms = self.config.get('platforms', ['windows'])
             enable_consent = self.config.get('enable_consent', True)
             
@@ -5054,7 +5054,7 @@ class AutomationWorker(QObject):
             stay_time = self.config.get('stay_time', 120)  # Fixed stay time in seconds
             min_time_spend = self.config.get('min_time_spend', 120)  # Min random time in seconds
             max_time_spend = self.config.get('max_time_spend', 240)  # Max random time in seconds
-            num_concurrent = self.config.get('concurrent', 1)  # Number of concurrent browser instances
+            num_concurrent = self.config.get('number_of_browsers', self.config.get('concurrent', 1))  # Number of browser windows
             platforms = self.config.get('platforms', ['windows'])
             content_ratio = self.config.get('content_ratio', 85) / 100
             visit_type = self.config.get('visit_type', 'direct')
@@ -6233,15 +6233,32 @@ class AppGUI(QMainWindow):
         max_time_layout.addStretch()
         traffic_layout.addLayout(max_time_layout)
         
-        # Concurrent browsers - Fixed to open multiple profiles simultaneously
-        concurrent_label = QLabel('Concurrent:')
-        concurrent_label.setStyleSheet('color: red; font-weight: bold;')
-        traffic_layout.addWidget(concurrent_label)
-        self.concurrent_input = QSpinBox()
-        self.concurrent_input.setRange(1, 1000)
-        self.concurrent_input.setValue(1)
-        self.concurrent_input.setToolTip('Number of concurrent browser profiles to open simultaneously. Example: 50 = opens 50 profiles at once')
-        traffic_layout.addWidget(self.concurrent_input)
+        # Number of Browsers - horizontal slider (1–240)
+        num_browsers_label = QLabel('Number of Browsers:')
+        num_browsers_label.setStyleSheet('color: #cc0000; font-weight: bold;')
+        traffic_layout.addWidget(num_browsers_label)
+
+        num_browsers_row = QHBoxLayout()
+        self.number_of_browsers_slider = QSlider(Qt.Horizontal)
+        self.number_of_browsers_slider.setRange(1, 240)
+        self.number_of_browsers_slider.setValue(1)
+        self.number_of_browsers_slider.setToolTip(
+            'Number of browser windows to launch simultaneously. '
+            'Example: 20 = instantly opens 20 browser windows at once'
+        )
+        self.number_of_browsers_slider.setStyleSheet(
+            'QSlider::groove:horizontal { height: 6px; background: #ffcccc; border-radius: 3px; }'
+            'QSlider::sub-page:horizontal { background: #cc0000; border-radius: 3px; }'
+            'QSlider::handle:horizontal { background: #cc0000; width: 16px; height: 16px; margin: -5px 0; border-radius: 8px; }'
+        )
+        self.number_of_browsers_value_label = QLabel('1')
+        self.number_of_browsers_value_label.setStyleSheet('color: #cc0000; font-weight: bold; min-width: 30px;')
+        self.number_of_browsers_slider.valueChanged.connect(
+            lambda v: self.number_of_browsers_value_label.setText(str(v))
+        )
+        num_browsers_row.addWidget(self.number_of_browsers_slider)
+        num_browsers_row.addWidget(self.number_of_browsers_value_label)
+        traffic_layout.addLayout(num_browsers_row)
         
         traffic_layout.addWidget(QLabel('Content Interaction % (0-100):'))
         self.content_ratio_input = QSpinBox()
@@ -6598,8 +6615,8 @@ class AppGUI(QMainWindow):
         self.random_time_enabled.setEnabled(not disable_features)
         self.min_time_input.setEnabled(not disable_features and self.random_time_enabled.isChecked())
         self.max_time_input.setEnabled(not disable_features and self.random_time_enabled.isChecked())
-        # KEEP CONCURRENT ENABLED IN RPA MODE
-        self.concurrent_input.setEnabled(True)  # Always enabled
+        # KEEP NUMBER OF BROWSERS ENABLED IN RPA MODE
+        self.number_of_browsers_slider.setEnabled(True)  # Always enabled
         self.content_ratio_input.setEnabled(not disable_features)
         
         # REQUIREMENT: Keep platform settings ENABLED when RPA mode is ON (ACTIVE)
@@ -6673,6 +6690,10 @@ class AppGUI(QMainWindow):
         if min_time > max_time:
             # Auto-adjust max to match min if min becomes greater
             self.max_time_input.setValue(min_time)
+
+    def get_selected_browser_count(self) -> int:
+        """Return the currently selected number of browser windows to launch."""
+        return self.number_of_browsers_slider.value()
     
     def toggle_high_cpc_section(self, checked):
         """Toggle visibility of HIGH CPC/CPM mode section.
@@ -7470,7 +7491,7 @@ class AppGUI(QMainWindow):
                 config = {
                     'rpa_mode': True,
                     'rpa_script': rpa_script,
-                    'concurrent': self.concurrent_input.value(),  # Number of concurrent browsers
+                    'number_of_browsers': self.get_selected_browser_count(),  # Number of browser windows
                     'proxy_enabled': self.proxy_enabled_check.isChecked(),
                     'proxy_type': self.proxy_type_combo.currentText(),
                     'proxy_list': self.proxy_list_input.toPlainText(),
@@ -7627,7 +7648,7 @@ class AppGUI(QMainWindow):
                     'stay_time': self.stay_time_input.value(),
                     'min_time_spend': self.min_time_input.value(),
                     'max_time_spend': self.max_time_input.value(),
-                    'concurrent': self.concurrent_input.value(),
+                    'number_of_browsers': self.get_selected_browser_count(),
                     'content_ratio': self.content_ratio_input.value(),
                     'platforms': selected_platforms,
                     'headless': False,  # Always False - browser must be visible
