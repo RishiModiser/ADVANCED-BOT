@@ -88,7 +88,8 @@ from PySide6.QtWidgets import (
     QComboBox, QCheckBox, QTabWidget, QGroupBox, QListWidget,
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
     QMessageBox, QFileDialog, QScrollArea, QListWidgetItem, QFormLayout,
-    QAbstractItemView, QRadioButton, QButtonGroup, QGridLayout, QStackedWidget
+    QAbstractItemView, QRadioButton, QButtonGroup, QGridLayout, QStackedWidget,
+    QSlider
 )
 from PySide6.QtCore import Qt, QThread, Signal, QObject
 from PySide6.QtGui import QFont, QColor, QPalette, QPixmap, QPainter
@@ -1294,38 +1295,59 @@ class ConsentManager:
 # SPONSORED CLICK ENGINE
 # ============================================================================
 
-class SponsoredClickEngine:
-    """Safely handles sponsored content interactions with strict rules."""
+def _classify_selector(selector: str) -> str:
+    """Classify a CSS selector string as 'iframe', 'href', or 'normal'.
+
+    Returns one of: 'iframe', 'href', 'normal'.
+    Classification is based on simple string heuristics so future selector
+    types can be added here without touching call-sites.
+    """
+    import re
+    s = selector.strip()
+    if not s:
+        return 'normal'
+    s_lower = s.lower()
+    # iframe selector: starts with 'iframe' as an element name
+    # (handles: iframe, iframe[...], iframe.class, iframe#id, iframe:...)
+    if re.match(r'^iframe[\s\[.#:>~+,]|^iframe$', s_lower):
+        return 'iframe'
+    # href selector: [href...] attribute selector or a[href...]
+    if re.search(r'\[href', s_lower):
+        return 'href'
+    return 'normal'
+
+
+class RandomAdClickEngine:
+    """Handles random ad / promo click interactions with unified selector support.
+
+    Accepts any mix of CSS selectors (iframe, href, div, ins, anchor, normal)
+    through ``custom_random_targets``.  Built-in safe selectors are always
+    included as a baseline and are classified automatically.
+    """
 
     def __init__(self, log_manager: LogManager, confidence_threshold: float = 0.7,
-                 use_custom_selectors: bool = False,
-                 custom_sponsored_selectors: Optional[List[str]] = None,
-                 custom_iframe_selectors: Optional[List[str]] = None,
-                 iframe_click_enabled: bool = False):
+                 custom_random_targets: Optional[List[str]] = None):
         self.log_manager = log_manager
         self.confidence_threshold = confidence_threshold
-        self.iframe_click_enabled = iframe_click_enabled
 
-        # Pre-compute merged selector lists once at construction time
-        # to avoid repeated allocations on every call.
-        _custom_sponsored = custom_sponsored_selectors or []
-        _custom_iframe = custom_iframe_selectors or []
+        # Build a single merged target list from built-in + custom selectors.
+        # Duplicates are preserved only once; order: built-ins first, then custom.
+        all_selectors: List[str] = list(SAFE_SPONSORED_SELECTORS) + list(SAFE_IFRAME_SELECTORS)
+        for s in (custom_random_targets or []):
+            s = s.strip()
+            if s and s not in all_selectors:
+                all_selectors.append(s)
 
-        if use_custom_selectors:
-            sponsored_base = list(SAFE_SPONSORED_SELECTORS)
-            for s in _custom_sponsored:
-                if s and s not in sponsored_base:
-                    sponsored_base.append(s)
-            self._sponsored_selectors: List[str] = sponsored_base
+        # Partition into iframe selectors and non-iframe selectors.
+        self._iframe_selectors: List[str] = [
+            s for s in all_selectors if _classify_selector(s) == 'iframe'
+        ]
+        self._normal_selectors: List[str] = [
+            s for s in all_selectors if _classify_selector(s) != 'iframe'
+        ]
 
-            iframe_base = list(SAFE_IFRAME_SELECTORS)
-            for s in _custom_iframe:
-                if s and s not in iframe_base:
-                    iframe_base.append(s)
-            self._iframe_selectors: List[str] = iframe_base
-        else:
-            self._sponsored_selectors = list(SAFE_SPONSORED_SELECTORS)
-            self._iframe_selectors = list(SAFE_IFRAME_SELECTORS)
+        # Keep a reference to all selectors for logging.
+        self._all_selectors = all_selectors
 
     async def is_safe_element(self, element, page: Page) -> bool:
         """Check if element is safe to click."""
@@ -1362,45 +1384,44 @@ class SponsoredClickEngine:
         except Exception:
             return 0.0
 
-    async def find_sponsored_elements(self, page: Page) -> List:
-        """Find safe sponsored/promo elements on page using built-in and custom selectors."""
+    async def find_random_ad_elements(self, page: Page) -> List:
+        """Find clickable ad/promo elements using all normal (non-iframe) selectors."""
         safe_elements = []
 
         try:
-            selectors = self._sponsored_selectors
-            self.log_manager.log(f'Sponsored search: checking {len(selectors)} selector(s)')
+            selectors = self._normal_selectors
+            self.log_manager.log(f'Random-ad search: checking {len(selectors)} selector(s)')
 
             for selector in selectors:
                 try:
                     elements = await page.query_selector_all(selector)
                     for element in elements:
-                        # Safety check
                         is_safe = await self.is_safe_element(element, page)
                         if not is_safe:
                             continue
 
-                        # Confidence check
                         confidence = await self.calculate_confidence(element)
                         if confidence >= self.confidence_threshold:
                             safe_elements.append({
                                 'element': element,
                                 'selector': selector,
-                                'confidence': confidence
+                                'confidence': confidence,
+                                'selector_type': _classify_selector(selector),
                             })
 
                 except Exception as e:
                     self.log_manager.log(f'Error finding elements for selector "{selector}": {e}', 'WARNING')
                     continue
 
-            self.log_manager.log(f'Found {len(safe_elements)} safe sponsored element(s)')
+            self.log_manager.log(f'Found {len(safe_elements)} random ad element(s)')
             return safe_elements
 
         except Exception as e:
-            self.log_manager.log(f'Find sponsored elements error: {e}', 'ERROR')
+            self.log_manager.log(f'Find random ad elements error: {e}', 'ERROR')
             return []
 
-    async def find_safe_iframes(self, page: Page) -> List:
-        """Find visible safe iframes using built-in and custom iframe selectors."""
+    async def find_ad_iframes(self, page: Page) -> List:
+        """Find visible iframes using all iframe selectors."""
         safe_iframes = []
 
         try:
@@ -1421,15 +1442,15 @@ class SponsoredClickEngine:
                     self.log_manager.log(f'Error finding iframes for selector "{selector}": {e}', 'WARNING')
                     continue
 
-            self.log_manager.log(f'Found {len(safe_iframes)} safe iframe(s)')
+            self.log_manager.log(f'Found {len(safe_iframes)} iframe(s)')
             return safe_iframes
 
         except Exception as e:
-            self.log_manager.log(f'Find safe iframes error: {e}', 'ERROR')
+            self.log_manager.log(f'Find ad iframes error: {e}', 'ERROR')
             return []
 
-    async def click_inside_safe_iframe(self, page: Page, iframe_element) -> bool:
-        """Search inside a safe iframe for clickable targets and perform a human-like click."""
+    async def click_inside_iframe(self, page: Page, iframe_element) -> bool:
+        """Search inside an iframe for clickable targets and perform a human-like click."""
         try:
             # Obtain the content frame of the iframe element
             frame = await iframe_element.content_frame()
@@ -1474,67 +1495,71 @@ class SponsoredClickEngine:
             return False
 
         except Exception as e:
-            self.log_manager.log(f'click_inside_safe_iframe error: {e}', 'ERROR')
+            self.log_manager.log(f'click_inside_iframe error: {e}', 'ERROR')
             return False
 
-    async def click_sponsored_content(self, page: Page, ratio: float):
-        """Click sponsored content based on ratio, with iframe fallback and retry logic."""
+    async def perform_random_ad_click(self, page: Page, ratio: float):
+        """Attempt a random ad click based on ratio.  Tries normal selectors first,
+        then falls back to iframe selectors.  Ignores empty/invalid selectors safely.
+        """
         MAX_RETRIES = 3
 
         try:
-            # Random decision based on ratio
+            # Random decision based on ratio (ratio is 0.0–1.0)
             if random.random() > ratio:
-                self.log_manager.log('Skipping sponsored click (ratio check)')
+                self.log_manager.log('Skipping random ad click (ratio check)')
                 return False
 
             for attempt in range(1, MAX_RETRIES + 1):
                 if attempt > 1:
-                    self.log_manager.log(f'Sponsored click retry attempt {attempt}/{MAX_RETRIES}')
+                    self.log_manager.log(f'Random ad click retry attempt {attempt}/{MAX_RETRIES}')
 
-                # --- Normal sponsored element path ---
-                sponsored = await self.find_sponsored_elements(page)
+                # --- Normal / href / div / ins / anchor selector path ---
+                elements = await self.find_random_ad_elements(page)
                 self.log_manager.log(
-                    f'Sponsored selector scan: {len(sponsored)} element(s) found (attempt {attempt})'
+                    f'Random-ad selector scan: {len(elements)} element(s) found (attempt {attempt})'
                 )
 
-                if sponsored:
-                    selected = random.choice(sponsored)
+                if elements:
+                    selected = random.choice(elements)
+                    sel_type = selected.get('selector_type', 'normal')
                     self.log_manager.log(
-                        f'Clicking sponsored element (confidence: {selected["confidence"]:.2f}, '
+                        f'Clicking random-ad element (type: {sel_type}, '
+                        f'confidence: {selected["confidence"]:.2f}, '
                         f'selector: "{selected["selector"]}")'
                     )
                     success = await HumanBehavior.natural_click(page, selected['selector'])
                     if success:
-                        self.log_manager.log('✓ Sponsored click succeeded')
+                        self.log_manager.log('✓ Random ad click succeeded')
                         return True
-                    self.log_manager.log('Sponsored element click returned False – will retry', 'WARNING')
+                    self.log_manager.log('Random ad element click returned False – will retry', 'WARNING')
                     continue
 
                 # --- iFrame fallback path ---
-                if self.iframe_click_enabled:
-                    iframes = await self.find_safe_iframes(page)
-                    self.log_manager.log(
-                        f'iFrame scan: {len(iframes)} iframe(s) found (attempt {attempt})'
-                    )
-                    for iframe in iframes:
-                        success = await self.click_inside_safe_iframe(page, iframe)
-                        if success:
-                            self.log_manager.log('✓ iFrame sponsored click succeeded')
-                            return True
-                else:
-                    self.log_manager.log('No sponsored elements found; iFrame clicks disabled')
+                iframes = await self.find_ad_iframes(page)
+                self.log_manager.log(
+                    f'iFrame scan: {len(iframes)} iframe(s) found (attempt {attempt})'
+                )
+                for iframe in iframes:
+                    success = await self.click_inside_iframe(page, iframe)
+                    if success:
+                        self.log_manager.log('✓ iFrame random ad click succeeded')
+                        return True
+
+                if not iframes:
+                    self.log_manager.log('No random ad elements or iframes found')
 
                 self.log_manager.log(
                     f'No click target found on attempt {attempt}/{MAX_RETRIES}', 'WARNING'
                 )
 
             self.log_manager.log(
-                f'Sponsored click gave up after {MAX_RETRIES} attempt(s)', 'WARNING'
+                f'Random ad click gave up after {MAX_RETRIES} attempt(s)', 'WARNING'
             )
             return False
 
         except Exception as e:
-            self.log_manager.log(f'Sponsored click error: {e}', 'ERROR')
+            self.log_manager.log(f'Random ad click error: {e}', 'ERROR')
             return False
 
 
@@ -2382,7 +2407,7 @@ class BrowserManager:
             self.log_manager.log(f'Playwright initialization error: {error_msg}', 'ERROR')
             return False
     
-    async def create_context(self, platform: str = 'windows', use_proxy: bool = True, proxy_override: Optional[Dict] = None) -> Optional[BrowserContext]:
+    async def create_context(self, platform: str = 'windows', use_proxy: bool = True, proxy_override: Optional[Dict] = None, engine: str = 'Chromium') -> Optional[BrowserContext]:
         """Create a new browser persistent context with unique profile.
         
         Uses launch_persistent_context to create real Chrome windows with their own taskbar icons.
@@ -2390,6 +2415,10 @@ class BrowserManager:
         
         CRITICAL: Fetches proxy location FIRST, then generates fingerprint matching proxy country.
         This ensures browser location matches proxy location (USA proxy → USA fingerprint).
+
+        Args:
+            engine: One of 'Chromium', 'Firefox', or 'WebKit'.  Controls which
+                    Playwright browser engine is used for this context.
         """
         try:
             if not self.playwright:
@@ -2445,44 +2474,75 @@ class BrowserManager:
             temp_dir = tempfile.mkdtemp(prefix="profile_", dir="profiles")
             user_data_dir = Path(temp_dir)
             
+            # Normalise engine name for logging and selection.
+            # engine_lower drives all conditional logic; engine_display is used for logs.
+            engine_lower = (engine or 'Chromium').strip().lower()
+            _engine_display_map = {'firefox': 'Firefox', 'webkit': 'WebKit'}
+            engine_display = _engine_display_map.get(engine_lower, 'Chromium')
             self.log_manager.log(f'━━━ Creating Browser Persistent Context ━━━')
             self.log_manager.log(f'Platform: {platform}')
+            self.log_manager.log(f'Engine: {engine_display}')
             self.log_manager.log(f'Profile: {user_data_dir}')
             self.log_manager.log(f'User Agent: {user_agent[:60]}...')
             self.log_manager.log(f'Timezone: {fingerprint["timezone"]}, Locale: {fingerprint["locale"]}')
             if proxy_location:
                 self.log_manager.log(f'✓ Fingerprint MATCHED to proxy location: {proxy_location["country"]}')
             
-            # Build context options for launch_persistent_context
-            context_options = {
-                'user_agent': user_agent,
-                'viewport': fingerprint['viewport'],
-                'locale': fingerprint['locale'],
-                'timezone_id': fingerprint['timezone'],
-                'headless': False,  # ALWAYS VISIBLE - headless mode removed completely
-                'channel': 'chrome',  # Use real Chrome instead of Chromium
-                'ignore_default_args': ['--enable-automation'],  # Remove automation flag
-                'args': [
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-dev-shm-usage',
-                    '--no-sandbox',
-                    '--disable-infobars',
-                    '--test-type',  # Suppress warning about --no-sandbox flag
-                    '--disable-automation',
-                    '--disable-web-security',
-                    '--disable-features=IsolateOrigins,site-per-process'
-                ]
-            }
-            
-            # Add proxy if configured
-            if proxy_config:
-                context_options['proxy'] = proxy_config
+            # Build context options for launch_persistent_context.
+            # Firefox and WebKit do not support 'channel', 'args', or 'ignore_default_args'
+            # in the same way as Chromium, so we build engine-specific option sets.
+            if engine_lower in ('firefox',):
+                context_options = {
+                    'user_agent': user_agent,
+                    'viewport': fingerprint['viewport'],
+                    'locale': fingerprint['locale'],
+                    'timezone_id': fingerprint['timezone'],
+                    'headless': False,
+                }
+                if proxy_config:
+                    context_options['proxy'] = proxy_config
+                playwright_browser = self.playwright.firefox
+            elif engine_lower in ('webkit',):
+                context_options = {
+                    'user_agent': user_agent,
+                    'viewport': fingerprint['viewport'],
+                    'locale': fingerprint['locale'],
+                    'timezone_id': fingerprint['timezone'],
+                    'headless': False,
+                }
+                if proxy_config:
+                    context_options['proxy'] = proxy_config
+                playwright_browser = self.playwright.webkit
             else:
-                self.log_manager.log('No proxy configured, using direct connection')
+                # Chromium (default) – use real Chrome channel with anti-automation args
+                context_options = {
+                    'user_agent': user_agent,
+                    'viewport': fingerprint['viewport'],
+                    'locale': fingerprint['locale'],
+                    'timezone_id': fingerprint['timezone'],
+                    'headless': False,  # ALWAYS VISIBLE - headless mode removed completely
+                    'channel': 'chrome',  # Use real Chrome instead of Chromium
+                    'ignore_default_args': ['--enable-automation'],  # Remove automation flag
+                    'args': [
+                        '--disable-blink-features=AutomationControlled',
+                        '--disable-dev-shm-usage',
+                        '--no-sandbox',
+                        '--disable-infobars',
+                        '--test-type',  # Suppress warning about --no-sandbox flag
+                        '--disable-automation',
+                        '--disable-web-security',
+                        '--disable-features=IsolateOrigins,site-per-process'
+                    ]
+                }
+                if proxy_config:
+                    context_options['proxy'] = proxy_config
+                else:
+                    self.log_manager.log('No proxy configured, using direct connection')
+                playwright_browser = self.playwright.chromium
             
             # Try to create persistent context with proxy
             try:
-                context = await self.playwright.chromium.launch_persistent_context(
+                context = await playwright_browser.launch_persistent_context(
                     user_data_dir=str(user_data_dir),
                     **context_options
                 )
@@ -2509,7 +2569,7 @@ class BrowserManager:
                     
                     # Retry without proxy (remove proxy from options)
                     context_options.pop('proxy', None)
-                    context = await self.playwright.chromium.launch_persistent_context(
+                    context = await playwright_browser.launch_persistent_context(
                         user_data_dir=str(user_data_dir),
                         **context_options
                     )
@@ -4367,9 +4427,9 @@ class AutomationWorker(QObject):
                                   enable_interaction, enable_extra_pages, max_pages,
                                   consent_manager, enable_highlight=False,
                                   utm_campaign='', utm_medium='social', utm_term='', utm_content='',
-                                  sponsored_click_enabled=False, iframe_click_enabled=False,
-                                  sponsored_click_ratio=0.5, use_custom_selectors=False,
-                                  custom_sponsored_selectors=None, custom_iframe_selectors=None):
+                                  random_ad_clicking_enabled=False,
+                                  random_click_ratio=0.5,
+                                  custom_random_targets=None):
         """Execute a single visit within a browser profile."""
         try:
             self.emit_log(f'[Visit {visit_num}] Processing URL: {target_url[:50]}...')
@@ -4408,16 +4468,13 @@ class AutomationWorker(QObject):
             await HumanBehavior.time_based_browsing(page, min_time_spend, max_time_spend, enable_highlight, 
                                                    consent_mgr, self.log_manager)
             
-            # Sponsored content clicking (if enabled)
-            if sponsored_click_enabled:
-                sponsored_engine = SponsoredClickEngine(
+            # Random ad clicking (if enabled)
+            if random_ad_clicking_enabled:
+                ad_engine = RandomAdClickEngine(
                     log_manager=self.log_manager,
-                    use_custom_selectors=use_custom_selectors,
-                    custom_sponsored_selectors=custom_sponsored_selectors or [],
-                    custom_iframe_selectors=custom_iframe_selectors or [],
-                    iframe_click_enabled=iframe_click_enabled,
+                    custom_random_targets=custom_random_targets or [],
                 )
-                await sponsored_engine.click_sponsored_content(page, sponsored_click_ratio)
+                await ad_engine.perform_random_ad_click(page, random_click_ratio)
             
             # Handle interaction if enabled (legacy mode)
             if enable_interaction:
@@ -4438,9 +4495,10 @@ class AutomationWorker(QObject):
                                      utm_campaign='', utm_medium='social', utm_term='', utm_content='',
                                      high_cpc_enabled=False, high_cpc_url='', high_cpc_target='', high_cpc_stay_time=180,
                                      startup_barrier=None, proxy_override=None,
-                                     sponsored_click_enabled=False, iframe_click_enabled=False,
-                                     sponsored_click_ratio=0.5, use_custom_selectors=False,
-                                     custom_sponsored_selectors=None, custom_iframe_selectors=None):
+                                     random_ad_clicking_enabled=False,
+                                     random_click_ratio=0.5,
+                                     custom_random_targets=None,
+                                     selected_browser_engines=None):
         """Execute a single browser profile with one page."""
         try:
             # Check if HIGH CPC/CPM Mode is enabled
@@ -4466,8 +4524,11 @@ class AutomationWorker(QObject):
                 self.emit_log(f'━━━ Profile {profile_num} | Platform: {platform} | Time: {time_to_spend//60} min (fixed) ━━━')
             
             # Create new context for this profile (session isolation)
-            self.emit_log(f'Creating browser context for profile {profile_num}...')
-            context = await self.browser_manager.create_context(platform, proxy_override=proxy_override)
+            # Rotate through selected engines; default to Chromium when none selected.
+            engines = selected_browser_engines or ['Chromium']
+            engine = engines[profile_num % len(engines)]
+            self.emit_log(f'Creating browser context for profile {profile_num} (engine: {engine})...')
+            context = await self.browser_manager.create_context(platform, proxy_override=proxy_override, engine=engine)
             if not context:
                 self.emit_log(f'Failed to create browser context for profile {profile_num}', 'ERROR')
                 # Signal barrier even on failure to prevent deadlock
@@ -4536,12 +4597,9 @@ class AutomationWorker(QObject):
                     enable_interaction, enable_extra_pages, max_pages,
                     consent_manager, enable_highlight,
                     utm_campaign, utm_medium, utm_term, utm_content,
-                    sponsored_click_enabled=sponsored_click_enabled,
-                    iframe_click_enabled=iframe_click_enabled,
-                    sponsored_click_ratio=sponsored_click_ratio,
-                    use_custom_selectors=use_custom_selectors,
-                    custom_sponsored_selectors=custom_sponsored_selectors,
-                    custom_iframe_selectors=custom_iframe_selectors,
+                    random_ad_clicking_enabled=random_ad_clicking_enabled,
+                    random_click_ratio=random_click_ratio,
+                    custom_random_targets=custom_random_targets,
                 )
                 
                 # Close page
@@ -4991,13 +5049,22 @@ class AutomationWorker(QObject):
             high_cpc_target = self.config.get('high_cpc_target', '')
             high_cpc_stay_time = self.config.get('high_cpc_stay_time', 180)
 
-            # Sponsored click configuration
-            sponsored_click_enabled = self.config.get('sponsored_click_enabled', False)
-            iframe_click_enabled = self.config.get('iframe_click_enabled', False)
-            sponsored_click_ratio = self.config.get('sponsored_click_ratio', 50) / 100
-            use_custom_selectors = self.config.get('use_custom_selectors', False)
-            custom_sponsored_selectors = self.config.get('custom_sponsored_selectors', [])
-            custom_iframe_selectors = self.config.get('custom_iframe_selectors', [])
+            # Random ad click configuration (new keys; fall back to old keys for compatibility)
+            random_ad_clicking_enabled = self.config.get(
+                'random_ad_clicking_enabled',
+                self.config.get('sponsored_click_enabled', False)
+            )
+            random_click_ratio = self.config.get(
+                'random_click_ratio',
+                self.config.get('sponsored_click_ratio', 50)
+            ) / 100
+            # Merge legacy separate selectors into unified list when loading old configs
+            _legacy_sponsored = self.config.get('custom_sponsored_selectors', [])
+            _legacy_iframe = self.config.get('custom_iframe_selectors', [])
+            _legacy_sponsored_set = set(_legacy_sponsored)
+            _legacy_combined = _legacy_sponsored + [s for s in _legacy_iframe if s not in _legacy_sponsored_set]
+            custom_random_targets = self.config.get('custom_random_targets', _legacy_combined)
+            selected_browser_engines = self.config.get('selected_browser_engines', ['Chromium'])
             
             
             self.emit_log(f'Configuration: {len(url_list)} URLs, {num_concurrent} concurrent browsers')
@@ -5131,12 +5198,10 @@ class AutomationWorker(QObject):
                             high_cpc_enabled, high_cpc_url, high_cpc_target, high_cpc_stay_time,
                             startup_barrier=normal_startup_barrier if is_initial_launch else None,
                             proxy_override=current_proxy,
-                            sponsored_click_enabled=sponsored_click_enabled,
-                            iframe_click_enabled=iframe_click_enabled,
-                            sponsored_click_ratio=sponsored_click_ratio,
-                            use_custom_selectors=use_custom_selectors,
-                            custom_sponsored_selectors=custom_sponsored_selectors,
-                            custom_iframe_selectors=custom_iframe_selectors,
+                            random_ad_clicking_enabled=random_ad_clicking_enabled,
+                            random_click_ratio=random_click_ratio,
+                            custom_random_targets=custom_random_targets,
+                            selected_browser_engines=selected_browser_engines,
                         )
                         is_initial_launch = False
                         
@@ -6325,57 +6390,104 @@ class AppGUI(QMainWindow):
         consent_group.setLayout(consent_layout)
         layout.addWidget(consent_group)
         
-        # Sponsored Click Settings
-        sponsored_group = QGroupBox('🎯 Sponsored Click Settings')
-        sponsored_layout = QVBoxLayout()
-        sponsored_layout.setSpacing(10)
-        
-        self.enable_sponsored_clicks = QCheckBox('✅ Enable Sponsored Clicks')
-        self.enable_sponsored_clicks.setChecked(False)
-        sponsored_layout.addWidget(self.enable_sponsored_clicks)
-        
-        self.enable_iframe_clicks = QCheckBox('🖼 Enable Safe iFrame Clicks')
-        self.enable_iframe_clicks.setChecked(False)
-        sponsored_layout.addWidget(self.enable_iframe_clicks)
-        
-        sponsored_layout.addWidget(QLabel('Sponsored Click Ratio % (1–100):'))
-        self.sponsored_click_ratio_input = QSpinBox()
-        self.sponsored_click_ratio_input.setRange(1, 100)
-        self.sponsored_click_ratio_input.setValue(50)
-        sponsored_layout.addWidget(self.sponsored_click_ratio_input)
-        
-        self.use_custom_selectors_check = QCheckBox('Use Custom Selectors')
-        self.use_custom_selectors_check.setChecked(False)
-        sponsored_layout.addWidget(self.use_custom_selectors_check)
-        
-        # Custom Sponsored Selectors (one per line)
-        sponsored_layout.addWidget(QLabel('Custom Sponsored Selectors (one per line):'))
-        self.custom_sponsored_selectors_input = QTextEdit()
-        self.custom_sponsored_selectors_input.setPlaceholderText('.my-promo\n[data-custom-ad="true"]\n# Add additional selectors here')
-        self.custom_sponsored_selectors_input.setMaximumHeight(80)
-        sponsored_layout.addWidget(self.custom_sponsored_selectors_input)
-        
-        # Custom iFrame Selectors (one per line)
-        sponsored_layout.addWidget(QLabel('Custom iFrame Selectors (one per line):'))
-        self.custom_iframe_selectors_input = QTextEdit()
-        self.custom_iframe_selectors_input.setPlaceholderText('iframe[data-my-frame="true"]\n.custom-frame iframe\n# Add additional iframe selectors here')
-        self.custom_iframe_selectors_input.setMaximumHeight(80)
-        sponsored_layout.addWidget(self.custom_iframe_selectors_input)
-        
-        sponsored_group.setLayout(sponsored_layout)
-        layout.addWidget(sponsored_group)
-        
-        # Browser Engine Selection
-        browser_engine_group = QGroupBox('⚙️ Browser Engine')
+        # ── Random Ad Click Settings ──────────────────────────────────────
+        random_ad_group = QGroupBox('🎯 Random Ad Click Settings')
+        random_ad_group.setStyleSheet(
+            'QGroupBox { border: 2px solid #cc0000; border-radius: 6px; margin-top: 8px; }'
+            'QGroupBox::title { color: #cc0000; font-weight: bold; subcontrol-origin: margin; left: 10px; }'
+        )
+        random_ad_layout = QVBoxLayout()
+        random_ad_layout.setSpacing(10)
+
+        # Section title label in red
+        random_ad_title = QLabel('Random Ad Click Settings')
+        random_ad_title.setStyleSheet('color: #cc0000; font-weight: bold; font-size: 13px;')
+        random_ad_layout.addWidget(random_ad_title)
+
+        # Single main toggle
+        self.enable_random_ad_clicking = QCheckBox('✅ Enable Random Ad Clicking')
+        self.enable_random_ad_clicking.setChecked(False)
+        self.enable_random_ad_clicking.setStyleSheet(
+            'QCheckBox::indicator:checked { background-color: #cc0000; border: 2px solid #cc0000; }'
+        )
+        random_ad_layout.addWidget(self.enable_random_ad_clicking)
+
+        # Click Ratio slider
+        ratio_label = QLabel('Click Ratio % (1–100):')
+        ratio_label.setStyleSheet('color: #cc0000; font-weight: bold;')
+        random_ad_layout.addWidget(ratio_label)
+
+        ratio_row = QHBoxLayout()
+        self.random_click_ratio_slider = QSlider(Qt.Horizontal)
+        self.random_click_ratio_slider.setRange(1, 100)
+        self.random_click_ratio_slider.setValue(50)
+        self.random_click_ratio_slider.setStyleSheet(
+            'QSlider::groove:horizontal { height: 6px; background: #ffcccc; border-radius: 3px; }'
+            'QSlider::sub-page:horizontal { background: #cc0000; border-radius: 3px; }'
+            'QSlider::handle:horizontal { background: #cc0000; width: 16px; height: 16px; margin: -5px 0; border-radius: 8px; }'
+        )
+        self.random_click_ratio_label = QLabel('50%')
+        self.random_click_ratio_label.setStyleSheet('color: #cc0000; font-weight: bold; min-width: 40px;')
+        self.random_click_ratio_slider.valueChanged.connect(
+            lambda v: self.random_click_ratio_label.setText(f'{v}%')
+        )
+        ratio_row.addWidget(self.random_click_ratio_slider)
+        ratio_row.addWidget(self.random_click_ratio_label)
+        random_ad_layout.addLayout(ratio_row)
+
+        # Unified selector input
+        targets_label = QLabel('Custom Random Click Targets (one per line):')
+        targets_label.setStyleSheet('color: #cc0000; font-weight: bold;')
+        random_ad_layout.addWidget(targets_label)
+
+        self.custom_random_targets_input = QTextEdit()
+        self.custom_random_targets_input.setPlaceholderText(
+            '.demo-ad\n'
+            "iframe[data-demo='true']\n"
+            "div[class*='promo']\n"
+            'ins[data-demo]\n'
+            "a[href*='offer']\n"
+            "[href*='campaign']\n"
+            '# Lines starting with # are ignored'
+        )
+        self.custom_random_targets_input.setMaximumHeight(120)
+        random_ad_layout.addWidget(self.custom_random_targets_input)
+
+        targets_info = QLabel(
+            'ℹ️ Supports any CSS selector – iframes, href links, div/ins/anchor elements.\n'
+            'Each type is detected automatically.'
+        )
+        targets_info.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
+        targets_info.setWordWrap(True)
+        random_ad_layout.addWidget(targets_info)
+
+        random_ad_group.setLayout(random_ad_layout)
+        layout.addWidget(random_ad_group)
+
+        # ── Browser Engines ───────────────────────────────────────────────
+        browser_engine_group = QGroupBox('⚙️ Browser Engines')
         browser_engine_layout = QVBoxLayout()
-        browser_engine_layout.setSpacing(10)
-        
-        browser_engine_layout.addWidget(QLabel('Select browser engine:'))
-        self.browser_engine_combo = QComboBox()
-        self.browser_engine_combo.addItems(['Chromium', 'Firefox', 'WebKit'])
-        self.browser_engine_combo.setCurrentText('Chromium')
-        browser_engine_layout.addWidget(self.browser_engine_combo)
-        
+        browser_engine_layout.setSpacing(8)
+
+        engine_info = QLabel(
+            'Select one or more engines.  Sessions rotate between selected engines.'
+        )
+        engine_info.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
+        engine_info.setWordWrap(True)
+        browser_engine_layout.addWidget(engine_info)
+
+        self.engine_chromium_check = QCheckBox('Chrome / Chromium')
+        self.engine_chromium_check.setChecked(True)
+        browser_engine_layout.addWidget(self.engine_chromium_check)
+
+        self.engine_firefox_check = QCheckBox('Firefox')
+        self.engine_firefox_check.setChecked(False)
+        browser_engine_layout.addWidget(self.engine_firefox_check)
+
+        self.engine_webkit_check = QCheckBox('WebKit')
+        self.engine_webkit_check.setChecked(False)
+        browser_engine_layout.addWidget(self.engine_webkit_check)
+
         browser_engine_group.setLayout(browser_engine_layout)
         layout.addWidget(browser_engine_group)
         
@@ -7477,22 +7589,21 @@ class AppGUI(QMainWindow):
                     'high_cpc_url': self.high_cpc_url_input.text().strip(),
                     'high_cpc_target': self.high_cpc_target_input.text().strip(),
                     'high_cpc_stay_time': self.high_cpc_stay_time_input.value(),
-                    # Sponsored click configuration
-                    'sponsored_click_enabled': self.enable_sponsored_clicks.isChecked(),
-                    'iframe_click_enabled': self.enable_iframe_clicks.isChecked(),
-                    'sponsored_click_ratio': self.sponsored_click_ratio_input.value(),
-                    'use_custom_selectors': self.use_custom_selectors_check.isChecked(),
-                    'custom_sponsored_selectors': [
+                    # Random ad click configuration
+                    'random_ad_clicking_enabled': self.enable_random_ad_clicking.isChecked(),
+                    'random_click_ratio': self.random_click_ratio_slider.value(),
+                    'custom_random_targets': [
                         s.strip() for s in
-                        self.custom_sponsored_selectors_input.toPlainText().splitlines()
+                        self.custom_random_targets_input.toPlainText().splitlines()
                         if s.strip() and not s.strip().startswith('#')
                     ],
-                    'custom_iframe_selectors': [
-                        s.strip() for s in
-                        self.custom_iframe_selectors_input.toPlainText().splitlines()
-                        if s.strip() and not s.strip().startswith('#')
-                    ],
-                    'browser_engine': self.browser_engine_combo.currentText(),
+                    'selected_browser_engines': [
+                        e for e, chk in [
+                            ('Chromium', self.engine_chromium_check),
+                            ('Firefox', self.engine_firefox_check),
+                            ('WebKit', self.engine_webkit_check),
+                        ] if chk.isChecked()
+                    ] or ['Chromium'],  # Fall back to Chromium when nothing selected
                 }
             
             # Update UI
