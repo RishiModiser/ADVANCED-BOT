@@ -44,7 +44,6 @@
 │  │  └──────────────────────────┘  │                          │   │
 │  │                               │                          │   │
 │  │  ┌─ Sponsored Content ─────┐  │                          │   │
-│  │  │ • Ad Network Blocklist   │  │                          │   │
 │  │  │ • Safe Selectors         │  │                          │   │
 │  │  │ • Confidence Threshold   │  │                          │   │
 │  │  └──────────────────────────┘  │                          │   │
@@ -329,7 +328,6 @@ pip3 install -r requirements.txt
 ## Security
 
 - ✅ No security vulnerabilities (CodeQL scan: 0 alerts)
-- ✅ Ad network blocklist maintained
 - ✅ No credential storage in logs
 - ✅ Proxy credentials handled securely
 - ✅ Session isolation prevents tracking

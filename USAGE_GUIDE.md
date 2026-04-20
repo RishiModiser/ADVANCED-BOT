@@ -81,11 +81,6 @@ Fine-tune the human-like behavior simulation:
 
 View and configure safety rules:
 
-- **Ad Network Blocklist** (Read-only)
-  - Shows all blocked ad networks
-  - Includes: googleads, doubleclick, adsense, etc.
-  - **System will NEVER click these**
-
 - **Safe Selectors** (Read-only)
   - Shows CSS selectors for safe sponsored content
   - Only elements matching these patterns can be clicked
@@ -255,7 +250,7 @@ Create and manage custom automation scripts:
 - Traffic pattern research (owned properties)
 
 ### ❌ Prohibited Use Cases
-- Clicking real ad networks (Google Ads, etc.)
+- Clicking real ad networks
 - Click fraud or traffic fraud
 - Testing third-party sites without permission
 - Generating fake engagement
@@ -263,24 +258,18 @@ Create and manage custom automation scripts:
 
 ### Built-in Safety Features
 
-1. **Ad Network Blocklist**
-   - Automatically blocks known ad networks
-   - Prevents accidental ad clicks
-   - Cannot be disabled
-
-2. **Element Confidence Scoring**
+1. **Element Confidence Scoring**
    - Validates element before clicking
    - Checks visibility, size, position
    - Only clicks high-confidence elements
 
-3. **Safe Selector Whitelist**
+2. **Safe Selector Whitelist**
    - Only clicks elements with safe classes
    - Must match predefined patterns
    - Protects against accidental ad clicks
 
-4. **URL Validation**
+3. **URL Validation**
    - Checks all URLs before interaction
-   - Blocks ad network domains
    - Aborts on detection
 
 ## Troubleshooting
