@@ -4899,6 +4899,8 @@ class AutomationWorker(QObject):
                     self.emit_log(f'[Browser {browser_index}] 🟢 Launching browser (no proxy)')
 
                 is_browser_open = True
+                # NOTE: asyncio is single-threaded; tasks only yield at `await` points,
+                # so these read-modify-write operations are safe without a lock.
                 active_count_ref[0] += 1
                 self.emit_log(f'📊 Active browsers: {active_count_ref[0]}/{num_concurrent}')
 
