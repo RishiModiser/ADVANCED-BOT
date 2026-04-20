@@ -1302,12 +1302,17 @@ def _classify_selector(selector: str) -> str:
     Classification is based on simple string heuristics so future selector
     types can be added here without touching call-sites.
     """
-    s = selector.strip().lower()
+    import re
+    s = selector.strip()
     if not s:
         return 'normal'
-    if s.startswith('iframe') or ('iframe' in s and '[' in s):
+    s_lower = s.lower()
+    # iframe selector: starts with 'iframe' as an element name
+    # (handles: iframe, iframe[...], iframe.class, iframe#id, iframe:...)
+    if re.match(r'^iframe[\s\[.#:>~+,]|^iframe$', s_lower):
         return 'iframe'
-    if 'href' in s:
+    # href selector: [href...] attribute selector or a[href...]
+    if re.search(r'\[href', s_lower):
         return 'href'
     return 'normal'
 
@@ -2469,11 +2474,14 @@ class BrowserManager:
             temp_dir = tempfile.mkdtemp(prefix="profile_", dir="profiles")
             user_data_dir = Path(temp_dir)
             
-            # Normalise engine name for logging and selection
+            # Normalise engine name for logging and selection.
+            # engine_lower drives all conditional logic; engine_display is used for logs.
             engine_lower = (engine or 'Chromium').strip().lower()
+            _engine_display_map = {'firefox': 'Firefox', 'webkit': 'WebKit'}
+            engine_display = _engine_display_map.get(engine_lower, 'Chromium')
             self.log_manager.log(f'━━━ Creating Browser Persistent Context ━━━')
             self.log_manager.log(f'Platform: {platform}')
-            self.log_manager.log(f'Engine: {engine}')
+            self.log_manager.log(f'Engine: {engine_display}')
             self.log_manager.log(f'Profile: {user_data_dir}')
             self.log_manager.log(f'User Agent: {user_agent[:60]}...')
             self.log_manager.log(f'Timezone: {fingerprint["timezone"]}, Locale: {fingerprint["locale"]}')
@@ -5053,7 +5061,8 @@ class AutomationWorker(QObject):
             # Merge legacy separate selectors into unified list when loading old configs
             _legacy_sponsored = self.config.get('custom_sponsored_selectors', [])
             _legacy_iframe = self.config.get('custom_iframe_selectors', [])
-            _legacy_combined = _legacy_sponsored + [s for s in _legacy_iframe if s not in _legacy_sponsored]
+            _legacy_sponsored_set = set(_legacy_sponsored)
+            _legacy_combined = _legacy_sponsored + [s for s in _legacy_iframe if s not in _legacy_sponsored_set]
             custom_random_targets = self.config.get('custom_random_targets', _legacy_combined)
             selected_browser_engines = self.config.get('selected_browser_engines', ['Chromium'])
             
