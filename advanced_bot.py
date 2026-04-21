@@ -2818,8 +2818,8 @@ class AutomationWorker(QObject):
         self.browser_manager.imported_useragents = config.get('imported_useragents', [])
         self.browser_manager.imported_cookies = config.get('imported_cookies', [])
         self.active_tasks = []     # Track all active async tasks for immediate cancellation
-        self.active_browsers = []  # Track open browser instances (contexts) for stop cleanup
-        self.active_contexts = []  # Track open browser contexts for stop cleanup
+        self.active_browsers = []  # Track open browser contexts (one per window) for stop cleanup
+        self.active_contexts = []  # Alias for active_browsers; both reference the same context objects
         self.active_pages = []     # Track open pages for stop cleanup
     
     def emit_log(self, message: str, level: str = 'INFO'):
@@ -3812,7 +3812,7 @@ class AutomationWorker(QObject):
             self.emit_log(f'[Browser {profile_num}] Launching...')
             context = await self.browser_manager.create_context(platform, proxy_override=proxy_override)
             if not context:
-                self.emit_log(f'Failed to create browser context', 'ERROR')
+                self.emit_log(f'[Browser {profile_num}] Failed to create browser context', 'ERROR')
                 return False
             
             self.emit_log(f'[Browser {profile_num}] Browser opened successfully')
@@ -4606,6 +4606,7 @@ class AutomationWorker(QObject):
             self.active_browsers.append(context)
             self.active_contexts.append(context)
             
+            page = None
             try:
                 # Get proxy location once for the profile
                 proxy_location = getattr(context, '_proxy_location', None)
@@ -4672,10 +4673,11 @@ class AutomationWorker(QObject):
                 
             finally:
                 # Always close context and remove from active tracking
-                try:
-                    self.active_pages.remove(page)
-                except (ValueError, UnboundLocalError):
-                    pass
+                if page is not None:
+                    try:
+                        self.active_pages.remove(page)
+                    except ValueError:
+                        pass
                 try:
                     self.active_browsers.remove(context)
                 except ValueError:
