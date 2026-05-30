@@ -2826,6 +2826,66 @@ class AutomationWorker(QObject):
         """Emit log to GUI."""
         log_entry = self.log_manager.log(message, level)
         self.log_signal.emit(log_entry)
+
+    def _is_zoom_out_enabled(self) -> bool:
+        """Check whether zoom-out mode is enabled."""
+        return bool(self.config.get('zoom_out_enabled', False))
+
+    def _get_zoom_out_factor(self) -> float:
+        """Return zoom factor for zoom-out mode (default 25%)."""
+        raw_percent = self.config.get('zoom_out_percent', 25)
+        try:
+            percent = int(raw_percent)
+        except (TypeError, ValueError):
+            percent = 25
+        percent = max(10, min(100, percent))
+        return percent / 100.0
+
+    async def apply_zoom_out_to_context(self, context: BrowserContext, context_name: str = ''):
+        """Apply zoom-out behavior to all pages in a context."""
+        if not context or not self._is_zoom_out_enabled():
+            return
+
+        zoom_factor = self._get_zoom_out_factor()
+        zoom_factor_safe = json.dumps(zoom_factor)
+
+        zoom_script = f"""
+            (() => {{
+                const zoomFactor = {zoom_factor_safe};
+                const applyZoom = () => {{
+                    try {{
+                        if (document && document.documentElement) {{
+                            document.documentElement.style.zoom = String(zoomFactor);
+                        }}
+                    }} catch (e) {{}}
+                }};
+                applyZoom();
+                window.addEventListener('DOMContentLoaded', applyZoom);
+                window.addEventListener('load', applyZoom);
+            }})();
+        """
+
+        await context.add_init_script(zoom_script)
+
+        for open_page in context.pages:
+            try:
+                await open_page.evaluate(
+                    """
+                    (zoomFactor) => {
+                        if (document && document.documentElement) {
+                            document.documentElement.style.zoom = String(zoomFactor);
+                        }
+                    }
+                    """,
+                    zoom_factor
+                )
+            except Exception:
+                pass
+
+        if context_name:
+            self.emit_log(f'🔎 Zoom Out enabled ({int(zoom_factor * 100)}%) for {context_name}')
+        else:
+            self.emit_log(f'🔎 Zoom Out enabled ({int(zoom_factor * 100)}%)')
     
     def stop(self):
         """Stop the automation immediately and forcefully."""
@@ -3818,6 +3878,7 @@ class AutomationWorker(QObject):
             self.emit_log(f'[Browser {profile_num}] Browser opened successfully')
             self.active_browsers.append(context)
             self.active_contexts.append(context)
+            await self.apply_zoom_out_to_context(context, f'Browser {profile_num}')
             
             try:
                 high_cpc_tabs = []
@@ -4605,6 +4666,7 @@ class AutomationWorker(QObject):
             self.emit_log(f'[Browser {profile_num}] Browser opened successfully')
             self.active_browsers.append(context)
             self.active_contexts.append(context)
+            await self.apply_zoom_out_to_context(context, f'Browser {profile_num}')
             
             page = None
             try:
@@ -4711,6 +4773,7 @@ class AutomationWorker(QObject):
             if not context:
                 self.emit_log(f'Failed to create browser context for browser {browser_num}', 'ERROR')
                 return False
+            await self.apply_zoom_out_to_context(context, f'Browser {browser_num}')
             
             try:
                 # Get proxy location once for the browser
@@ -5161,6 +5224,7 @@ class AutomationWorker(QObject):
                         active_browser_count += 1
                         self.active_browsers.append(context)
                         self.active_contexts.append(context)
+                        await self.apply_zoom_out_to_context(context, f'Browser {concurrent_num}')
                         self.emit_log(f'[Browser {concurrent_num}] Browser opened successfully')
                         
                         # Log proxy in use and current active count
@@ -6311,6 +6375,14 @@ class AppGUI(QMainWindow):
         num_browsers_row.addWidget(self.number_of_browsers_slider)
         num_browsers_row.addWidget(self.number_of_browsers_value_label)
         traffic_layout.addLayout(num_browsers_row)
+
+        # Zoom Out option (applies page zoom to loaded websites)
+        self.zoom_out_enabled = QCheckBox('🔎 Zoom Out Website (25%)')
+        self.zoom_out_enabled.setChecked(False)
+        self.zoom_out_enabled.setToolTip(
+            'When enabled, opened websites are displayed at 25% zoom.'
+        )
+        traffic_layout.addWidget(self.zoom_out_enabled)
         
         traffic_layout.addWidget(QLabel('Content Interaction % (0-100):'))
         self.content_ratio_input = QSpinBox()
@@ -6669,6 +6741,7 @@ class AppGUI(QMainWindow):
         self.max_time_input.setEnabled(not disable_features and self.random_time_enabled.isChecked())
         # KEEP NUMBER OF BROWSERS ENABLED IN RPA MODE
         self.number_of_browsers_slider.setEnabled(True)  # Always enabled
+        self.zoom_out_enabled.setEnabled(True)  # Always enabled
         self.content_ratio_input.setEnabled(not disable_features)
         
         # REQUIREMENT: Keep platform settings ENABLED when RPA mode is ON (ACTIVE)
@@ -7546,6 +7619,8 @@ class AppGUI(QMainWindow):
                     'rpa_mode': True,
                     'rpa_script': rpa_script,
                     'number_of_browsers': self.get_selected_browser_count(),  # Number of browser windows
+                    'zoom_out_enabled': self.zoom_out_enabled.isChecked(),
+                    'zoom_out_percent': 25,
                     'proxy_enabled': self.proxy_enabled_check.isChecked(),
                     'proxy_type': self.proxy_type_combo.currentText(),
                     'proxy_list': self.proxy_list_input.toPlainText(),
@@ -7703,6 +7778,8 @@ class AppGUI(QMainWindow):
                     'min_time_spend': self.min_time_input.value(),
                     'max_time_spend': self.max_time_input.value(),
                     'number_of_browsers': self.get_selected_browser_count(),
+                    'zoom_out_enabled': self.zoom_out_enabled.isChecked(),
+                    'zoom_out_percent': 25,
                     'content_ratio': self.content_ratio_input.value(),
                     'platforms': selected_platforms,
                     'headless': False,  # Always False - browser must be visible
