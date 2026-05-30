@@ -44,8 +44,17 @@ exit /b 1
 :run_bot
 REM ── Check if setup was done (show hint if not) ────────────────────────────
 if not exist ".bot_ready" (
-    echo  NOTE: First time? Run INSTALL.bat once for faster startup.
-    echo        Starting anyway (may take a moment to install packages)...
+    echo  First launch detected. Running one-time setup automatically...
+    echo.
+    call INSTALL.bat --no-pause
+    if errorlevel 1 (
+        color 0C
+        echo  ERROR: One-time setup failed. Please run INSTALL.bat manually.
+        echo.
+        pause
+        exit /b 1
+    )
+    echo  Setup complete. Starting bot...
     echo.
 )
 

@@ -11,6 +11,11 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+NO_PAUSE=0
+if [ "${1:-}" = "--no-pause" ]; then
+    NO_PAUSE=1
+fi
+
 echo ""
 echo "========================================================"
 echo "|      ADVANCED-BOT - One-Time Setup                  |"
@@ -36,7 +41,9 @@ if [ -z "$PYTHON_CMD" ]; then
     echo "  Ubuntu/Debian:  sudo apt install python3 python3-pip"
     echo "  Fedora:         sudo dnf install python3 python3-pip"
     echo ""
-    read -p "Press Enter to exit..."
+    if [ "$NO_PAUSE" -eq 0 ]; then
+        read -p "Press Enter to exit..."
+    fi
     exit 1
 fi
 
@@ -89,4 +96,6 @@ echo "|   Now run:  ./RUN.sh                                |"
 echo "|   Bot will start instantly - no more waiting!       |"
 echo "========================================================"
 echo ""
-read -p "Press Enter to exit..."
+if [ "$NO_PAUSE" -eq 0 ]; then
+    read -p "Press Enter to exit..."
+fi

@@ -7,6 +7,8 @@ REM After setup, double-click RUN.bat to start the bot instantly!
 REM ========================================================
 
 title ADVANCED-BOT - Setup
+set NO_PAUSE=
+if /I "%~1"=="--no-pause" set NO_PAUSE=1
 
 color 0A
 echo.
@@ -40,7 +42,7 @@ echo      https://www.python.org/downloads/
 echo.
 echo  IMPORTANT: During installation, check "Add Python to PATH"
 echo.
-pause
+if not defined NO_PAUSE pause
 exit /b 1
 
 :python_found
@@ -60,7 +62,7 @@ if errorlevel 1 (
     echo  ERROR: Failed to install Python packages!
     echo  Please check your internet connection and try again.
     echo.
-    pause
+    if not defined NO_PAUSE pause
     exit /b 1
 )
 echo.
@@ -91,4 +93,4 @@ echo  ^|   instantly - no more waiting!                      ^|
 echo  ^|                                                      ^|
 echo  ========================================================
 echo.
-pause
+if not defined NO_PAUSE pause

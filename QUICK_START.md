@@ -2,7 +2,7 @@
 
 ## 🚀 Running the Application
 
-### Step 1 – Install Dependencies (once)
+### Step 1 – Install Dependencies (optional)
 
 **Windows:**
 ```bat
@@ -13,6 +13,8 @@ INSTALL.bat
 ```bash
 chmod +x INSTALL.sh && ./INSTALL.sh
 ```
+
+> `RUN.bat` / `RUN.sh` now performs this setup automatically on first launch, so this step is optional.
 
 ### Step 2 – Start the Bot
 
