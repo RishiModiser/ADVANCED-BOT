@@ -83,6 +83,32 @@ if [ "$(uname -s)" = "Linux" ]; then
     echo ""
     echo "Installing Linux system dependencies for Chromium..."
     "$PYTHON_CMD" -m playwright install-deps chromium 2>/dev/null || true
+
+    # Ensure core Qt/OpenGL runtime libraries exist for PySide6 startup
+    if command -v apt-get >/dev/null 2>&1; then
+        echo ""
+        echo "Ensuring Linux GUI runtime libraries are installed..."
+        QT_RUNTIME_PACKAGES=(
+            libegl1
+            libgl1
+            libxcb-cursor0
+            libxcb-icccm4
+            libxcb-image0
+            libxcb-keysyms1
+            libxcb-render-util0
+            libxcb-shape0
+            libxcb-util1
+            libxcb-xkb1
+            libxkbcommon-x11-0
+        )
+        if [ "$(id -u)" -eq 0 ]; then
+            apt-get update && apt-get install -y "${QT_RUNTIME_PACKAGES[@]}" || true
+        elif command -v sudo >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y "${QT_RUNTIME_PACKAGES[@]}" || true
+        else
+            echo "WARNING: Could not auto-install GUI runtime packages (no sudo available)."
+        fi
+    fi
 fi
 
 # ── Mark setup as complete ─────────────────────────────────────────────────
