@@ -41,8 +41,21 @@ fi
 
 # ── Check if setup was done (show hint if not) ─────────────────────────────
 if [ ! -f ".bot_ready" ]; then
-    echo "NOTE: First time? Run ./INSTALL.sh once for faster startup."
-    echo "      Starting anyway (may take a moment to install packages)..."
+    echo "First launch detected. Running one-time setup automatically..."
+    echo ""
+    if [ -x "./INSTALL.sh" ]; then
+        ./INSTALL.sh --no-pause
+    else
+        bash ./INSTALL.sh --no-pause
+    fi
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo "ERROR: One-time setup failed. Please run ./INSTALL.sh manually."
+        read -p "Press Enter to exit..."
+        exit 1
+    fi
+    echo ""
+    echo "Setup complete. Starting bot..."
     echo ""
 fi
 
