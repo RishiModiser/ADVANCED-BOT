@@ -131,6 +131,8 @@ CONSENT_BUTTON_TEXTS= [
     'manage options', 'cookie settings', 'privacy settings'
 ]
 
+ZOOM_OUT_PERCENT_DEFAULT = 25
+
 SPONSORED_SELECTORS = [
     '.promo', '.sponsored-demo', '.featured', '.recommended',
     '[data-sponsored="true"]', '[data-promo="true"]',
@@ -2833,12 +2835,12 @@ class AutomationWorker(QObject):
 
     def _get_zoom_out_factor(self) -> float:
         """Return zoom factor for zoom-out mode (default 25%)."""
-        raw_percent = self.config.get('zoom_out_percent', 25)
+        raw_percent = self.config.get('zoom_out_percent', ZOOM_OUT_PERCENT_DEFAULT)
         try:
             percent = int(raw_percent)
         except (TypeError, ValueError):
-            percent = 25
-        percent = max(10, min(100, percent))
+            percent = ZOOM_OUT_PERCENT_DEFAULT
+        percent = max(1, min(100, percent))
         return percent / 100.0
 
     async def apply_zoom_out_to_context(self, context: BrowserContext, context_name: str = ''):
@@ -2847,21 +2849,30 @@ class AutomationWorker(QObject):
             return
 
         zoom_factor = self._get_zoom_out_factor()
-        zoom_factor_safe = json.dumps(zoom_factor)
 
         zoom_script = f"""
             (() => {{
-                const zoomFactor = {zoom_factor_safe};
+                const zoomFactor = {zoom_factor};
                 const applyZoom = () => {{
-                    try {{
-                        if (document && document.documentElement) {{
-                            document.documentElement.style.zoom = String(zoomFactor);
-                        }}
-                    }} catch (e) {{}}
+                    if (!document || !document.documentElement) return;
+                    const root = document.documentElement;
+                    if (root.dataset.advancedBotZoomOutApplied === String(zoomFactor)) return;
+                    root.dataset.advancedBotZoomOutApplied = String(zoomFactor);
+                    root.style.zoom = String(zoomFactor);
+
+                    const supportsZoom = typeof CSS !== 'undefined' && CSS.supports && CSS.supports('zoom', '1');
+                    if (!supportsZoom) {{
+                        root.style.transformOrigin = 'top left';
+                        root.style.transform = `scale(${{zoomFactor}})`;
+                        root.style.width = `${{100 / zoomFactor}}%`;
+                    }}
                 }};
-                applyZoom();
-                window.addEventListener('DOMContentLoaded', applyZoom);
-                window.addEventListener('load', applyZoom);
+                if (document.readyState === 'loading') {{
+                    window.addEventListener('DOMContentLoaded', applyZoom, {{ once: true }});
+                }} else {{
+                    applyZoom();
+                }}
+                window.addEventListener('load', applyZoom, {{ once: true }});
             }})();
         """
 
@@ -2879,8 +2890,8 @@ class AutomationWorker(QObject):
                     """,
                     zoom_factor
                 )
-            except Exception:
-                pass
+            except Exception as zoom_error:
+                self.emit_log(f'Zoom Out apply skipped on one page: {zoom_error}', 'DEBUG')
 
         if context_name:
             self.emit_log(f'🔎 Zoom Out enabled ({int(zoom_factor * 100)}%) for {context_name}')
@@ -6377,10 +6388,10 @@ class AppGUI(QMainWindow):
         traffic_layout.addLayout(num_browsers_row)
 
         # Zoom Out option (applies page zoom to loaded websites)
-        self.zoom_out_enabled = QCheckBox('🔎 Zoom Out Website (25%)')
+        self.zoom_out_enabled = QCheckBox('🔎 Zoom Out Website')
         self.zoom_out_enabled.setChecked(False)
         self.zoom_out_enabled.setToolTip(
-            'When enabled, opened websites are displayed at 25% zoom.'
+            f'When enabled, opened websites are displayed zoomed out (default {ZOOM_OUT_PERCENT_DEFAULT}%).'
         )
         traffic_layout.addWidget(self.zoom_out_enabled)
         
@@ -7620,7 +7631,7 @@ class AppGUI(QMainWindow):
                     'rpa_script': rpa_script,
                     'number_of_browsers': self.get_selected_browser_count(),  # Number of browser windows
                     'zoom_out_enabled': self.zoom_out_enabled.isChecked(),
-                    'zoom_out_percent': 25,
+                    'zoom_out_percent': ZOOM_OUT_PERCENT_DEFAULT,
                     'proxy_enabled': self.proxy_enabled_check.isChecked(),
                     'proxy_type': self.proxy_type_combo.currentText(),
                     'proxy_list': self.proxy_list_input.toPlainText(),
@@ -7779,7 +7790,7 @@ class AppGUI(QMainWindow):
                     'max_time_spend': self.max_time_input.value(),
                     'number_of_browsers': self.get_selected_browser_count(),
                     'zoom_out_enabled': self.zoom_out_enabled.isChecked(),
-                    'zoom_out_percent': 25,
+                    'zoom_out_percent': ZOOM_OUT_PERCENT_DEFAULT,
                     'content_ratio': self.content_ratio_input.value(),
                     'platforms': selected_platforms,
                     'headless': False,  # Always False - browser must be visible
