@@ -23,7 +23,7 @@ import shutil
 import base64
 import urllib.request
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 
 from user_agents import USER_AGENTS
@@ -2850,7 +2850,7 @@ class AutomationWorker(QObject):
         """Check whether automatic zoom-by-worker-count is enabled."""
         return bool(self.config.get('auto_zoom', AUTO_ZOOM_DEFAULT))
 
-    def _get_screen_dimensions(self) -> tuple[int, int]:
+    def _get_screen_dimensions(self) -> Tuple[int, int]:
         """Get available screen dimensions for browser grid layout."""
         app = QApplication.instance()
         if app:
@@ -2862,7 +2862,7 @@ class AutomationWorker(QObject):
                 return width, height
         return 1920, 1080
 
-    def _calculate_grid_layout(self, worker_count: int) -> tuple[int, int]:
+    def _calculate_grid_layout(self, worker_count: int) -> Tuple[int, int]:
         """Calculate grid columns/rows based on worker count."""
         count = max(1, worker_count)
         cols = max(1, math.ceil(math.sqrt(count)))
@@ -2876,7 +2876,11 @@ class AutomationWorker(QObject):
         screen_width, screen_height = self._get_screen_dimensions()
         window_width = max(1, screen_width // cols)
         window_height = max(1, screen_height // rows)
-        slot_index = max(0, worker_index - 1)
+        try:
+            safe_worker_index = max(1, int(worker_index))
+        except (TypeError, ValueError):
+            safe_worker_index = 1
+        slot_index = safe_worker_index - 1
         row = slot_index // cols
         col = slot_index % cols
         x = col * window_width
@@ -2914,7 +2918,11 @@ class AutomationWorker(QObject):
         worker_count: Optional[int] = None,
         context_name: str = '',
     ):
-        """Resize and position browser window based on grid slot."""
+        """Resize and position browser window based on grid slot.
+
+        Uses the first existing page when present; creates one page only when
+        the context has no pages yet.
+        """
         if not context or not self._is_auto_grid_layout_enabled():
             return
 
@@ -2958,15 +2966,20 @@ class AutomationWorker(QObject):
                 f'({bounds["cols"]}x{bounds["rows"]})'
             )
 
-    def _is_zoom_out_enabled(self) -> bool:
-        """Check whether zoom-out mode is enabled."""
+    def _should_apply_zoom(self) -> bool:
+        """Check whether any zoom mode should be applied."""
         return bool(
             self.config.get('zoom_out_enabled', False)
             or self.config.get('auto_zoom', AUTO_ZOOM_DEFAULT)
         )
 
     def _get_zoom_out_factor(self, worker_count: Optional[int] = None) -> float:
-        """Return zoom factor for zoom-out mode."""
+        """Return zoom factor for a context.
+
+        Args:
+            worker_count: Optional concurrent worker count override used for
+                auto-zoom band selection.
+        """
         if self._is_auto_zoom_enabled():
             resolved_count = worker_count if worker_count is not None else self._get_concurrent_worker_count()
             return self._get_auto_zoom_factor(resolved_count)
@@ -2986,7 +2999,7 @@ class AutomationWorker(QObject):
         worker_count: Optional[int] = None,
     ):
         """Apply zoom-out behavior to all pages in a context."""
-        if not context or not self._is_zoom_out_enabled():
+        if not context or not self._should_apply_zoom():
             return
 
         zoom_factor = self._get_zoom_out_factor(worker_count)
