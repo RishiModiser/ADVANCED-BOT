@@ -12,6 +12,7 @@ import random
 import time
 import ssl
 import logging
+import math
 import asyncio
 import uuid
 import subprocess
@@ -22,7 +23,7 @@ import shutil
 import base64
 import urllib.request
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 
 from user_agents import USER_AGENTS
@@ -132,6 +133,8 @@ CONSENT_BUTTON_TEXTS= [
 ]
 
 ZOOM_OUT_PERCENT_DEFAULT = 25
+AUTO_GRID_LAYOUT_DEFAULT = True
+AUTO_ZOOM_DEFAULT = True
 
 SPONSORED_SELECTORS = [
     '.promo', '.sponsored-demo', '.featured', '.recommended',
@@ -2830,12 +2833,157 @@ class AutomationWorker(QObject):
         log_entry = self.log_manager.log(message, level)
         self.log_signal.emit(log_entry)
 
-    def _is_zoom_out_enabled(self) -> bool:
-        """Check whether zoom-out mode is enabled."""
-        return bool(self.config.get('zoom_out_enabled', False))
+    def _get_concurrent_worker_count(self) -> int:
+        """Resolve configured concurrent worker count safely."""
+        raw_count = self.config.get('number_of_browsers', self.config.get('concurrent', 1))
+        try:
+            worker_count = int(raw_count)
+        except (TypeError, ValueError):
+            worker_count = 1
+        return max(1, worker_count)
 
-    def _get_zoom_out_factor(self) -> float:
-        """Return zoom factor for zoom-out mode (default 25%)."""
+    def _is_auto_grid_layout_enabled(self) -> bool:
+        """Check whether automatic grid window layout is enabled."""
+        return bool(self.config.get('auto_grid_layout', AUTO_GRID_LAYOUT_DEFAULT))
+
+    def _is_auto_zoom_enabled(self) -> bool:
+        """Check whether automatic zoom-by-worker-count is enabled."""
+        return bool(self.config.get('auto_zoom', AUTO_ZOOM_DEFAULT))
+
+    def _get_screen_dimensions(self) -> Tuple[int, int]:
+        """Get available screen dimensions for browser grid layout."""
+        app = QApplication.instance()
+        if app:
+            screen = app.primaryScreen()
+            if screen:
+                geometry = screen.availableGeometry()
+                width = max(1, geometry.width())
+                height = max(1, geometry.height())
+                return width, height
+        return 1920, 1080
+
+    def _calculate_grid_layout(self, worker_count: int) -> Tuple[int, int]:
+        """Calculate grid columns/rows based on worker count."""
+        count = max(1, worker_count)
+        cols = max(1, math.ceil(math.sqrt(count)))
+        rows = max(1, math.ceil(count / cols))
+        return cols, rows
+
+    def _get_window_bounds_for_worker(self, worker_index: int, worker_count: int) -> Dict[str, int]:
+        """Get window bounds (x, y, width, height) for a worker slot."""
+        count = max(1, worker_count)
+        cols, rows = self._calculate_grid_layout(count)
+        screen_width, screen_height = self._get_screen_dimensions()
+        window_width = max(1, screen_width // cols)
+        window_height = max(1, screen_height // rows)
+        try:
+            safe_worker_index = max(1, int(worker_index))
+        except (TypeError, ValueError):
+            safe_worker_index = 1
+        slot_index = safe_worker_index - 1
+        row = slot_index // cols
+        col = slot_index % cols
+        x = col * window_width
+        y = row * window_height
+        return {
+            'x': x,
+            'y': y,
+            'width': window_width,
+            'height': window_height,
+            'row': row,
+            'col': col,
+            'rows': rows,
+            'cols': cols,
+        }
+
+    def _get_auto_zoom_factor(self, worker_count: int) -> float:
+        """Return adaptive zoom factor based on active worker count."""
+        count = max(1, worker_count)
+        if count >= 12:
+            return 0.25
+        if count >= 10:
+            return 0.33
+        if count >= 8:
+            return 0.40
+        if count >= 6:
+            return 0.50
+        if count >= 4:
+            return 0.67
+        return 1.0
+
+    async def apply_window_grid_layout_to_context(
+        self,
+        context: BrowserContext,
+        worker_index: int,
+        worker_count: Optional[int] = None,
+        context_name: str = '',
+    ):
+        """Resize and position browser window based on grid slot.
+
+        Uses the first existing page when present; creates one page only when
+        the context has no pages yet.
+        """
+        if not context or not self._is_auto_grid_layout_enabled():
+            return
+
+        resolved_count = worker_count if worker_count is not None else self._get_concurrent_worker_count()
+        bounds = self._get_window_bounds_for_worker(worker_index, resolved_count)
+        page = context.pages[0] if context.pages else await context.new_page()
+
+        try:
+            await page.set_viewport_size({
+                'width': bounds['width'],
+                'height': bounds['height'],
+            })
+        except Exception as viewport_error:
+            self.emit_log(f'Grid viewport apply skipped: {viewport_error}', 'DEBUG')
+
+        try:
+            cdp_session = await context.new_cdp_session(page)
+            window_info = await cdp_session.send('Browser.getWindowForTarget')
+            window_id = window_info.get('windowId')
+            if window_id:
+                await cdp_session.send(
+                    'Browser.setWindowBounds',
+                    {
+                        'windowId': window_id,
+                        'bounds': {
+                            'left': bounds['x'],
+                            'top': bounds['y'],
+                            'width': bounds['width'],
+                            'height': bounds['height'],
+                            'windowState': 'normal',
+                        },
+                    },
+                )
+        except Exception as position_error:
+            self.emit_log(f'Grid window position skipped: {position_error}', 'DEBUG')
+
+        if context_name:
+            self.emit_log(
+                f'🧩 Grid layout applied for {context_name}: '
+                f'row {bounds["row"]}, col {bounds["col"]} '
+                f'({bounds["cols"]}x{bounds["rows"]})'
+            )
+
+    def _should_apply_zoom(self) -> bool:
+        """Check whether any zoom mode should be applied."""
+        return bool(
+            self.config.get('zoom_out_enabled', False)
+            or self.config.get('auto_zoom', AUTO_ZOOM_DEFAULT)
+        )
+
+    def _get_zoom_out_factor(self, worker_count: Optional[int] = None) -> float:
+        """Return zoom factor for a context.
+
+        Args:
+            worker_count: Optional concurrent worker count override used for
+                auto-zoom band selection.
+        """
+        if self._is_auto_zoom_enabled():
+            resolved_count = worker_count if worker_count is not None else self._get_concurrent_worker_count()
+            return self._get_auto_zoom_factor(resolved_count)
+
         raw_percent = self.config.get('zoom_out_percent', ZOOM_OUT_PERCENT_DEFAULT)
         try:
             percent = int(raw_percent)
@@ -2844,12 +2992,17 @@ class AutomationWorker(QObject):
         percent = max(1, min(100, percent))
         return percent / 100.0
 
-    async def apply_zoom_out_to_context(self, context: BrowserContext, context_name: str = ''):
+    async def apply_zoom_out_to_context(
+        self,
+        context: BrowserContext,
+        context_name: str = '',
+        worker_count: Optional[int] = None,
+    ):
         """Apply zoom-out behavior to all pages in a context."""
-        if not context or not self._is_zoom_out_enabled():
+        if not context or not self._should_apply_zoom():
             return
 
-        zoom_factor = self._get_zoom_out_factor()
+        zoom_factor = self._get_zoom_out_factor(worker_count)
 
         zoom_script = f"""
             (() => {{
@@ -3864,8 +4017,17 @@ class AutomationWorker(QObject):
         except Exception as e:
             self.emit_log(f'Error during interaction: {e}', 'WARNING')
     
-    async def execute_high_cpc_mode(self, profile_num, high_cpc_url, target_domain, stay_time, 
-                                    consent_manager, platform='windows', proxy_override=None):
+    async def execute_high_cpc_mode(
+        self,
+        profile_num,
+        high_cpc_url,
+        target_domain,
+        stay_time,
+        consent_manager,
+        platform='windows',
+        proxy_override=None,
+        num_concurrent: Optional[int] = None,
+    ):
         """Execute HIGH CPC/CPM Mode with 4 High CPC tabs and 1 Target Domain tab.
         
         Args:
@@ -3890,7 +4052,18 @@ class AutomationWorker(QObject):
             self.emit_log(f'[Browser {profile_num}] Browser opened successfully')
             self.active_browsers.append(context)
             self.active_contexts.append(context)
-            await self.apply_zoom_out_to_context(context, f'Browser {profile_num}')
+            worker_count = num_concurrent if num_concurrent is not None else self._get_concurrent_worker_count()
+            await self.apply_window_grid_layout_to_context(
+                context,
+                profile_num,
+                worker_count,
+                f'Browser {profile_num}',
+            )
+            await self.apply_zoom_out_to_context(
+                context,
+                f'Browser {profile_num}',
+                worker_count=worker_count,
+            )
             
             try:
                 high_cpc_tabs = []
@@ -4640,7 +4813,8 @@ class AutomationWorker(QObject):
                                      random_ad_clicking_enabled=False,
                                      random_click_ratio=0.5,
                                      custom_random_targets=None,
-                                     selected_browser_engines=None):
+                                     selected_browser_engines=None,
+                                     num_concurrent: Optional[int] = None):
         """Execute a single browser profile with one page."""
         try:
             # Check if HIGH CPC/CPM Mode is enabled
@@ -4650,7 +4824,8 @@ class AutomationWorker(QObject):
                 return await self.execute_high_cpc_mode(
                     profile_num, high_cpc_url, high_cpc_target, 
                     high_cpc_stay_time, consent_manager, platform,
-                    proxy_override=proxy_override
+                    proxy_override=proxy_override,
+                    num_concurrent=num_concurrent,
                 )
             
             # Normal mode execution (existing code)
@@ -4678,7 +4853,18 @@ class AutomationWorker(QObject):
             self.emit_log(f'[Browser {profile_num}] Browser opened successfully')
             self.active_browsers.append(context)
             self.active_contexts.append(context)
-            await self.apply_zoom_out_to_context(context, f'Browser {profile_num}')
+            worker_count = num_concurrent if num_concurrent is not None else self._get_concurrent_worker_count()
+            await self.apply_window_grid_layout_to_context(
+                context,
+                profile_num,
+                worker_count,
+                f'Browser {profile_num}',
+            )
+            await self.apply_zoom_out_to_context(
+                context,
+                f'Browser {profile_num}',
+                worker_count=worker_count,
+            )
             
             page = None
             try:
@@ -4785,7 +4971,18 @@ class AutomationWorker(QObject):
             if not context:
                 self.emit_log(f'Failed to create browser context for browser {browser_num}', 'ERROR')
                 return False
-            await self.apply_zoom_out_to_context(context, f'Browser {browser_num}')
+            worker_count = self._get_concurrent_worker_count()
+            await self.apply_window_grid_layout_to_context(
+                context,
+                browser_num,
+                worker_count,
+                f'Browser {browser_num}',
+            )
+            await self.apply_zoom_out_to_context(
+                context,
+                f'Browser {browser_num}',
+                worker_count=worker_count,
+            )
             
             try:
                 # Get proxy location once for the browser
@@ -5017,6 +5214,7 @@ class AutomationWorker(QObject):
                     random_click_ratio=random_click_ratio,
                     custom_random_targets=custom_random_targets,
                     selected_browser_engines=[browser_engine],
+                    num_concurrent=num_concurrent,
                 )
 
                 if result:
@@ -5236,7 +5434,17 @@ class AutomationWorker(QObject):
                         active_browser_count += 1
                         self.active_browsers.append(context)
                         self.active_contexts.append(context)
-                        await self.apply_zoom_out_to_context(context, f'Browser {concurrent_num}')
+                        await self.apply_window_grid_layout_to_context(
+                            context,
+                            concurrent_num,
+                            num_concurrent,
+                            f'Browser {concurrent_num}',
+                        )
+                        await self.apply_zoom_out_to_context(
+                            context,
+                            f'Browser {concurrent_num}',
+                            worker_count=num_concurrent,
+                        )
                         self.emit_log(f'[Browser {concurrent_num}] Browser opened successfully')
                         
                         # Log proxy in use and current active count
@@ -7700,6 +7908,8 @@ class AppGUI(QMainWindow):
                     'number_of_browsers': self.get_selected_browser_count(),  # Number of browser windows
                     'zoom_out_enabled': self.zoom_out_enabled.isChecked(),
                     'zoom_out_percent': ZOOM_OUT_PERCENT_DEFAULT,
+                    'auto_grid_layout': AUTO_GRID_LAYOUT_DEFAULT,
+                    'auto_zoom': AUTO_ZOOM_DEFAULT,
                     'proxy_enabled': self.proxy_enabled_check.isChecked(),
                     'proxy_type': self.proxy_type_combo.currentText(),
                     'proxy_list': self.proxy_list_input.toPlainText(),
@@ -7859,6 +8069,8 @@ class AppGUI(QMainWindow):
                     'number_of_browsers': self.get_selected_browser_count(),
                     'zoom_out_enabled': self.zoom_out_enabled.isChecked(),
                     'zoom_out_percent': ZOOM_OUT_PERCENT_DEFAULT,
+                    'auto_grid_layout': AUTO_GRID_LAYOUT_DEFAULT,
+                    'auto_zoom': AUTO_ZOOM_DEFAULT,
                     'content_ratio': self.content_ratio_input.value(),
                     'platforms': selected_platforms,
                     'headless': False,  # Always False - browser must be visible
