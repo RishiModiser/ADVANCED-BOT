@@ -173,6 +173,8 @@ The application provides a modern, fully responsive GUI with improved navigation
    - **Import Settings** (NEW in v5.2)
      - Import User Agents - Load custom user agents from text file
      - Import Cookies - Load cookies from JSON file
+     - Download Cookies - Export currently loaded cookies as JSON
+     - Cookie Cache Restore - Automatically reload last valid imported cookies
 
 6. **📋 Logs** (NEW in v5)
    - Dedicated full-screen log viewer
@@ -208,6 +210,8 @@ The application provides a modern, fully responsive GUI with improved navigation
 - **Stealth Mode** - Removed "Chrome is being controlled by automated test software" banner
 - **Import User Agents** - Load custom user agents from text file, automatically rotated across instances
 - **Import Cookies** - Load cookies from JSON file, automatically injected into all browser contexts
+- **Download Cookies** - Export loaded cookies from the Control tab
+- **Cookie Cache** - Last valid cookie set is cached and restored on restart
 
 ### Browser Automation
 - Playwright-based Chromium automation
