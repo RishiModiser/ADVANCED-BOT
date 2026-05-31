@@ -2483,7 +2483,14 @@ class BrowserManager:
             self.log_manager.log(f'Playwright initialization error: {error_msg}', 'ERROR')
             return False
     
-    async def create_context(self, platform: str = 'windows', use_proxy: bool = True, proxy_override: Optional[Dict] = None, engine: str = 'Chromium') -> Optional[BrowserContext]:
+    async def create_context(
+        self,
+        platform: str = 'windows',
+        use_proxy: bool = True,
+        proxy_override: Optional[Dict] = None,
+        engine: str = 'Chromium',
+        window_bounds: Optional[Dict[str, int]] = None,
+    ) -> Optional[BrowserContext]:
         """Create a new browser persistent context with unique profile.
         
         Uses launch_persistent_context to create real Chrome windows with their own taskbar icons.
@@ -2564,13 +2571,29 @@ class BrowserManager:
             if proxy_location:
                 self.log_manager.log(f'✓ Fingerprint MATCHED to proxy location: {proxy_location["country"]}')
             
+            viewport_width = None
+            viewport_height = None
+            if window_bounds:
+                try:
+                    viewport_width = max(320, int(window_bounds.get('width', 0)))
+                    viewport_height = max(240, int(window_bounds.get('height', 0)))
+                except (TypeError, ValueError):
+                    viewport_width = None
+                    viewport_height = None
+
+            viewport = (
+                {'width': viewport_width, 'height': viewport_height}
+                if viewport_width and viewport_height
+                else fingerprint['viewport']
+            )
+
             # Build context options for launch_persistent_context.
             # Firefox and WebKit do not support 'channel', 'args', or 'ignore_default_args'
             # in the same way as Chromium, so we build engine-specific option sets.
             if engine_lower in ('firefox',):
                 context_options = {
                     'user_agent': user_agent,
-                    'viewport': fingerprint['viewport'],
+                    'viewport': viewport,
                     'locale': fingerprint['locale'],
                     'timezone_id': fingerprint['timezone'],
                     'headless': False,
@@ -2581,7 +2604,7 @@ class BrowserManager:
             elif engine_lower in ('webkit',):
                 context_options = {
                     'user_agent': user_agent,
-                    'viewport': fingerprint['viewport'],
+                    'viewport': viewport,
                     'locale': fingerprint['locale'],
                     'timezone_id': fingerprint['timezone'],
                     'headless': False,
@@ -2593,7 +2616,7 @@ class BrowserManager:
                 # Chromium (default) – use real Chrome channel with anti-automation args
                 context_options = {
                     'user_agent': user_agent,
-                    'viewport': fingerprint['viewport'],
+                    'viewport': viewport,
                     'locale': fingerprint['locale'],
                     'timezone_id': fingerprint['timezone'],
                     'headless': False,  # ALWAYS VISIBLE - headless mode removed completely
@@ -2610,6 +2633,13 @@ class BrowserManager:
                         '--disable-features=IsolateOrigins,site-per-process'
                     ]
                 }
+                if window_bounds and viewport_width and viewport_height:
+                    window_x = max(0, int(window_bounds.get('x', 0)))
+                    window_y = max(0, int(window_bounds.get('y', 0)))
+                    context_options['args'].extend([
+                        f'--window-position={window_x},{window_y}',
+                        f'--window-size={viewport_width},{viewport_height}',
+                    ])
                 if proxy_config:
                     context_options['proxy'] = proxy_config
                 else:
@@ -2865,6 +2895,8 @@ class AutomationWorker(QObject):
     def _calculate_grid_layout(self, worker_count: int) -> Tuple[int, int]:
         """Calculate grid columns/rows based on worker count."""
         count = max(1, worker_count)
+        if count == 10:
+            return 5, 2
         cols = max(1, math.ceil(math.sqrt(count)))
         rows = max(1, math.ceil(count / cols))
         return cols, rows
@@ -2899,10 +2931,8 @@ class AutomationWorker(QObject):
     def _get_auto_zoom_factor(self, worker_count: int) -> float:
         """Return adaptive zoom factor based on active worker count."""
         count = max(1, worker_count)
-        if count >= 12:
-            return 0.25
         if count >= 10:
-            return 0.33
+            return 0.30
         if count >= 8:
             return 0.40
         if count >= 6:
@@ -2943,6 +2973,19 @@ class AutomationWorker(QObject):
             window_info = await cdp_session.send('Browser.getWindowForTarget')
             window_id = window_info.get('windowId')
             if window_id:
+                if sys.platform.startswith('win'):
+                    try:
+                        await cdp_session.send(
+                            'Browser.setWindowBounds',
+                            {
+                                'windowId': window_id,
+                                'bounds': {
+                                    'windowState': 'maximized',
+                                },
+                            },
+                        )
+                    except Exception as maximize_error:
+                        self.emit_log(f'Grid pre-maximize skipped: {maximize_error}', 'DEBUG')
                 await cdp_session.send(
                     'Browser.setWindowBounds',
                     {
@@ -3003,16 +3046,18 @@ class AutomationWorker(QObject):
             return
 
         zoom_factor = self._get_zoom_out_factor(worker_count)
+        zoom_percent = max(1, int(zoom_factor * 100))
 
         zoom_script = f"""
             (() => {{
+                const zoomPercent = "{zoom_percent}%";
                 const zoomFactor = {zoom_factor};
                 const applyZoom = () => {{
                     if (!document || !document.documentElement) return;
                     const root = document.documentElement;
-                    if (root.dataset.advancedBotZoomOutApplied === String(zoomFactor)) return;
-                    root.dataset.advancedBotZoomOutApplied = String(zoomFactor);
-                    root.style.zoom = String(zoomFactor);
+                    if (root.dataset.advancedBotZoomOutApplied === zoomPercent) return;
+                    root.dataset.advancedBotZoomOutApplied = zoomPercent;
+                    root.style.zoom = zoomPercent;
 
                     const supportsZoom = typeof CSS !== 'undefined' && CSS.supports && CSS.supports('zoom', '1');
                     if (!supportsZoom) {{
@@ -3032,20 +3077,38 @@ class AutomationWorker(QObject):
 
         await context.add_init_script(zoom_script)
 
-        for open_page in context.pages:
+        async def _apply_zoom_to_page(open_page: Page):
             try:
+                await open_page.wait_for_load_state('domcontentloaded', timeout=15000)
                 await open_page.evaluate(
                     """
-                    (zoomFactor) => {
+                    ({ zoomFactor, zoomPercent }) => {
                         if (document && document.documentElement) {
-                            document.documentElement.style.zoom = String(zoomFactor);
+                            document.documentElement.style.zoom = String(zoomPercent);
                         }
                     }
                     """,
-                    zoom_factor
+                    {'zoomFactor': zoom_factor, 'zoomPercent': f'{zoom_percent}%'}
                 )
+                if zoom_factor < 1.0:
+                    for _ in range(4):
+                        try:
+                            await open_page.keyboard.press('Control+-')
+                        except Exception:
+                            break
             except Exception as zoom_error:
                 self.emit_log(f'Zoom Out apply skipped on one page: {zoom_error}', 'DEBUG')
+
+        for open_page in context.pages:
+            await _apply_zoom_to_page(open_page)
+
+        if not getattr(context, '_advanced_bot_zoom_listener_added', False):
+            context._advanced_bot_zoom_listener_added = True
+
+            def _on_new_page(new_page: Page):
+                asyncio.create_task(_apply_zoom_to_page(new_page))
+
+            context.on('page', _on_new_page)
 
         if context_name:
             self.emit_log(f'🔎 Zoom Out enabled ({int(zoom_factor * 100)}%) for {context_name}')
@@ -4043,8 +4106,14 @@ class AutomationWorker(QObject):
             self.emit_log(f'━━━ Profile {profile_num} | HIGH CPC/CPM Mode | Platform: {platform} ━━━')
             
             # Create browser context
+            worker_count = num_concurrent if num_concurrent is not None else self._get_concurrent_worker_count()
+            window_bounds = self._get_window_bounds_for_worker(profile_num, worker_count)
             self.emit_log(f'[Browser {profile_num}] Launching...')
-            context = await self.browser_manager.create_context(platform, proxy_override=proxy_override)
+            context = await self.browser_manager.create_context(
+                platform,
+                proxy_override=proxy_override,
+                window_bounds=window_bounds,
+            )
             if not context:
                 self.emit_log(f'[Browser {profile_num}] Failed to create browser context', 'ERROR')
                 return False
@@ -4052,7 +4121,6 @@ class AutomationWorker(QObject):
             self.emit_log(f'[Browser {profile_num}] Browser opened successfully')
             self.active_browsers.append(context)
             self.active_contexts.append(context)
-            worker_count = num_concurrent if num_concurrent is not None else self._get_concurrent_worker_count()
             await self.apply_window_grid_layout_to_context(
                 context,
                 profile_num,
@@ -4844,8 +4912,15 @@ class AutomationWorker(QObject):
             # Rotate through selected engines; default to Chromium when none selected.
             engines = selected_browser_engines or ['Chromium']
             engine = engines[profile_num % len(engines)]
+            worker_count = num_concurrent if num_concurrent is not None else self._get_concurrent_worker_count()
+            window_bounds = self._get_window_bounds_for_worker(profile_num, worker_count)
             self.emit_log(f'[Browser {profile_num}] Launching...')
-            context = await self.browser_manager.create_context(platform, proxy_override=proxy_override, engine=engine)
+            context = await self.browser_manager.create_context(
+                platform,
+                proxy_override=proxy_override,
+                engine=engine,
+                window_bounds=window_bounds,
+            )
             if not context:
                 self.emit_log(f'Failed to create browser context for profile {profile_num}', 'ERROR')
                 return False
@@ -4853,7 +4928,6 @@ class AutomationWorker(QObject):
             self.emit_log(f'[Browser {profile_num}] Browser opened successfully')
             self.active_browsers.append(context)
             self.active_contexts.append(context)
-            worker_count = num_concurrent if num_concurrent is not None else self._get_concurrent_worker_count()
             await self.apply_window_grid_layout_to_context(
                 context,
                 profile_num,
@@ -4966,12 +5040,13 @@ class AutomationWorker(QObject):
             self.emit_log(f'━━━ Browser {browser_num} | Platform: {platform} | Opening {num_tabs} tabs ━━━')
             
             # Create new context for this browser (session isolation)
+            worker_count = self._get_concurrent_worker_count()
+            window_bounds = self._get_window_bounds_for_worker(browser_num, worker_count)
             self.emit_log(f'Creating browser context for browser {browser_num}...')
-            context = await self.browser_manager.create_context(platform)
+            context = await self.browser_manager.create_context(platform, window_bounds=window_bounds)
             if not context:
                 self.emit_log(f'Failed to create browser context for browser {browser_num}', 'ERROR')
                 return False
-            worker_count = self._get_concurrent_worker_count()
             await self.apply_window_grid_layout_to_context(
                 context,
                 browser_num,
@@ -5414,10 +5489,12 @@ class AutomationWorker(QObject):
                             self.emit_log(f'[Browser {concurrent_num}] Launching...')
                         
                         # Create browser context (retry_proxy passed so queue is NOT re-consumed on retry)
+                        window_bounds = self._get_window_bounds_for_worker(concurrent_num, num_concurrent)
                         context = await self.browser_manager.create_context(
                             platform=platform,
                             use_proxy=proxy_manager.proxy_enabled,
-                            proxy_override=retry_proxy
+                            proxy_override=retry_proxy,
+                            window_bounds=window_bounds,
                         )
                         
                         if not context:
@@ -7701,13 +7778,19 @@ class AppGUI(QMainWindow):
         # Clear Cookies button
         clear_cookies_btn = QPushButton('🗑️ Clear Cookies')
         clear_cookies_btn.clicked.connect(self.clear_cookies)
+        clear_cookies_btn.setMinimumHeight(36)
         clear_cookies_btn.setStyleSheet('background-color: #9E9E9E; color: white; padding: 8px;')
-        import_layout.addWidget(clear_cookies_btn)
 
         download_cookies_btn = QPushButton('💾 Download Cookies')
         download_cookies_btn.clicked.connect(self.download_cookies)
+        download_cookies_btn.setMinimumHeight(36)
         download_cookies_btn.setStyleSheet('background-color: #4CAF50; color: white; padding: 8px;')
-        import_layout.addWidget(download_cookies_btn)
+
+        cookie_actions_layout = QHBoxLayout()
+        cookie_actions_layout.setSpacing(10)
+        cookie_actions_layout.addWidget(clear_cookies_btn)
+        cookie_actions_layout.addWidget(download_cookies_btn)
+        import_layout.addLayout(cookie_actions_layout)
         
         # Info label
         info_label = QLabel('ℹ️ Imported user agents and cookies will be used across all instances and proxies')
