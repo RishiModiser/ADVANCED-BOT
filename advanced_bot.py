@@ -217,6 +217,7 @@ AD_SELECTORS: List[Dict[str, Any]] = [
 
 # Path to the bot settings file used for selector persistence
 _BOT_SETTINGS_FILE = Path(__file__).parent / 'bot_settings.json'
+_COOKIES_CACHE_FILE = Path(__file__).parent / 'cookies_cache.json'
 
 
 # Referrer URLs for different sources
@@ -5741,6 +5742,67 @@ def normalize_rpa_script(data: Any) -> Dict[str, Any]:
     }
 
 
+def normalize_playwright_cookies(raw_cookies: Any) -> tuple[List[Dict[str, Any]], int]:
+    """Normalize imported cookies to Playwright-compatible format."""
+    if not isinstance(raw_cookies, list):
+        return [], 0
+
+    normalized: List[Dict[str, Any]] = []
+    skipped = 0
+    valid_same_site = {'Lax', 'Strict', 'None'}
+    same_site_map = {'lax': 'Lax', 'strict': 'Strict', 'none': 'None'}
+
+    for cookie in raw_cookies:
+        if not isinstance(cookie, dict):
+            skipped += 1
+            continue
+
+        name = cookie.get('name')
+        value = cookie.get('value')
+        if not isinstance(name, str) or not name.strip() or not isinstance(value, str):
+            skipped += 1
+            continue
+
+        normalized_cookie: Dict[str, Any] = {'name': name, 'value': value}
+
+        url = cookie.get('url')
+        domain = cookie.get('domain')
+        if isinstance(url, str) and url.strip():
+            normalized_cookie['url'] = url
+        elif isinstance(domain, str) and domain.strip():
+            normalized_cookie['domain'] = domain
+            cookie_path = cookie.get('path')
+            normalized_cookie['path'] = cookie_path if isinstance(cookie_path, str) and cookie_path else '/'
+        else:
+            skipped += 1
+            continue
+
+        if 'expires' in cookie:
+            expires_value = cookie.get('expires')
+            if isinstance(expires_value, (int, float)):
+                normalized_cookie['expires'] = float(expires_value)
+            else:
+                try:
+                    normalized_cookie['expires'] = float(str(expires_value))
+                except (TypeError, ValueError):
+                    pass
+
+        for bool_key in ('httpOnly', 'secure'):
+            bool_value = cookie.get(bool_key)
+            if bool_value is not None:
+                normalized_cookie[bool_key] = bool(bool_value)
+
+        same_site = cookie.get('sameSite')
+        if isinstance(same_site, str):
+            same_site_clean = same_site_map.get(same_site.strip().lower(), '')
+            if same_site_clean in valid_same_site:
+                normalized_cookie['sameSite'] = same_site_clean
+
+        normalized.append(normalized_cookie)
+
+    return normalized, skipped
+
+
 # ============================================================================
 # MAIN GUI APPLICATION
 # ============================================================================
@@ -5778,6 +5840,7 @@ class AppGUI(QMainWindow):
         self._ad_selector_data: List[Dict[str, Any]] = self._load_ad_selectors_settings()
 
         self.init_ui()
+        self._load_cached_cookies()
     
     def init_ui(self):
         """Initialize the user interface."""
@@ -7432,6 +7495,11 @@ class AppGUI(QMainWindow):
         clear_cookies_btn.clicked.connect(self.clear_cookies)
         clear_cookies_btn.setStyleSheet('background-color: #9E9E9E; color: white; padding: 8px;')
         import_layout.addWidget(clear_cookies_btn)
+
+        download_cookies_btn = QPushButton('💾 Download Cookies')
+        download_cookies_btn.clicked.connect(self.download_cookies)
+        download_cookies_btn.setStyleSheet('background-color: #4CAF50; color: white; padding: 8px;')
+        import_layout.addWidget(download_cookies_btn)
         
         # Info label
         info_label = QLabel('ℹ️ Imported user agents and cookies will be used across all instances and proxies')
@@ -8404,17 +8472,18 @@ class AppGUI(QMainWindow):
             
             if file_path:
                 with open(file_path, 'r', encoding='utf-8') as f:
-                    cookies = json.load(f)
-                
-                # Validate cookies format
-                if isinstance(cookies, list):
+                    raw_cookies = json.load(f)
+
+                cookies, skipped = normalize_playwright_cookies(raw_cookies)
+                if cookies:
                     self.imported_cookies = cookies
-                    self.cookies_file_label.setText(f'{len(cookies)} cookies loaded')
-                    self.cookies_file_label.setStyleSheet('color: #4CAF50; font-weight: bold;')
-                    self.log_manager.log(f'✓ Imported {len(cookies)} cookies from {file_path}')
-                    QMessageBox.information(self, 'Success', f'Successfully imported {len(cookies)} cookies!')
+                    self._set_cookies_file_label(f'{len(cookies)} cookies loaded', loaded=True)
+                    self._cache_imported_cookies()
+                    skipped_msg = f' ({skipped} invalid skipped)' if skipped else ''
+                    self.log_manager.log(f'✓ Imported {len(cookies)} cookies from {file_path}{skipped_msg}')
+                    QMessageBox.information(self, 'Success', f'Successfully imported {len(cookies)} cookies{skipped_msg}!')
                 else:
-                    QMessageBox.warning(self, 'Invalid Format', 'Cookies file must contain a JSON array.')
+                    QMessageBox.warning(self, 'Invalid Format', 'No valid cookies found in selected file.')
         except json.JSONDecodeError as e:
             QMessageBox.critical(self, 'Error', f'Invalid JSON format: {str(e)}')
             self.log_manager.log(f'Failed to import cookies (invalid JSON): {str(e)}', 'ERROR')
@@ -8434,12 +8503,82 @@ class AppGUI(QMainWindow):
             
             if reply == QMessageBox.Yes:
                 self.imported_cookies = []
-                self.cookies_file_label.setText('No file selected')
-                self.cookies_file_label.setStyleSheet('color: #666; font-style: italic;')
+                self._set_cookies_file_label('No file selected', loaded=False)
+                self._cache_imported_cookies()
                 self.log_manager.log('✓ Cleared imported cookies')
                 QMessageBox.information(self, 'Success', 'Cookies cleared successfully!')
         else:
             QMessageBox.information(self, 'Info', 'No cookies to clear.')
+
+    def download_cookies(self):
+        """Download currently loaded cookies as JSON."""
+        if not self.imported_cookies:
+            QMessageBox.information(self, 'Info', 'No cookies available to download.')
+            return
+
+        try:
+            default_name = f'cookies_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                'Download Cookies',
+                default_name,
+                'JSON Files (*.json);;All Files (*)'
+            )
+
+            if not file_path:
+                return
+
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(self.imported_cookies, f, indent=2, ensure_ascii=False)
+
+            self.log_manager.log(f'✓ Downloaded {len(self.imported_cookies)} cookies to {file_path}')
+            QMessageBox.information(self, 'Success', f'Cookies downloaded successfully to:\n{file_path}')
+        except Exception as e:
+            QMessageBox.critical(self, 'Error', f'Failed to download cookies: {str(e)}')
+            self.log_manager.log(f'Failed to download cookies: {str(e)}', 'ERROR')
+
+    def _set_cookies_file_label(self, text: str, loaded: bool):
+        """Update cookies file label styling."""
+        self.cookies_file_label.setText(text)
+        if loaded:
+            self.cookies_file_label.setStyleSheet('color: #4CAF50; font-weight: bold;')
+        else:
+            self.cookies_file_label.setStyleSheet('color: #666; font-style: italic;')
+
+    def _cache_imported_cookies(self):
+        """Cache cookies on disk for automatic restore."""
+        try:
+            if self.imported_cookies:
+                with open(_COOKIES_CACHE_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(self.imported_cookies, f, indent=2, ensure_ascii=False)
+            elif _COOKIES_CACHE_FILE.exists():
+                _COOKIES_CACHE_FILE.unlink()
+        except Exception as e:
+            self.log_manager.log(f'Cookie cache update warning: {str(e)}', 'WARNING')
+
+    def _load_cached_cookies(self):
+        """Load cached cookies from disk if available."""
+        if not _COOKIES_CACHE_FILE.exists():
+            return
+
+        try:
+            with open(_COOKIES_CACHE_FILE, 'r', encoding='utf-8') as f:
+                raw_cookies = json.load(f)
+
+            cookies, skipped = normalize_playwright_cookies(raw_cookies)
+            if cookies:
+                self.imported_cookies = cookies
+                self._set_cookies_file_label(f'{len(cookies)} cookies loaded (cache)', loaded=True)
+                skipped_msg = f' ({skipped} invalid skipped)' if skipped else ''
+                self.log_manager.log(f'✓ Loaded {len(cookies)} cached cookies{skipped_msg}')
+            else:
+                self._set_cookies_file_label('No file selected', loaded=False)
+                self.imported_cookies = []
+                _COOKIES_CACHE_FILE.unlink(missing_ok=True)
+        except Exception as e:
+            self.imported_cookies = []
+            self._set_cookies_file_label('No file selected', loaded=False)
+            self.log_manager.log(f'Cached cookies load warning: {str(e)}', 'WARNING')
     
     # ========================================================================
     # AD SELECTORS HELPERS
