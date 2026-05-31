@@ -2575,8 +2575,11 @@ class BrowserManager:
             viewport_height = None
             if window_bounds:
                 try:
-                    viewport_width = max(320, int(window_bounds.get('width', 0)))
-                    viewport_height = max(240, int(window_bounds.get('height', 0)))
+                    raw_width = int(window_bounds.get('width', 0))
+                    raw_height = int(window_bounds.get('height', 0))
+                    if raw_width > 0 and raw_height > 0:
+                        viewport_width = max(320, raw_width)
+                        viewport_height = max(240, raw_height)
                 except (TypeError, ValueError):
                     viewport_width = None
                     viewport_height = None
@@ -2857,6 +2860,7 @@ class AutomationWorker(QObject):
         self.active_browsers = []  # Track open browser contexts (one per window) for stop cleanup
         self.active_contexts = []  # Alias for active_browsers; both reference the same context objects
         self.active_pages = []     # Track open pages for stop cleanup
+        self._zoom_listener_context_ids = set()
     
     def emit_log(self, message: str, level: str = 'INFO'):
         """Emit log to GUI."""
@@ -2895,6 +2899,7 @@ class AutomationWorker(QObject):
     def _calculate_grid_layout(self, worker_count: int) -> Tuple[int, int]:
         """Calculate grid columns/rows based on worker count."""
         count = max(1, worker_count)
+        # For 10 workers, prefer a wide 5x2 layout so all windows remain readable.
         if count == 10:
             return 5, 2
         cols = max(1, math.ceil(math.sqrt(count)))
@@ -2931,6 +2936,7 @@ class AutomationWorker(QObject):
     def _get_auto_zoom_factor(self, worker_count: int) -> float:
         """Return adaptive zoom factor based on active worker count."""
         count = max(1, worker_count)
+        # Product requirement: 10 or more workers should use 30%.
         if count >= 10:
             return 0.30
         if count >= 8:
@@ -3091,9 +3097,12 @@ class AutomationWorker(QObject):
                     {'zoomFactor': zoom_factor, 'zoomPercent': f'{zoom_percent}%'}
                 )
                 if zoom_factor < 1.0:
-                    for _ in range(4):
+                    # Four shortcut presses best-matches the requested zoom bands in desktop Chrome.
+                    zoom_shortcut_steps = 4
+                    zoom_shortcut = 'Meta+-' if sys.platform == 'darwin' else 'Control+-'
+                    for _ in range(zoom_shortcut_steps):
                         try:
-                            await open_page.keyboard.press('Control+-')
+                            await open_page.keyboard.press(zoom_shortcut)
                         except Exception:
                             break
             except Exception as zoom_error:
@@ -3102,11 +3111,21 @@ class AutomationWorker(QObject):
         for open_page in context.pages:
             await _apply_zoom_to_page(open_page)
 
-        if not getattr(context, '_advanced_bot_zoom_listener_added', False):
-            context._advanced_bot_zoom_listener_added = True
+        context_id = id(context)
+        if context_id not in self._zoom_listener_context_ids:
+            self._zoom_listener_context_ids.add(context_id)
+            context.on('close', lambda: self._zoom_listener_context_ids.discard(context_id))
+
+            def _log_zoom_task_result(done_task: asyncio.Task):
+                if done_task.cancelled():
+                    return
+                zoom_exception = done_task.exception()
+                if zoom_exception:
+                    self.emit_log(f'Zoom Out apply skipped on new page: {zoom_exception}', 'DEBUG')
 
             def _on_new_page(new_page: Page):
-                asyncio.create_task(_apply_zoom_to_page(new_page))
+                task = asyncio.create_task(_apply_zoom_to_page(new_page))
+                task.add_done_callback(_log_zoom_task_result)
 
             context.on('page', _on_new_page)
 
