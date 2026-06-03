@@ -9339,6 +9339,11 @@ if __name__ == '__main__':
         print("\nApplication failed to start. Full error details:\n")
         traceback.print_exc()
         try:
+            temp_app = QApplication.instance()
+            owns_temp_app = False
+            if temp_app is None:
+                temp_app = QApplication(sys.argv)
+                owns_temp_app = True
             crash_msg = QMessageBox()
             crash_msg.setIcon(QMessageBox.Critical)
             crash_msg.setWindowTitle('Startup Error')
@@ -9349,6 +9354,8 @@ if __name__ == '__main__':
             )
             crash_msg.setStandardButtons(QMessageBox.Ok)
             crash_msg.exec()
+            if owns_temp_app:
+                temp_app.quit()
         except Exception:
             pass
         sys.exit(1)
