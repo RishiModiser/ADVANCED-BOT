@@ -15,6 +15,7 @@ import logging
 import math
 import asyncio
 import uuid
+import traceback
 import subprocess
 import tempfile
 import threading
@@ -72,6 +73,9 @@ def check_dependencies():
             os.execv(sys.executable, [sys.executable] + sys.argv)
         except Exception as e:
             print(f"\nAuto-installation failed: {e}")
+            if sys.version_info >= (3, 14):
+                print("\nDetected Python 3.14+.")
+                print("Please use Python 3.8 to 3.13 for best compatibility.")
             print("\nPlease install dependencies manually:")
             print("\n    pip install -r requirements.txt")
             print("\nFor more details, see README.md")
@@ -9329,4 +9333,22 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception:
+        print("\nApplication failed to start. Full error details:\n")
+        traceback.print_exc()
+        try:
+            crash_msg = QMessageBox()
+            crash_msg.setIcon(QMessageBox.Critical)
+            crash_msg.setWindowTitle('Startup Error')
+            crash_msg.setText('The application failed to start.')
+            crash_msg.setInformativeText(
+                'Please review the console traceback for details.\n\n'
+                'If you are using Python 3.14+, switch to Python 3.8-3.13.'
+            )
+            crash_msg.setStandardButtons(QMessageBox.Ok)
+            crash_msg.exec()
+        except Exception:
+            pass
+        sys.exit(1)

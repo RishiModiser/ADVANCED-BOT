@@ -39,7 +39,7 @@ This bot includes:
 ## 🚀 Installation
 
 ### Prerequisites
-- Python 3.8 or higher
+- Python 3.8 to 3.13 (3.14+ is not yet fully supported by all dependencies)
 - pip package manager
 
 ### Setup
