@@ -135,6 +135,10 @@ CONSENT_BUTTON_TEXTS= [
 ZOOM_OUT_PERCENT_DEFAULT = 25
 AUTO_GRID_LAYOUT_DEFAULT = True
 AUTO_ZOOM_DEFAULT = True
+ENABLE_SMART_TILING_DEFAULT = True
+COMPACT_WINDOW_WIDTH_DEFAULT = 360
+COMPACT_WINDOW_HEIGHT_DEFAULT = 260
+WINDOW_SPACING_DEFAULT = 0
 
 SPONSORED_SELECTORS = [
     '.promo', '.sponsored-demo', '.featured', '.recommended',
@@ -2877,8 +2881,36 @@ class AutomationWorker(QObject):
         return max(1, worker_count)
 
     def _is_auto_grid_layout_enabled(self) -> bool:
-        """Check whether automatic grid window layout is enabled."""
-        return bool(self.config.get('auto_grid_layout', AUTO_GRID_LAYOUT_DEFAULT))
+        """Check whether smart compact tiling is enabled."""
+        return bool(
+            self.config.get(
+                'enable_smart_tiling',
+                self.config.get('auto_grid_layout', ENABLE_SMART_TILING_DEFAULT),
+            )
+        )
+
+    def _get_compact_window_dimensions(self) -> Tuple[int, int]:
+        """Resolve compact browser window dimensions with safe minimums."""
+        raw_width = self.config.get('compact_window_width', COMPACT_WINDOW_WIDTH_DEFAULT)
+        raw_height = self.config.get('compact_window_height', COMPACT_WINDOW_HEIGHT_DEFAULT)
+        try:
+            width = int(raw_width)
+        except (TypeError, ValueError):
+            width = COMPACT_WINDOW_WIDTH_DEFAULT
+        try:
+            height = int(raw_height)
+        except (TypeError, ValueError):
+            height = COMPACT_WINDOW_HEIGHT_DEFAULT
+        return max(120, width), max(120, height)
+
+    def _get_window_spacing(self) -> int:
+        """Resolve spacing between compact windows."""
+        raw_spacing = self.config.get('window_spacing', WINDOW_SPACING_DEFAULT)
+        try:
+            spacing = int(raw_spacing)
+        except (TypeError, ValueError):
+            spacing = WINDOW_SPACING_DEFAULT
+        return max(0, spacing)
 
     def _is_auto_zoom_enabled(self) -> bool:
         """Check whether automatic zoom-by-worker-count is enabled."""
@@ -2897,12 +2929,13 @@ class AutomationWorker(QObject):
         return 1920, 1080
 
     def _calculate_grid_layout(self, worker_count: int) -> Tuple[int, int]:
-        """Calculate grid columns/rows based on worker count."""
+        """Calculate compact tiling columns/rows based on screen width and window size."""
         count = max(1, worker_count)
-        # For 10 workers, prefer a wide 5x2 layout so all windows remain readable.
-        if count == 10:
-            return 5, 2
-        cols = max(1, math.ceil(math.sqrt(count)))
+        screen_width, _ = self._get_screen_dimensions()
+        window_width, _ = self._get_compact_window_dimensions()
+        spacing = self._get_window_spacing()
+        horizontal_stride = max(1, window_width + spacing)
+        cols = max(1, screen_width // horizontal_stride)
         rows = max(1, math.ceil(count / cols))
         return cols, rows
 
@@ -2910,9 +2943,8 @@ class AutomationWorker(QObject):
         """Get window bounds (x, y, width, height) for a worker slot."""
         count = max(1, worker_count)
         cols, rows = self._calculate_grid_layout(count)
-        screen_width, screen_height = self._get_screen_dimensions()
-        window_width = max(1, screen_width // cols)
-        window_height = max(1, screen_height // rows)
+        window_width, window_height = self._get_compact_window_dimensions()
+        spacing = self._get_window_spacing()
         try:
             safe_worker_index = max(1, int(worker_index))
         except (TypeError, ValueError):
@@ -2920,13 +2952,14 @@ class AutomationWorker(QObject):
         slot_index = safe_worker_index - 1
         row = slot_index // cols
         col = slot_index % cols
-        x = col * window_width
-        y = row * window_height
+        x = col * (window_width + spacing)
+        y = row * (window_height + spacing)
         return {
             'x': x,
             'y': y,
             'width': window_width,
             'height': window_height,
+            'spacing': spacing,
             'row': row,
             'col': col,
             'rows': rows,
@@ -2954,7 +2987,7 @@ class AutomationWorker(QObject):
         worker_count: Optional[int] = None,
         context_name: str = '',
     ):
-        """Resize and position browser window based on grid slot.
+        """Resize and position browser window using top-left compact smart tiling.
 
         Uses the first existing page when present; creates one page only when
         the context has no pages yet.
@@ -3012,7 +3045,8 @@ class AutomationWorker(QObject):
             self.emit_log(
                 f'🧩 Grid layout applied for {context_name}: '
                 f'row {bounds["row"]}, col {bounds["col"]} '
-                f'({bounds["cols"]}x{bounds["rows"]})'
+                f'({bounds["cols"]}x{bounds["rows"]}), '
+                f'{bounds["width"]}x{bounds["height"]}, spacing {bounds["spacing"]}'
             )
 
     def _should_apply_zoom(self) -> bool:
@@ -8011,6 +8045,10 @@ class AppGUI(QMainWindow):
                     'zoom_out_enabled': self.zoom_out_enabled.isChecked(),
                     'zoom_out_percent': ZOOM_OUT_PERCENT_DEFAULT,
                     'auto_grid_layout': AUTO_GRID_LAYOUT_DEFAULT,
+                    'enable_smart_tiling': ENABLE_SMART_TILING_DEFAULT,
+                    'compact_window_width': COMPACT_WINDOW_WIDTH_DEFAULT,
+                    'compact_window_height': COMPACT_WINDOW_HEIGHT_DEFAULT,
+                    'window_spacing': WINDOW_SPACING_DEFAULT,
                     'auto_zoom': AUTO_ZOOM_DEFAULT,
                     'proxy_enabled': self.proxy_enabled_check.isChecked(),
                     'proxy_type': self.proxy_type_combo.currentText(),
@@ -8172,6 +8210,10 @@ class AppGUI(QMainWindow):
                     'zoom_out_enabled': self.zoom_out_enabled.isChecked(),
                     'zoom_out_percent': ZOOM_OUT_PERCENT_DEFAULT,
                     'auto_grid_layout': AUTO_GRID_LAYOUT_DEFAULT,
+                    'enable_smart_tiling': ENABLE_SMART_TILING_DEFAULT,
+                    'compact_window_width': COMPACT_WINDOW_WIDTH_DEFAULT,
+                    'compact_window_height': COMPACT_WINDOW_HEIGHT_DEFAULT,
+                    'window_spacing': WINDOW_SPACING_DEFAULT,
                     'auto_zoom': AUTO_ZOOM_DEFAULT,
                     'content_ratio': self.content_ratio_input.value(),
                     'platforms': selected_platforms,
