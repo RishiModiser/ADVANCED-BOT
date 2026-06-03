@@ -139,6 +139,7 @@ ENABLE_SMART_TILING_DEFAULT = True
 COMPACT_WINDOW_WIDTH_DEFAULT = 360
 COMPACT_WINDOW_HEIGHT_DEFAULT = 260
 WINDOW_SPACING_DEFAULT = 0
+MIN_COMPACT_WINDOW_DIMENSION = 120
 
 SPONSORED_SELECTORS = [
     '.promo', '.sponsored-demo', '.featured', '.recommended',
@@ -2880,8 +2881,12 @@ class AutomationWorker(QObject):
             worker_count = 1
         return max(1, worker_count)
 
-    def _is_auto_grid_layout_enabled(self) -> bool:
-        """Check whether smart compact tiling is enabled."""
+    def _is_smart_tiling_enabled(self) -> bool:
+        """Check whether smart compact tiling is enabled.
+
+        Reads `enable_smart_tiling` first and falls back to legacy
+        `auto_grid_layout` for backward compatibility.
+        """
         return bool(
             self.config.get(
                 'enable_smart_tiling',
@@ -2901,7 +2906,10 @@ class AutomationWorker(QObject):
             height = int(raw_height)
         except (TypeError, ValueError):
             height = COMPACT_WINDOW_HEIGHT_DEFAULT
-        return max(120, width), max(120, height)
+        return (
+            max(MIN_COMPACT_WINDOW_DIMENSION, width),
+            max(MIN_COMPACT_WINDOW_DIMENSION, height),
+        )
 
     def _get_window_spacing(self) -> int:
         """Resolve spacing between compact windows."""
@@ -2929,18 +2937,27 @@ class AutomationWorker(QObject):
         return 1920, 1080
 
     def _calculate_grid_layout(self, worker_count: int) -> Tuple[int, int]:
-        """Calculate compact tiling columns/rows based on screen width and window size."""
+        """Calculate compact tiling columns/rows from top-left packing.
+
+        Columns are derived from available screen width only; rows expand as needed,
+        including beyond visible screen height when worker count is large.
+        """
         count = max(1, worker_count)
         screen_width, _ = self._get_screen_dimensions()
         window_width, _ = self._get_compact_window_dimensions()
         spacing = self._get_window_spacing()
         horizontal_stride = max(1, window_width + spacing)
+        if horizontal_stride > screen_width:
+            self.emit_log(
+                'Compact tiling width exceeds screen width; using a single column layout.',
+                'DEBUG',
+            )
         cols = max(1, screen_width // horizontal_stride)
         rows = max(1, math.ceil(count / cols))
         return cols, rows
 
     def _get_window_bounds_for_worker(self, worker_index: int, worker_count: int) -> Dict[str, int]:
-        """Get window bounds (x, y, width, height) for a worker slot."""
+        """Get compact window bounds for a worker slot in top-left tile order."""
         count = max(1, worker_count)
         cols, rows = self._calculate_grid_layout(count)
         window_width, window_height = self._get_compact_window_dimensions()
@@ -2959,7 +2976,6 @@ class AutomationWorker(QObject):
             'y': y,
             'width': window_width,
             'height': window_height,
-            'spacing': spacing,
             'row': row,
             'col': col,
             'rows': rows,
@@ -2990,9 +3006,10 @@ class AutomationWorker(QObject):
         """Resize and position browser window using top-left compact smart tiling.
 
         Uses the first existing page when present; creates one page only when
-        the context has no pages yet.
+        the context has no pages yet. Rows continue growing downward even if
+        window bounds extend past visible screen height.
         """
-        if not context or not self._is_auto_grid_layout_enabled():
+        if not context or not self._is_smart_tiling_enabled():
             return
 
         resolved_count = worker_count if worker_count is not None else self._get_concurrent_worker_count()
@@ -3041,12 +3058,13 @@ class AutomationWorker(QObject):
         except Exception as position_error:
             self.emit_log(f'Grid window position skipped: {position_error}', 'DEBUG')
 
+        spacing = self._get_window_spacing()
         if context_name:
             self.emit_log(
                 f'🧩 Grid layout applied for {context_name}: '
                 f'row {bounds["row"]}, col {bounds["col"]} '
                 f'({bounds["cols"]}x{bounds["rows"]}), '
-                f'{bounds["width"]}x{bounds["height"]}, spacing {bounds["spacing"]}'
+                f'{bounds["width"]}x{bounds["height"]}, spacing {spacing}'
             )
 
     def _should_apply_zoom(self) -> bool:
