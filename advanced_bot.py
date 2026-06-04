@@ -2963,6 +2963,19 @@ class AutomationWorker(QObject):
     def _get_window_bounds_for_worker(self, worker_index: int, worker_count: int) -> Dict[str, int]:
         """Get compact window bounds for a worker slot in top-left tile order."""
         count = max(1, worker_count)
+        if count == 1:
+            screen_width, screen_height = self._get_screen_dimensions()
+            return {
+                'x': 0,
+                'y': 0,
+                'width': screen_width,
+                'height': screen_height,
+                'row': 0,
+                'col': 0,
+                'rows': 1,
+                'cols': 1,
+            }
+
         cols, rows = self._calculate_grid_layout(count)
         window_width, window_height = self._get_compact_window_dimensions()
         spacing = self._get_window_spacing()
@@ -2989,6 +3002,8 @@ class AutomationWorker(QObject):
     def _get_auto_zoom_factor(self, worker_count: int) -> float:
         """Return adaptive zoom factor based on active worker count."""
         count = max(1, worker_count)
+        if count == 1:
+            return 0.80
         # Product requirement: 10 or more workers should use 30%.
         if count >= 10:
             return 0.30
