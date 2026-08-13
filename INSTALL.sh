@@ -1,6 +1,6 @@
 #!/bin/bash
 # ========================================================
-# ADVANCED-BOT - ONE-TIME SETUP / INSTALLER
+# HumanexBot Version 5.0 - ONE-TIME SETUP / INSTALLER
 # ========================================================
 # Run this file ONCE to install all dependencies.
 # After setup, run ./RUN.sh to start the bot instantly!
@@ -18,7 +18,7 @@ fi
 
 echo ""
 echo "========================================================"
-echo "|      ADVANCED-BOT - One-Time Setup                  |"
+echo "|      HumanexBot Version 5.0 - One-Time Setup                  |"
 echo "|                                                      |"
 echo "|  Run this once, then use RUN.sh for instant start   |"
 echo "========================================================"

@@ -93,7 +93,7 @@ def main():
     print("✓ Browser installation completed successfully!")
     print("=" * 60)
     print()
-    print("You can now run the bot with: python advanced_bot.py")
+    print("You can now run the bot with: python humanexbot_v5.py")
     print()
 
     return 0

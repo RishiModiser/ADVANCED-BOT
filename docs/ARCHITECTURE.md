@@ -331,9 +331,9 @@ Layer 5: Ratio-Based Limiting
 ## File Structure
 
 ```
-ADVANCED-BOT/
+HumanexBot Version 5.0/
 │
-├── advanced_bot.py              # Main application (1,289 lines)
+├── humanexbot_v5.py              # Main application (1,289 lines)
 │   ├── Constants (lines 1-90)
 │   ├── LogManager (lines 92-130)
 │   ├── FingerprintManager (lines 135-180)

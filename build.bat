@@ -1,16 +1,16 @@
 @echo off
 REM ========================================================
-REM ADVANCED-BOT - Build Script (Windows)
+REM HumanexBot Version 5.0 - Build Script (Windows)
 REM ========================================================
-REM Builds a single executable from advanced_bot.py
+REM Builds a single executable from humanexbot_v5.py
 REM Usage: build.bat
 REM ========================================================
 
-title ADVANCED-BOT - Build
+title HumanexBot Version 5.0 - Build
 
 echo.
 echo  ========================================================
-echo  ^|      ADVANCED-BOT - Build Script                    ^|
+echo  ^|      HumanexBot Version 5.0 - Build Script                    ^|
 echo  ========================================================
 echo.
 
@@ -57,7 +57,7 @@ echo        This may take several minutes...
 echo.
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
-%PYTHON_CMD% -m PyInstaller --clean --noconfirm advanced_bot.spec
+%PYTHON_CMD% -m PyInstaller --clean --noconfirm humanexbot_v5.spec
 
 if errorlevel 1 (
     echo.
@@ -67,12 +67,12 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if exist "dist\advanced_bot.exe" (
+if exist "dist\humanexbot_v5.exe" (
     echo.
     echo  ========================================================
     echo  ^|      BUILD SUCCESSFUL!                              ^|
     echo  ^|                                                      ^|
-    echo  ^|      Executable: dist\advanced_bot.exe              ^|
+    echo  ^|      Executable: dist\humanexbot_v5.exe             ^|
     echo  ========================================================
     echo.
 ) else (

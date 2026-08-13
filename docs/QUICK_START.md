@@ -1,4 +1,4 @@
-# ⚡ Quick Start - ADVANCED-BOT
+# ⚡ Quick Start - HumanexBot Version 5.0
 
 ## 🚀 Running the Application
 
@@ -30,7 +30,7 @@ RUN.bat
 
 Or run directly with Python:
 ```bash
-python advanced_bot.py
+python humanexbot_v5.py
 ```
 
 ---
@@ -49,7 +49,7 @@ build.bat
 chmod +x build.sh && ./build.sh
 ```
 
-The resulting executable will be at `dist/advanced_bot` (or `dist/advanced_bot.exe` on Windows).
+The resulting executable will be at `dist/humanexbot_v5` (or `dist/humanexbot_v5.exe` on Windows).
 
 ---
 

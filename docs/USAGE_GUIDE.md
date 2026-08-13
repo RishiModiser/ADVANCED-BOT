@@ -11,15 +11,15 @@
 
 2. **Clone and Setup**
    ```bash
-   git clone https://github.com/RishiModiser/ADVANCED-BOT.git
-   cd ADVANCED-BOT
+   git clone https://github.com/RishiModiser/HumanexBot Version 5.0.git
+   cd HumanexBot Version 5.0
    pip install -r requirements.txt
    playwright install chromium
    ```
 
 3. **Run the Application**
    ```bash
-   python advanced_bot.py
+   python humanexbot_v5.py
    ```
 
 ## GUI Walkthrough
@@ -324,7 +324,7 @@ sudo apt-get install libegl1 libxkbcommon-x11-0
 
 ### Adding Custom Consent Button Text
 
-Edit `advanced_bot.py`:
+Edit `humanexbot_v5.py`:
 ```python
 CONSENT_BUTTON_TEXTS = [
     'accept', 'accept all', 'agree', 'allow all',
@@ -334,7 +334,7 @@ CONSENT_BUTTON_TEXTS = [
 
 ### Adding Custom Sponsored Selectors
 
-Edit `advanced_bot.py`:
+Edit `humanexbot_v5.py`:
 ```python
 SPONSORED_SELECTORS = [
     '.promo', '.sponsored-demo', '.featured',

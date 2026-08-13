@@ -1,4 +1,4 @@
-# Humanex Version 5 - Advanced Simulation Traffic
+# HumanexBot Version 5.0
 
 ## 🎯 Overview
 
@@ -20,7 +20,7 @@ This bot includes:
 - ⏱️ **Rate Limiting** - Prevents abuse and ensures stability
 - 🎭 **Secure Logging** - Auto-masks IPs, passwords, and sensitive data
 
-📖 See [SECURITY_FEATURES.md](SECURITY_FEATURES.md) for complete documentation.
+📖 See [SECURITY_FEATURES.md](docs/SECURITY_FEATURES.md) for complete documentation.
 
 ## ⚠️ Important Safety Notice
 
@@ -77,7 +77,7 @@ python setup_browser.py
 ### Run the Application
 
 ```bash
-python advanced_bot.py
+python humanexbot_v5.py
 ```
 
 ### Build an Executable
@@ -96,10 +96,10 @@ chmod +x build.sh && ./build.sh
 
 Or run PyInstaller directly:
 ```bash
-pyinstaller --clean --noconfirm advanced_bot.spec
+pyinstaller --clean --noconfirm humanexbot_v5.spec
 ```
 
-The resulting executable will be at `dist/advanced_bot` (or `dist/advanced_bot.exe` on Windows).
+The resulting executable will be at `dist/humanexbot_v5` (or `dist/humanexbot_v5.exe` on Windows).
 
 ### Troubleshooting
 
@@ -266,7 +266,7 @@ The application provides a modern, fully responsive GUI with improved navigation
 ## 📁 Project Structure
 
 ```
-advanced_bot.py        # Main application
+humanexbot_v5.py        # Main application
 security_manager.py    # Security utilities
 setup_browser.py       # Browser setup helper
 user_agents.py         # User agent rotation

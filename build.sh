@@ -1,8 +1,8 @@
 #!/bin/bash
 # ========================================================
-# ADVANCED-BOT - Build Script (Linux/macOS)
+# HumanexBot Version 5.0 - Build Script (Linux/macOS)
 # ========================================================
-# Builds a single executable from advanced_bot.py
+# Builds a single executable from humanexbot_v5.py
 # Usage: chmod +x build.sh && ./build.sh
 # ========================================================
 
@@ -10,7 +10,7 @@ set -e
 
 echo ""
 echo "========================================================"
-echo "|      ADVANCED-BOT - Build Script                    |"
+echo "|      HumanexBot Version 5.0 - Build Script                    |"
 echo "========================================================"
 echo ""
 
@@ -43,15 +43,15 @@ echo "[3/3] Building executable..."
 echo "      This may take several minutes..."
 echo ""
 rm -rf build dist
-"$PYTHON_CMD" -m PyInstaller --clean --noconfirm advanced_bot.spec
+"$PYTHON_CMD" -m PyInstaller --clean --noconfirm humanexbot_v5.spec
 
-if [ -f "dist/advanced_bot" ]; then
-    chmod +x "dist/advanced_bot"
+if [ -f "dist/humanexbot_v5" ]; then
+    chmod +x "dist/humanexbot_v5"
     echo ""
     echo "========================================================"
     echo "|      BUILD SUCCESSFUL!                              |"
     echo "|                                                      |"
-    echo "|      Executable: dist/advanced_bot                  |"
+    echo "|      Executable: dist/humanexbot_v5                  |"
     echo "========================================================"
     echo ""
 else

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Advanced Security Manager for ADVANCED-BOT
+Advanced Security Manager for HumanexBot Version 5.0
 Provides enterprise-grade protection against cracking, tampering, and unauthorized use.
 """
 
@@ -41,7 +41,7 @@ class SecurityManager:
     - Secure logging
     """
     
-    def __init__(self, app_name: str = "ADVANCED-BOT"):
+    def __init__(self, app_name: str = "HumanexBot Version 5.0"):
         self.app_name = app_name
         self.security_dir = Path.home() / f".{app_name.lower()}_security"
         self.security_dir.mkdir(exist_ok=True, parents=True)
@@ -426,7 +426,7 @@ class RateLimiter:
 
 
 # Convenience functions for easy integration
-def create_security_manager(app_name: str = "ADVANCED-BOT") -> SecurityManager:
+def create_security_manager(app_name: str = "HumanexBot Version 5.0") -> SecurityManager:
     """Create and initialize security manager."""
     return SecurityManager(app_name)
 

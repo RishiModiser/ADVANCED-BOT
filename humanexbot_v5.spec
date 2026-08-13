@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 a = Analysis(
-    ['advanced_bot.py'],
+    ['humanexbot_v5.py'],
     pathex=[],
     binaries=[],
     datas=[],
@@ -32,7 +32,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='advanced_bot',
+    name='humanexbot_v5',
     debug=False,
     strip=False,
     upx=True,

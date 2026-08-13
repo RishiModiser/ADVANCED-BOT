@@ -1,6 +1,6 @@
 # Advanced Security Features
 
-This document describes the advanced security features implemented in ADVANCED-BOT to protect against cracking, tampering, and unauthorized use.
+This document describes the advanced security features implemented in HumanexBot Version 5.0 to protect against cracking, tampering, and unauthorized use.
 
 ## 🛡️ Security Overview
 
@@ -161,7 +161,7 @@ After:  Proxy: http://192.*.*.100:8080 [AUTH]
 from security_manager import SecurityManager
 
 # Initialize security manager
-security = SecurityManager(app_name="ADVANCED-BOT")
+security = SecurityManager(app_name="HumanexBot Version 5.0")
 ```
 
 ### Configuration Encryption
@@ -183,7 +183,7 @@ decrypted = security.decrypt_config()
 ```python
 # Verify file integrity
 files_to_check = [
-    'advanced_bot.py',
+    'humanexbot_v5.py',
     'security_manager.py'
 ]
 result = security.verify_integrity(files_to_check)

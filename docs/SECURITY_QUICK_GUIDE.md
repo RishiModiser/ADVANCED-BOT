@@ -4,7 +4,7 @@
 
 ### کیا شامل ہے؟
 
-آپ کے ADVANCED-BOT میں اب انٹرپرائز گریڈ سیکیورٹی شامل کر دی گئی ہے:
+آپ کے HumanexBot Version 5.0 میں اب انٹرپرائز گریڈ سیکیورٹی شامل کر دی گئی ہے:
 
 #### 🔒 انکرپشن
 - **AES-256**: انتہائی مضبوط انکرپشن
@@ -29,7 +29,7 @@
 #### پہلی بار
 ```bash
 pip install -r requirements.txt
-python advanced_bot.py
+python humanexbot_v5.py
 ```
 - کوئی اضافی ترتیب کی ضرورت نہیں
 
@@ -51,7 +51,7 @@ python advanced_bot.py
 
 ### क्या शामिल है?
 
-आपके ADVANCED-BOT में अब एंटरप्राइज ग्रेड सुरक्षा जोड़ दी गई है:
+आपके HumanexBot Version 5.0 में अब एंटरप्राइज ग्रेड सुरक्षा जोड़ दी गई है:
 
 #### 🔒 एन्क्रिप्शन
 - **AES-256**: बेहद मजबूत एन्क्रिप्शन
@@ -76,7 +76,7 @@ python advanced_bot.py
 #### पहली बार
 ```bash
 pip install -r requirements.txt
-python advanced_bot.py
+python humanexbot_v5.py
 ```
 - कोई अतिरिक्त सेटअप की जरूरत नहीं
 
@@ -98,7 +98,7 @@ python advanced_bot.py
 
 ### What's Included?
 
-Your ADVANCED-BOT now has enterprise-grade security:
+Your HumanexBot Version 5.0 now has enterprise-grade security:
 
 #### 🔒 Encryption
 - **AES-256**: Military-grade encryption
@@ -123,7 +123,7 @@ Your ADVANCED-BOT now has enterprise-grade security:
 #### First Time
 ```bash
 pip install -r requirements.txt
-python advanced_bot.py
+python humanexbot_v5.py
 ```
 - No additional setup required
 

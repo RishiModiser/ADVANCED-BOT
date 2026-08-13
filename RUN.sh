@@ -1,8 +1,8 @@
 #!/bin/bash
 # ========================================================
-# ADVANCED-BOT - ONE-CLICK LAUNCHER
+# HumanexBot Version 5.0 - ONE-CLICK LAUNCHER
 # ========================================================
-# Run this file to start ADVANCED-BOT instantly.
+# Run this file to start HumanexBot Version 5.0 instantly.
 #
 # FIRST TIME? Run INSTALL.sh once to set everything up,
 # then use this file for instant 1-click launch!
@@ -15,7 +15,7 @@ cd "$SCRIPT_DIR"
 
 echo ""
 echo "========================================================"
-echo "|      ADVANCED-BOT - Starting...                     |"
+echo "|      HumanexBot Version 5.0 - Starting...                     |"
 echo "========================================================"
 echo ""
 
@@ -59,5 +59,5 @@ if [ ! -f ".bot_ready" ]; then
     echo ""
 fi
 
-"$PYTHON_CMD" advanced_bot.py
+"$PYTHON_CMD" humanexbot_v5.py
 exit $?
