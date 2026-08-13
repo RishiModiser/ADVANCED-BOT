@@ -80,6 +80,11 @@ python setup_browser.py
 python humanexbot_v5.py
 ```
 
+For one-click startup with first-run auto-setup:
+
+**Windows:** `RUN.bat`  
+**Linux/macOS:** `./RUN.sh`
+
 ### Build an Executable
 
 To build a single portable executable:
@@ -100,6 +105,21 @@ pyinstaller --clean --noconfirm humanexbot_v5.spec
 ```
 
 The resulting executable will be at `dist/humanexbot_v5` (or `dist/humanexbot_v5.exe` on Windows).
+
+### Create a Desktop Installer (Windows)
+
+To create a proper Windows installer (Next/Next/Finish + Start Menu/Desktop shortcut):
+
+1. Install Inno Setup 6: https://jrsoftware.org/isinfo.php
+2. Run:
+   ```bat
+   build_installer.bat
+   ```
+
+Installer output:
+- `installer/output/HumanexBot-Setup-v5.0.exe`
+
+For no terminal window, launch the installed app (or `dist/humanexbot_v5.exe`) instead of `RUN.bat`.
 
 ### Troubleshooting
 
@@ -273,6 +293,8 @@ user_agents.py         # User agent rotation
 requirements.txt       # Python dependencies
 build.bat              # Windows build script
 build.sh               # Linux/macOS build script
+build_installer.bat    # Windows installer build script (Inno Setup)
+installer/HumanexBot.iss # Inno Setup installer definition
 ```
 
 ## 📊 System Requirements
