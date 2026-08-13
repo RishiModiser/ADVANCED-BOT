@@ -54,3 +54,6 @@ profiles/
 
 # Local setup marker (created by INSTALL.bat / INSTALL.sh)
 .bot_ready
+
+# Installer build output
+installer/output/

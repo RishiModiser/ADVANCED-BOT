@@ -51,6 +51,24 @@ chmod +x build.sh && ./build.sh
 
 The resulting executable will be at `dist/humanexbot_v5` (or `dist/humanexbot_v5.exe` on Windows).
 
+> `dist/humanexbot_v5.exe` runs as a desktop app with no terminal window.
+
+---
+
+## 📦 Create a Windows Installer (Optional)
+
+For a full install flow (Next/Next/Finish + shortcut creation):
+
+1. Install Inno Setup 6: https://jrsoftware.org/isinfo.php
+2. Run:
+
+```bat
+build_installer.bat
+```
+
+Installer output:
+- `installer/output/HumanexBot-Setup-v5.0.exe`
+
 ---
 
 ## 🔧 Need Help?
