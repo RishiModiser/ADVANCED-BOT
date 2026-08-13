@@ -3515,6 +3515,14 @@ class AutomationWorker(QObject):
             target_domain_clean = parsed.netloc if parsed.netloc else parsed.path.split('/')[0]
         else:
             target_domain_clean = target_domain.split('/')[0]  # Remove any path after domain
+
+        def _is_domain_or_subdomain(hostname: Optional[str], domain: str) -> bool:
+            """Return True when hostname exactly matches domain or its subdomain."""
+            if not hostname:
+                return False
+            host = hostname.lower().strip('.')
+            target = domain.lower().strip('.')
+            return host == target or host.endswith(f'.{target}')
         
         self.emit_log(f'[INFO] Search visit using {search_engine}')
         self.emit_log(f'[INFO] Keyword: "{keyword}" | Target: "{target_domain_clean}"')
@@ -3720,14 +3728,14 @@ class AutomationWorker(QObject):
                         try:
                             parsed_href = urlparse(href)
                             # Detect Bing redirects (e.g., https://www.bing.com/ck/a?...)
-                            is_bing_redirect = (parsed_href.netloc.endswith('bing.com') or parsed_href.netloc == 'bing.com') and '/ck/a' in parsed_href.path
+                            is_bing_redirect = _is_domain_or_subdomain(parsed_href.hostname, 'bing.com') and '/ck/a' in parsed_href.path
                             # Detect Yahoo redirects (e.g., https://r.search.yahoo.com/... or similar)
                             # NOTE: CodeQL may flag this as incomplete URL sanitization, but this is safe because:
                             # 1. This is only used to detect Yahoo redirect URLs for extraction, not for security decisions
                             # 2. We use proper urlparse() to check the netloc (domain) field first
                             # 3. We also require specific paths (/cbclk or RU=) which are unique to Yahoo redirects
                             # 4. False positives (non-Yahoo URLs detected as Yahoo) would just skip extraction, causing no harm
-                            is_yahoo_redirect = ('yahoo.com' in parsed_href.netloc) and ('/cbclk' in parsed_href.path or '/RU=' in href or 'RU=' in href)
+                            is_yahoo_redirect = _is_domain_or_subdomain(parsed_href.hostname, 'yahoo.com') and ('/cbclk' in parsed_href.path or '/RU=' in href or 'RU=' in href)
                         except:
                             is_bing_redirect = False
                             is_yahoo_redirect = False
@@ -3767,8 +3775,8 @@ class AutomationWorker(QObject):
                     # 4. False positives would just skip extraction, causing no security impact
                     try:
                         parsed_href = urlparse(href)
-                        is_bing_redirect = (parsed_href.netloc.endswith('bing.com') or parsed_href.netloc == 'bing.com') and '/ck/a' in parsed_href.path
-                        is_yahoo_redirect = ('yahoo.com' in parsed_href.netloc) and ('/cbclk' in parsed_href.path or 'RU=' in href)
+                        is_bing_redirect = _is_domain_or_subdomain(parsed_href.hostname, 'bing.com') and '/ck/a' in parsed_href.path
+                        is_yahoo_redirect = _is_domain_or_subdomain(parsed_href.hostname, 'yahoo.com') and ('/cbclk' in parsed_href.path or 'RU=' in href)
                     except:
                         is_bing_redirect = False
                         is_yahoo_redirect = False
