@@ -138,7 +138,7 @@ CONSENT_BUTTON_TEXTS= [
 
 ZOOM_OUT_PERCENT_DEFAULT = 25
 AUTO_GRID_LAYOUT_DEFAULT = True
-AUTO_ZOOM_DEFAULT = True
+AUTO_ZOOM_DEFAULT = False
 ENABLE_SMART_TILING_DEFAULT = True
 COMPACT_WINDOW_WIDTH_DEFAULT = 360
 COMPACT_WINDOW_HEIGHT_DEFAULT = 260
@@ -3075,7 +3075,7 @@ class AutomationWorker(QObject):
         """Check whether any zoom mode should be applied."""
         return bool(
             self.config.get('zoom_out_enabled', False)
-            or self.config.get('auto_zoom', AUTO_ZOOM_DEFAULT)
+            or self._is_auto_zoom_enabled()
         )
 
     def _get_zoom_out_factor(self, worker_count: Optional[int] = None) -> float:
