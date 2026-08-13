@@ -1,10 +1,10 @@
-# Advanced Bot - Feature Overview
+# HumanexBot Version 5.0 - Feature Overview
 
 ## Application Architecture (After Enhancements)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                   ADVANCED BOT RPA SYSTEM                        │
+│                   HumanexBot Version 5.0 RPA SYSTEM                        │
 │                     (Always Visible Mode)                        │
 └─────────────────────────────────────────────────────────────────┘
 
@@ -261,7 +261,7 @@ admin:secret@proxy.local:1080
 
 ## Files Modified
 
-1. **advanced_bot.py**
+1. **humanexbot_v5.py**
    - Added 592 lines (+46%)
    - Enhanced 4 classes
    - Added 13 new methods

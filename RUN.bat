@@ -1,19 +1,19 @@
 @echo off
 REM ========================================================
-REM ADVANCED-BOT - ONE-CLICK LAUNCHER
+REM HumanexBot Version 5.0 - ONE-CLICK LAUNCHER
 REM ========================================================
-REM Double-click this file to start ADVANCED-BOT instantly.
+REM Double-click this file to start HumanexBot Version 5.0 instantly.
 REM
 REM FIRST TIME? Run INSTALL.bat once to set everything up,
 REM then use this file for instant 1-click launch!
 REM ========================================================
 
-title ADVANCED-BOT
+title HumanexBot Version 5.0
 
 color 0A
 echo.
 echo  ========================================================
-echo  ^|      ADVANCED-BOT - Starting...                     ^|
+echo  ^|      HumanexBot Version 5.0 - Starting...                     ^|
 echo  ========================================================
 echo.
 
@@ -58,5 +58,5 @@ if not exist ".bot_ready" (
     echo.
 )
 
-%PYTHON_CMD% advanced_bot.py
+%PYTHON_CMD% humanexbot_v5.py
 exit /b %errorlevel%

@@ -1,12 +1,12 @@
 @echo off
 REM ========================================================
-REM ADVANCED-BOT - ONE-TIME SETUP / INSTALLER
+REM HumanexBot Version 5.0 - ONE-TIME SETUP / INSTALLER
 REM ========================================================
 REM Run this file ONCE to install all dependencies.
 REM After setup, double-click RUN.bat to start the bot instantly!
 REM ========================================================
 
-title ADVANCED-BOT - Setup
+title HumanexBot Version 5.0 - Setup
 set NO_PAUSE=
 if /I "%~1"=="--no-pause" set NO_PAUSE=1
 
@@ -14,7 +14,7 @@ color 0A
 echo.
 echo  ========================================================
 echo  ^|                                                      ^|
-echo  ^|      ADVANCED-BOT - One-Time Setup                  ^|
+echo  ^|      HumanexBot Version 5.0 - One-Time Setup                  ^|
 echo  ^|                                                      ^|
 echo  ^|  Run this once, then use RUN.bat for instant start  ^|
 echo  ^|                                                      ^|
