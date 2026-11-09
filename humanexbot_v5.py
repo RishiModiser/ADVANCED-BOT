@@ -92,7 +92,7 @@ from PySide6.QtWidgets import (
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
     QMessageBox, QFileDialog, QScrollArea, QListWidgetItem, QFormLayout,
     QAbstractItemView, QRadioButton, QButtonGroup, QGridLayout, QStackedWidget,
-    QSlider
+    QSlider, QSizePolicy
 )
 from PySide6.QtCore import Qt, QThread, Signal, QObject
 from PySide6.QtGui import QFont, QColor, QPalette, QPixmap, QPainter
@@ -6213,8 +6213,21 @@ class AppGUI(QMainWindow):
     def init_ui(self):
         """Initialize the user interface."""
         self.setWindowTitle('HumanexBot Version 5.0')
-        self.setGeometry(100, 100, 1600, 900)
-        self.setMinimumSize(1200, 700)  # Set minimum size for responsiveness
+        screen = QApplication.primaryScreen()
+        available = screen.availableGeometry() if screen else None
+        if available:
+            width = min(1600, max(640, int(available.width() * 0.88)))
+            height = min(1000, max(500, int(available.height() * 0.88)))
+            left = available.left() + max(0, (available.width() - width) // 2)
+            top = available.top() + max(0, (available.height() - height) // 2)
+            self.setGeometry(left, top, width, height)
+            self.setMinimumSize(
+                min(900, max(640, available.width() - 24)),
+                min(620, max(500, available.height() - 24)),
+            )
+        else:
+            self.setGeometry(100, 100, 1280, 760)
+            self.setMinimumSize(760, 520)
         
         # Apply modern color scheme
         self.setStyleSheet("""
@@ -6348,11 +6361,14 @@ class AppGUI(QMainWindow):
         
         # Add content panel to layout
         main_layout.addWidget(self.content_panel)
+        main_layout.setStretch(0, 0)
+        main_layout.setStretch(1, 1)
     
     def create_sidebar(self) -> QWidget:
         """Create modern sidebar navigation."""
         sidebar = QWidget()
-        sidebar.setFixedWidth(220)
+        sidebar.setMinimumWidth(180)
+        sidebar.setMaximumWidth(240)
         sidebar.setStyleSheet("""
             QWidget {
                 background-color: #2c3e50;
@@ -6464,7 +6480,7 @@ class AppGUI(QMainWindow):
         """Create content panel with stacked widget."""
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(12, 12, 12, 12)
         
         # Stacked widget to hold different sections
         self.stacked_widget = QStackedWidget()
@@ -7510,7 +7526,9 @@ class AppGUI(QMainWindow):
         
         self.action_toolbox = QListWidget()
         self.action_toolbox.setDragEnabled(True)
-        self.action_toolbox.setMaximumWidth(200)
+        self.action_toolbox.setMinimumWidth(140)
+        self.action_toolbox.setMaximumWidth(220)
+        self.action_toolbox.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.action_toolbox.setStyleSheet("""
             QListWidget {
                 background-color: #f8f9fa;
@@ -7556,7 +7574,7 @@ class AppGUI(QMainWindow):
             self.action_toolbox.addItem(item)
         
         toolbox_layout.addWidget(self.action_toolbox)
-        visual_layout.addWidget(toolbox_panel)
+        visual_layout.addWidget(toolbox_panel, 1)
         
         # Center: Workflow List
         workflow_panel = QWidget()
@@ -7616,7 +7634,7 @@ class AppGUI(QMainWindow):
         workflow_btn_layout.addWidget(clear_workflow_btn)
         
         workflow_layout.addLayout(workflow_btn_layout)
-        visual_layout.addWidget(workflow_panel)
+        visual_layout.addWidget(workflow_panel, 3)
         
         # Right: Step Configuration
         config_panel = QWidget()
@@ -7677,10 +7695,11 @@ class AppGUI(QMainWindow):
         config_scroll = QScrollArea()
         config_scroll.setWidget(self.step_config_widget)
         config_scroll.setWidgetResizable(True)
-        config_scroll.setMaximumWidth(300)
+        config_scroll.setMinimumWidth(220)
+        config_scroll.setMaximumWidth(340)
         
         config_layout.addWidget(config_scroll)
-        visual_layout.addWidget(config_panel)
+        visual_layout.addWidget(config_panel, 2)
         
         script_tabs.addTab(visual_widget, 'Visual Builder')
         
@@ -7776,6 +7795,10 @@ class AppGUI(QMainWindow):
     
     def create_control_tab(self) -> QWidget:
         """Create control tab for automation controls."""
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.NoFrame)
+
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setSpacing(20)
@@ -7907,10 +7930,15 @@ class AppGUI(QMainWindow):
         
         layout.addStretch()
         
-        return widget
+        scroll_area.setWidget(widget)
+        return scroll_area
     
     def create_logs_tab(self) -> QWidget:
         """Create logs tab for viewing automation logs."""
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.NoFrame)
+
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setSpacing(15)
@@ -7929,7 +7957,7 @@ class AppGUI(QMainWindow):
         self.log_display = QTextEdit()
         self.log_display.setReadOnly(True)
         self.log_display.setStyleSheet('background-color: #1e1e1e; color: white; font-family: monospace; font-size: 12px;')
-        self.log_display.setMinimumHeight(400)
+        self.log_display.setMinimumHeight(160)
         logs_layout.addWidget(self.log_display)
         
         # Clear logs button
@@ -8001,7 +8029,8 @@ class AppGUI(QMainWindow):
         
         layout.addWidget(footer_widget)
         
-        return widget
+        scroll_area.setWidget(widget)
+        return scroll_area
     
     def start_automation(self):
         """Start the automation process."""
