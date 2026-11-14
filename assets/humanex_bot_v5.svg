@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="45%" r="52%">
+      <stop offset="0" stop-color="#151a16"/>
+      <stop offset="1" stop-color="#000000"/>
+    </radialGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <circle cx="512" cy="512" r="458" fill="url(#bg)" stroke="#35ff55" stroke-width="12" filter="url(#glow)"/>
+  <circle cx="512" cy="512" r="430" fill="none" stroke="#154d20" stroke-width="4"/>
+  <g fill="#22e642" stroke="#35ff55" stroke-width="4">
+    <path d="M330 260h108v214c0 38-15 69-49 90l-59 36z"/>
+    <path d="M586 260h108v340c0 36-16 66-49 90l-59 36z"/>
+    <path d="M337 515c53-55 115-75 185-61 75 15 132-7 172-66-12 77-55 124-128 142-72 18-142 2-229 65z"/>
+  </g>
+  <g fill="none" stroke="#35ff55" stroke-width="11">
+    <rect x="442" y="426" width="140" height="92" rx="45"/>
+    <line x1="512" y1="426" x2="512" y2="393"/>
+    <circle cx="512" cy="383" r="10" fill="#35ff55"/>
+  </g>
+  <circle cx="480" cy="470" r="12" fill="#35ff55"/>
+  <circle cx="544" cy="470" r="12" fill="#35ff55"/>
+  <text x="512" y="710" text-anchor="middle" fill="#ffffff" font-family="Arial,sans-serif" font-size="94" font-weight="700" letter-spacing="8">HUMANEX</text>
+  <text x="512" y="790" text-anchor="middle" fill="#35ff55" font-family="Arial,sans-serif" font-size="46" font-weight="700" letter-spacing="22">BOT  v5.0</text>
+  <text x="512" y="850" text-anchor="middle" fill="#ffffff" font-family="Arial,sans-serif" font-size="20" letter-spacing="8">SIMULATE  ANALYZE  AUTOMATE</text>
+</svg>

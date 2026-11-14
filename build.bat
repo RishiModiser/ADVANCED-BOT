@@ -6,11 +6,11 @@ REM Builds a single executable from humanexbot_v5.py
 REM Usage: build.bat
 REM ========================================================
 
-title HumanexBot Version 5.0 - Build
+title HUMANEX BOT v5.0 - Build
 
 echo.
 echo  ========================================================
-echo  ^|      HumanexBot Version 5.0 - Build Script                    ^|
+echo  ^|      HUMANEX BOT v5.0 - Build Script                          ^|
 echo  ========================================================
 echo.
 

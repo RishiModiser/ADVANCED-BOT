@@ -10,7 +10,7 @@ set -e
 
 echo ""
 echo "========================================================"
-echo "|      HumanexBot Version 5.0 - Build Script                    |"
+echo "|      HUMANEX BOT v5.0 - Build Script                          |"
 echo "========================================================"
 echo ""
 

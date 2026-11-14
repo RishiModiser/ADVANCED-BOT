@@ -1,4 +1,4 @@
-# HumanexBot Version 5.0
+# HUMANEX BOT v5.0
 
 ## 🎯 Overview
 
@@ -75,6 +75,13 @@ python setup_browser.py
 ```
 
 ### Run the Application
+
+Before launching, configure the PHP license verification endpoint. The app
+will not open the dashboard without successful authorization:
+
+```bash
+export HUMANEX_LICENSE_API_URL="https://your-license-server.example/api/verify"
+```
 
 ```bash
 python humanexbot_v5.py
