@@ -24,6 +24,18 @@ dist/
   README_INSTALLATION.txt
 ```
 
+## Generate a GUI reference PDF
+
+After installing the Python dependencies, generate a visual reference of the
+complete main GUI with:
+
+```bash
+python generate_gui_pdf.py --output humanexbot_gui.pdf
+```
+
+This command renders each navigable main section, including scrollable content,
+without requiring activation or managed browser components.
+
 The installer is the customer deliverable. The executable is windowed and does
 not open a console. Browser payloads are embedded in the packaged application;
 user settings, activation data, logs, and profiles remain under the user's

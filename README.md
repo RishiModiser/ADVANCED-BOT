@@ -153,6 +153,19 @@ python -m unittest discover -s tests -v
 
 The application provides a modern, fully responsive GUI with improved navigation. All features are accessible from the left sidebar:
 
+### Export a visual PDF of the GUI
+
+To create a visual PDF containing the complete main window sections, run:
+
+```bash
+python generate_gui_pdf.py --output humanexbot_gui.pdf
+```
+
+The exporter renders the six main sections in sidebar order: Website Traffic,
+Traffic Behaviour, Proxy Settings, RPA Script Creator, Control, and Logs. It
+does not open the activation flow, browser setup, or transient dialogs, and it
+can run on a build machine without a display server.
+
 #### Navigation Sections
 
 1. **🔧 Website Traffic**
