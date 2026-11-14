@@ -14,7 +14,7 @@
    git clone https://github.com/RishiModiser/HumanexBot Version 5.0.git
    cd HumanexBot Version 5.0
    pip install -r requirements.txt
-   playwright install chromium
+   playwright install chromium firefox
    ```
 
 3. **Run the Application**
@@ -262,7 +262,7 @@ Create and manage custom automation scripts:
 
 **Solution:**
 ```bash
-playwright install chromium
+playwright install chromium firefox
 ```
 
 ### Issue: GUI doesn't open

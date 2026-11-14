@@ -39,6 +39,7 @@ try:
     )
     from PySide6.QtCore import Qt, QThread, Signal, QObject
     from PySide6.QtGui import QFont, QColor, QPalette, QPixmap, QIcon
+    from PySide6.QtWidgets import QSplashScreen
 except ImportError as exc:
     raise RuntimeError(
         "PySide6 is not installed. Run INSTALL.sh or "
@@ -73,20 +74,16 @@ from activation_dialog import ActivationDialog
 from startup_diagnostics import configure_startup_logging, log_startup_status
 from proxy_utils import parse_proxy
 from script_utils import validate_rpa_script_data
-
-
-def resource_path(*parts: str) -> Path:
-    """Resolve assets in source checkouts and PyInstaller one-file bundles."""
-    root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-    return root.joinpath(*parts)
-
-
-def app_data_path(*parts: str) -> Path:
-    """Resolve writable per-user data outside PyInstaller's temporary folder."""
-    root = Path(os.environ.get("APPDATA", Path.home() / ".humanexbot"))
-    root = root / "HumanexBot"
-    root.mkdir(parents=True, exist_ok=True)
-    return root.joinpath(*parts)
+from app_runtime import (
+    SUPPORTED_BROWSERS,
+    SingleInstance,
+    app_data_path,
+    browser_installation_status,
+    configure_browser_environment,
+    install_missing_browsers,
+    layout_mode,
+    resource_path,
+)
 
 
 # ============================================================================
@@ -368,7 +365,7 @@ class LogManager:
     
     def _setup_file_logger(self):
         """Setup file-based logging."""
-        log_dir = Path('logs')
+        log_dir = app_data_path('logs')
         log_dir.mkdir(exist_ok=True)
         
         log_file = log_dir / f'automation_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
@@ -393,7 +390,7 @@ class LogManager:
             max_log_files: Maximum number of log files to keep (default: 10)
         """
         try:
-            log_dir = Path('logs')
+            log_dir = app_data_path('logs')
             if not log_dir.exists():
                 return
             
@@ -2429,6 +2426,8 @@ class BrowserManager:
         """Initialize Playwright only (no browser launch with persistent contexts)."""
         try:
             self.log_manager.log('━━━ Browser Initialization Started ━━━')
+            browser_root = configure_browser_environment()
+            self.log_manager.log(f'Browser directory: {browser_root}')
             self.log_manager.log('Initializing Playwright...')
             self.playwright = await async_playwright().start()
             self.log_manager.log('✓ Playwright started successfully')
@@ -2458,7 +2457,7 @@ class BrowserManager:
         This ensures browser location matches proxy location (USA proxy → USA fingerprint).
 
         Args:
-            engine: One of 'Chromium', 'Firefox', or 'WebKit'.  Controls which
+            engine: One of 'Chromium' or 'Firefox'.  Controls which
                     Playwright browser engine is used for this context.
         """
         try:
@@ -2511,14 +2510,15 @@ class BrowserManager:
             # Create temporary profile directory that will be cleaned up automatically
             # Use tempfile.mkdtemp to create a unique temporary directory
             # The directory will persist during browser use but can be cleaned up after
-            Path("profiles").mkdir(exist_ok=True)  # Ensure profiles dir exists
-            temp_dir = tempfile.mkdtemp(prefix="profile_", dir="profiles")
+            profile_root = app_data_path("profiles")
+            profile_root.mkdir(parents=True, exist_ok=True)
+            temp_dir = tempfile.mkdtemp(prefix="profile_", dir=profile_root)
             user_data_dir = Path(temp_dir)
             
             # Normalise engine name for logging and selection.
             # engine_lower drives all conditional logic; engine_display is used for logs.
             engine_lower = (engine or 'Chromium').strip().lower()
-            _engine_display_map = {'firefox': 'Firefox', 'webkit': 'WebKit'}
+            _engine_display_map = {'firefox': 'Firefox'}
             engine_display = _engine_display_map.get(engine_lower, 'Chromium')
             self.log_manager.log(f'━━━ Creating Browser Persistent Context ━━━')
             self.log_manager.log(f'Platform: {platform}')
@@ -2548,9 +2548,8 @@ class BrowserManager:
                 else fingerprint['viewport']
             )
 
-            # Build context options for launch_persistent_context.
-            # Firefox and WebKit do not support 'channel', 'args', or 'ignore_default_args'
-            # in the same way as Chromium, so we build engine-specific option sets.
+            # Build engine-specific context options. Playwright-managed Chromium
+            # is intentionally used instead of the user's installed Chrome.
             if engine_lower in ('firefox',):
                 context_options = {
                     'user_agent': user_agent,
@@ -2562,26 +2561,14 @@ class BrowserManager:
                 if proxy_config:
                     context_options['proxy'] = proxy_config
                 playwright_browser = self.playwright.firefox
-            elif engine_lower in ('webkit',):
-                context_options = {
-                    'user_agent': user_agent,
-                    'viewport': viewport,
-                    'locale': fingerprint['locale'],
-                    'timezone_id': fingerprint['timezone'],
-                    'headless': False,
-                }
-                if proxy_config:
-                    context_options['proxy'] = proxy_config
-                playwright_browser = self.playwright.webkit
             else:
-                # Chromium (default) – use real Chrome channel with anti-automation args
+                # Chromium (default) – use the Playwright-managed executable.
                 context_options = {
                     'user_agent': user_agent,
                     'viewport': viewport,
                     'locale': fingerprint['locale'],
                     'timezone_id': fingerprint['timezone'],
                     'headless': False,  # ALWAYS VISIBLE - headless mode removed completely
-                    'channel': 'chrome',  # Use real Chrome instead of Chromium
                     'ignore_default_args': ['--enable-automation'],  # Remove automation flag
                     'args': [
                         '--disable-blink-features=AutomationControlled',
@@ -2680,7 +2667,7 @@ class BrowserManager:
             self.log_manager.log('This may be due to:', 'ERROR')
             self.log_manager.log('  - Invalid proxy configuration', 'ERROR')
             self.log_manager.log('  - Network connectivity issues', 'ERROR')
-            self.log_manager.log('  - Chrome not installed (required for channel="chrome")', 'ERROR')
+            self.log_manager.log('  - Managed Chromium or Firefox component is unavailable', 'ERROR')
             self.log_manager.log('  - Browser crash or resource exhaustion', 'ERROR')
             return None
     
@@ -5242,7 +5229,7 @@ class AutomationWorker(QObject):
 
         Args:
             browser_index:  1-based browser number used for logging and URL cycling.
-            browser_engine: Pre-assigned engine ('Chromium', 'Firefox', 'WebKit').
+            browser_engine: Pre-assigned engine ('Chromium' or 'Firefox').
             shared_state:   Dict containing shared runtime objects/counters:
                 - 'proxy_manager'    : ProxyManager instance
                 - 'consent_manager'  : ConsentManager instance (or None)
@@ -5777,7 +5764,7 @@ class AutomationWorker(QObject):
                 self.emit_log('Failed to initialize Playwright', 'ERROR')
                 self.emit_log('Please check the logs above for details', 'ERROR')
                 self.emit_log('Common issues:', 'ERROR')
-                self.emit_log('  1. Chrome not installed (required for channel="chrome")', 'ERROR')
+                self.emit_log('  1. Managed Chromium or Firefox component is unavailable', 'ERROR')
                 self.emit_log('  2. Port conflict or permission issues', 'ERROR')
                 self.emit_log('  3. System resources (memory/disk) insufficient', 'ERROR')
                 self.emit_log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'ERROR')
@@ -6189,7 +6176,9 @@ class AppGUI(QMainWindow):
         self.security_manager = None
         if SECURITY_AVAILABLE:
             try:
-                self.security_manager = SecurityManager()
+                self.security_manager = SecurityManager(
+                    data_dir=app_data_path('security')
+                )
             except Exception as e:
                 print(f"Security initialization warning: {e}")
         
@@ -6220,6 +6209,9 @@ class AppGUI(QMainWindow):
         self.setWindowIcon(QIcon(str(resource_path('assets', 'humanex_bot_v5.svg'))))
         screen = QApplication.primaryScreen()
         available = screen.availableGeometry() if screen else None
+        self.current_layout_mode = layout_mode(
+            available.width(), available.height()
+        ) if available else 'desktop'
         if available:
             width = min(1600, max(640, int(available.width() * 0.88)))
             height = min(1000, max(500, int(available.height() * 0.88)))
@@ -6362,8 +6354,8 @@ class AppGUI(QMainWindow):
         self.content_panel = self.create_content_panel()
         
         # Create sidebar navigation after content panel (so stacked_widget exists)
-        sidebar = self.create_sidebar()
-        main_layout.addWidget(sidebar)
+        self.sidebar = self.create_sidebar()
+        main_layout.addWidget(self.sidebar)
         
         # Add content panel to layout
         main_layout.addWidget(self.content_panel)
@@ -6460,6 +6452,18 @@ class AppGUI(QMainWindow):
         
         # Set first button as checked
         self.nav_button_group.button(0).setChecked(True)
+
+        mode_label = QLabel('Layout mode')
+        mode_label.setStyleSheet('color: #95a5a6; font-size: 11px; padding: 8px 20px 2px;')
+        layout.addWidget(mode_label)
+        mode_selector = QComboBox()
+        mode_selector.addItems(['Desktop', 'Tablet', 'Mobile'])
+        mode_selector.setCurrentText(self.current_layout_mode.title())
+        mode_selector.currentTextChanged.connect(
+            lambda value: self.apply_layout_mode(value.lower())
+        )
+        mode_selector.setToolTip('Choose a responsive preview mode')
+        layout.addWidget(mode_selector)
         
         layout.addStretch()
         
@@ -6484,6 +6488,26 @@ class AppGUI(QMainWindow):
         layout.addWidget(footer_widget)
         
         return sidebar
+
+    def apply_layout_mode(self, mode: str) -> None:
+        """Apply desktop, tablet, or mobile navigation sizing."""
+        if mode not in {'desktop', 'tablet', 'mobile'}:
+            return
+        self.current_layout_mode = mode
+        widths = {
+            'desktop': (180, 240),
+            'tablet': (150, 200),
+            'mobile': (110, 150),
+        }
+        minimum, maximum = widths[mode]
+        self.sidebar.setMinimumWidth(minimum)
+        self.sidebar.setMaximumWidth(maximum)
+        for button in self.nav_button_group.buttons():
+            button.setMinimumHeight(44 if mode == 'mobile' else 38)
+            button.setStyleSheet(
+                'text-align: left; padding: 10px 12px; font-size: %dpx;'
+                % (12 if mode == 'mobile' else 14)
+            )
     
     def switch_content(self, index: int):
         """Switch between different content sections."""
@@ -7176,10 +7200,6 @@ class AppGUI(QMainWindow):
         self.engine_firefox_check = QCheckBox('Firefox')
         self.engine_firefox_check.setChecked(False)
         browser_engine_layout.addWidget(self.engine_firefox_check)
-
-        self.engine_webkit_check = QCheckBox('WebKit')
-        self.engine_webkit_check.setChecked(False)
-        browser_engine_layout.addWidget(self.engine_webkit_check)
 
         browser_engine_group.setLayout(browser_engine_layout)
         layout.addWidget(browser_engine_group)
@@ -8335,7 +8355,6 @@ class AppGUI(QMainWindow):
                         e for e, chk in [
                             ('Chromium', self.engine_chromium_check),
                             ('Firefox', self.engine_firefox_check),
-                            ('WebKit', self.engine_webkit_check),
                         ] if chk.isChecked()
                     ] or ['Chromium'],  # Fall back to Chromium when nothing selected
                 }
@@ -9159,60 +9178,18 @@ class AppGUI(QMainWindow):
 # MAIN ENTRY POINT
 # ============================================================================
 
-def check_browser_installation():
-    """Check if Playwright browsers are installed."""
-    # Try using the Python-module form (most reliable across platforms)
-    for cmd in (
-        [sys.executable, '-m', 'playwright', 'install', '--dry-run', 'chromium'],
-        ['playwright', 'install', '--dry-run', 'chromium'],
-    ):
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            if result.returncode == 0:
-                return True
-        except Exception:
-            continue
-
-    # Fallback: check if browser exists in the Playwright cache directory
-    try:
-        home_dir = Path.home()
-        # Playwright stores browsers under ~/.cache/ms-playwright on Linux/Mac
-        # and %LOCALAPPDATA%\ms-playwright on Windows
-        import platform
-        if platform.system() == 'Windows':
-            import os
-            cache_base = Path(os.environ.get('LOCALAPPDATA', home_dir)) / 'ms-playwright'
-        else:
-            cache_base = home_dir / '.cache' / 'ms-playwright'
-        if cache_base.exists():
-            chromium_dirs = list(cache_base.glob('chromium-*'))
-            if chromium_dirs:
-                return True
-    except Exception:
-        pass
-
-    return False
-
-
-def auto_install_browser(parent=None):
-    """Automatically install Playwright Chromium browser with progress dialog."""
+def auto_install_browsers(parent=None):
+    """Install missing managed browsers with a branded progress dialog."""
     from PySide6.QtWidgets import QProgressDialog
 
-    # Create progress dialog
     progress = QProgressDialog(
-        "Downloading Playwright Chromium browser...\n\n"
-        "This is a one-time download (~200 MB).\n"
-        "Please wait, this may take 1-2 minutes...",
-        None,  # No cancel button - must complete
+        "Preparing HumanexBot browser components...\n\n"
+        "Chromium and Firefox are installed once and reused.",
+        None,
         0, 0,  # Indeterminate progress
         parent
     )
-    progress.setWindowTitle('First Time Setup')
+    progress.setWindowTitle('HumanexBot Browser Setup')
     progress.setWindowModality(Qt.ApplicationModal)
     progress.setMinimumDuration(0)
     progress.setValue(0)
@@ -9221,60 +9198,38 @@ def auto_install_browser(parent=None):
     # Force UI update
     QApplication.processEvents()
 
-    success = False
-    error_message = ""
-
-    # Prefer the Python-module invocation so it always uses the correct
-    # Playwright installation even when 'playwright' is not on PATH.
-    install_cmds = [
-        [sys.executable, '-m', 'playwright', 'install', 'chromium'],
-        ['playwright', 'install', 'chromium'],
-    ]
-
-    for cmd in install_cmds:
-        try:
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1
-            )
-
-            # Read output line by line and update the progress dialog
-            for line in process.stdout:
-                if 'Downloading' in line or 'Installing' in line or '%' in line:
-                    progress.setLabelText(
-                        f"Downloading Playwright Chromium browser...\n\n"
-                        f"{line.strip()}\n\n"
-                        f"Please wait, this may take 1-2 minutes..."
-                    )
-                    QApplication.processEvents()
-
-            process.wait()
-
-            if process.returncode == 0:
-                success = True
-                error_message = ""
-                break
-            else:
-                error_message = f"Installation failed with exit code {process.returncode}"
-
-        except FileNotFoundError:
-            error_message = "Playwright command not found. Please ensure Playwright is installed."
-        except Exception as e:
-            error_message = f"Installation error: {str(e)}"
+    result = install_missing_browsers(SUPPORTED_BROWSERS)
 
     progress.close()
-
-    return success, error_message
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip().splitlines()
+        return False, detail[-1] if detail else "Browser installation failed."
+    return True, ""
 
 
 def main():
     """Main application entry point."""
-    base_dir = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+    configure_browser_environment()
+    base_dir = app_data_path()
     configure_startup_logging(base_dir)
     app = QApplication(sys.argv)
+    instance_lock = SingleInstance()
+    if not instance_lock.acquire():
+        QMessageBox.warning(
+            None,
+            "HumanexBot is already running",
+            "Only one HumanexBot window can run at a time.",
+        )
+        return
+    app.aboutToQuit.connect(instance_lock.release)
+    splash = QSplashScreen(QPixmap(str(resource_path('assets', 'humanex_bot_v5.svg'))))
+    splash.showMessage(
+        'Initializing HumanexBot...',
+        Qt.AlignBottom | Qt.AlignCenter,
+        QColor('#35ff55'),
+    )
+    splash.show()
+    QApplication.processEvents()
 
     # Authorization is the first user-facing gate. No browser check,
     # dashboard construction, or automation object is created before it.
@@ -9286,21 +9241,21 @@ def main():
     log_startup_status(license_configured, True)
     if activation.exec() != QDialog.DialogCode.Accepted:
         logging.info("startup_result=activation_not_authorized")
+        instance_lock.release()
         return
     logging.info("startup_result=activation_authorized")
 
     # Browser installation is checked only after successful authorization.
-    if not check_browser_installation():
-        # Ask user if they want to auto-install
+    browser_status = browser_installation_status()
+    missing_browsers = [name for name, installed in browser_status.items() if not installed]
+    if missing_browsers:
         msg = QMessageBox()
-        msg.setIcon(QMessageBox.Information)
-        msg.setWindowTitle('First Time Setup')
-        msg.setText('Playwright Chromium browser is not installed.')
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle('Browser components required')
+        msg.setText('HumanexBot needs its managed browser components.')
         msg.setInformativeText(
-            'This is required for the bot to work.\n\n'
-            'Would you like to download and install it automatically?\n'
-            '(~200 MB download, takes 1-2 minutes)\n\n'
-            'Click "Yes" to install now, or "No" to install manually later.'
+            f'Missing: {", ".join(name.title() for name in missing_browsers)}.\n\n'
+            'Install them now? They will be reused on future launches.'
         )
         msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         msg.setDefaultButton(QMessageBox.Yes)
@@ -9309,18 +9264,16 @@ def main():
         
         if response == QMessageBox.Yes:
             # Auto-install browsers
-            success, error_msg = auto_install_browser()
+            success, error_msg = auto_install_browsers()
             
             if success:
                 # Show success message
                 success_msg = QMessageBox()
                 success_msg.setIcon(QMessageBox.Information)
                 success_msg.setWindowTitle('Setup Complete')
-                success_msg.setText('Browser installation successful!')
+                success_msg.setText('Browser components installed successfully.')
                 success_msg.setInformativeText(
-                    'The Playwright Chromium browser has been installed.\n\n'
-                    'The application will now start.\n\n'
-                    'Future launches will be instant!'
+                    'Chromium and Firefox are ready. The application will now start.'
                 )
                 success_msg.setStandardButtons(QMessageBox.Ok)
                 success_msg.exec()
@@ -9329,31 +9282,39 @@ def main():
                 error_dlg = QMessageBox()
                 error_dlg.setIcon(QMessageBox.Critical)
                 error_dlg.setWindowTitle('Installation Failed')
-                error_dlg.setText('Automatic browser installation failed!')
+                error_dlg.setText('Browser installation failed.')
                 error_dlg.setInformativeText(
-                    f'Error: {error_msg}\n\n'
-                    'Please install manually by running:\n\n'
-                    '  playwright install chromium\n'
-                    '  python -m playwright install chromium\n\n'
-                    'After installation, restart the application.'
+                    f'{error_msg}\n\n'
+                    'Check your internet connection or repair the installation, then retry.'
                 )
                 error_dlg.setStandardButtons(QMessageBox.Ok)
                 error_dlg.exec()
+                instance_lock.release()
                 return
         else:
             # User chose not to install
             manual_msg = QMessageBox()
             manual_msg.setIcon(QMessageBox.Information)
             manual_msg.setWindowTitle('Manual Installation Required')
-            manual_msg.setText('Please install the browser manually.')
+            manual_msg.setText('Browser components are not available.')
             manual_msg.setInformativeText(
-                'To install, run one of these commands:\n\n'
-                '  playwright install chromium\n'
-                '  python -m playwright install chromium\n\n'
-                'After installation, restart the application.'
+                'The application cannot continue until its managed Chromium and Firefox '
+                'components are installed.'
             )
             manual_msg.setStandardButtons(QMessageBox.Ok)
             manual_msg.exec()
+            instance_lock.release()
+            return
+
+        browser_status = browser_installation_status()
+        if not all(browser_status.values()):
+            QMessageBox.critical(
+                None,
+                'Browser verification failed',
+                'The browser components were installed but could not be verified. '
+                'Please repair the HumanexBot installation.',
+            )
+            instance_lock.release()
             return
     
     # Set application style
@@ -9380,6 +9341,7 @@ def main():
     # Create and show main window
     window = AppGUI()
     window.show()
+    splash.finish(window)
     
     sys.exit(app.exec())
 

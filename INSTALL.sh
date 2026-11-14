@@ -67,10 +67,10 @@ fi
 echo ""
 
 # ── Install Playwright browser ─────────────────────────────────────────────
-echo "[3/3] Installing Playwright browser (Chromium)..."
-echo "      (This downloads ~150 MB - only happens once!)"
+echo "[3/3] Installing Playwright browsers (Chromium + Firefox)..."
+echo "      (This downloads the managed browser payloads once!)"
 echo ""
-"$PYTHON_CMD" -m playwright install chromium
+"$PYTHON_CMD" -m playwright install chromium firefox
 if [ $? -ne 0 ]; then
     echo ""
     echo "ERROR: Playwright browser installation failed."

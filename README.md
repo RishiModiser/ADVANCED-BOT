@@ -24,9 +24,14 @@ This bot includes:
 
 ## 🚀 Installation
 
-### Prerequisites
-- Python 3.8 to 3.13 (3.14+ is not yet fully supported by all dependencies)
-- pip package manager
+### Customer installation (Windows)
+
+Download `HumanexBot_Setup.exe`, double-click it, and follow the setup wizard.
+The installer includes the application runtime, pinned dependencies, and
+Playwright-managed Chromium and Firefox components. Customers do not need
+Python, pip, Playwright, a browser installation, or a terminal.
+
+Developer source builds are documented in [BUILD_README.md](BUILD_README.md).
 
 ### Setup
 
@@ -45,14 +50,14 @@ venv\Scripts\activate
 source venv/bin/activate
 ```
 
-3. Install dependencies:
+3. Install dependencies for a source checkout:
 ```bash
 pip install -r requirements.txt
 ```
 
-4. Install Playwright browsers:
+4. Install managed browsers for a source checkout:
 ```bash
-playwright install chromium
+python -m playwright install chromium firefox
 ```
 
 Or use the setup helper:
@@ -60,9 +65,9 @@ Or use the setup helper:
 python setup_browser.py
 ```
 
-The application does not install Python packages while starting. If a
-dependency is missing, run the setup commands above (or `INSTALL.sh`) and
-launch the application again.
+The packaged Windows application does not install Python packages while
+starting. It verifies its bundled browser components and reports repairable
+errors in a dialog.
 
 ### Run the Application
 
@@ -79,7 +84,7 @@ python humanexbot_v5.py
 
 For one-click startup with first-run auto-setup:
 
-**Windows:** `RUN.bat`  
+**Windows source checkout:** `RUN.bat`
 **Linux/macOS:** `./RUN.sh`
 
 ### Build an Executable
@@ -116,7 +121,7 @@ To create a proper Windows installer (Next/Next/Finish + Start Menu/Desktop shor
 Installer output:
 - `installer/output/HumanexBot-Setup-v5.0.exe`
 
-For no terminal window, launch the installed app (or `dist/humanexbot_v5.exe`) instead of `RUN.bat`.
+The installed `HumanexBot.exe` launches without a terminal window.
 
 ### Troubleshooting
 
@@ -125,9 +130,7 @@ For no terminal window, launch the installed app (or `dist/humanexbot_v5.exe`) i
 This error occurs when Playwright browsers are not installed. Run:
 
 ```bash
-playwright install chromium
-# On Linux, also run:
-sudo playwright install-deps chromium
+python -m playwright install chromium firefox
 ```
 
 Or use the setup helper:

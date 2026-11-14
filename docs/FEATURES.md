@@ -307,7 +307,7 @@ When testing the application:
 ### Issue: Browser doesn't start
 **Solution**: Ensure Playwright chromium is installed:
 ```bash
-python3 -m playwright install chromium
+python3 -m playwright install chromium firefox
 ```
 
 ### Issue: Proxy not working

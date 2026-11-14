@@ -34,7 +34,7 @@ echo ""
 # ── Install build dependencies ─────────────────────────────────────────────
 echo "[2/3] Installing dependencies..."
 "$PYTHON_CMD" -m pip install --upgrade pip
-"$PYTHON_CMD" -m pip install pyinstaller
+"$PYTHON_CMD" -m pip install pyinstaller==6.11.1
 "$PYTHON_CMD" -m pip install -r requirements.txt
 echo ""
 
@@ -43,15 +43,17 @@ echo "[3/3] Building executable..."
 echo "      This may take several minutes..."
 echo ""
 rm -rf build dist
+export PLAYWRIGHT_BROWSERS_PATH="$PWD/playwright-browsers"
+"$PYTHON_CMD" -m playwright install chromium firefox
 "$PYTHON_CMD" -m PyInstaller --clean --noconfirm humanexbot_v5.spec
 
-if [ -f "dist/humanexbot_v5" ]; then
-    chmod +x "dist/humanexbot_v5"
+if [ -f "dist/HumanexBot" ]; then
+    chmod +x "dist/HumanexBot"
     echo ""
     echo "========================================================"
     echo "|      BUILD SUCCESSFUL!                              |"
     echo "|                                                      |"
-    echo "|      Executable: dist/humanexbot_v5                  |"
+    echo "|      Executable: dist/HumanexBot                    |"
     echo "========================================================"
     echo ""
 else

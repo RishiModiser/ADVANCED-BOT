@@ -1,4 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
+from pathlib import Path
+from PyInstaller.utils.hooks import collect_submodules
+
+browser_data = []
+if Path('playwright-browsers').exists():
+    browser_data.append(('playwright-browsers', 'playwright-browsers'))
 
 a = Analysis(
     ['humanexbot_v5.py'],
@@ -10,6 +16,7 @@ a = Analysis(
         ('version.json', '.'),
         ('requirements.txt', '.'),
         ('license_config.example.json', '.'),
+        *browser_data,
     ],
     hiddenimports=[
         'PySide6.QtCore',
@@ -24,6 +31,8 @@ a = Analysis(
         'activation_dialog',
         'license_client',
         'startup_diagnostics',
+        'app_runtime',
+        *collect_submodules('PySide6'),
     ],
     hookspath=[],
     hooksconfig={},
@@ -41,7 +50,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='humanexbot_v5',
+    name='HumanexBot',
     debug=False,
     strip=False,
     upx=True,
