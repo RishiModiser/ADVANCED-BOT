@@ -7,6 +7,8 @@ REM Usage: build.bat
 REM ========================================================
 
 title HUMANEX BOT v5.0 - Build
+set "SCRIPT_DIR=%~dp0"
+cd /d "%SCRIPT_DIR%"
 
 echo.
 echo  ========================================================

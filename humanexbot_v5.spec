@@ -5,7 +5,6 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        ('assets/humanex_logo.svg', 'assets'),
         ('assets/humanex_bot_v5.svg', 'assets'),
         ('assets/humanex_bot_v5.ico', 'assets'),
         ('version.json', '.'),

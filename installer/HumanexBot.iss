@@ -1,7 +1,7 @@
 [Setup]
 AppId={{D01C4300-64AF-4455-BBEB-C6A70C9F2D75}
 AppName=HUMANEX BOT v5.0
-AppVersion=5.0
+AppVersion=5.0.0
 AppPublisher=Humanex
 DefaultDirName={autopf}\HumanexBot
 DefaultGroupName=HUMANEX BOT v5.0

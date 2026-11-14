@@ -18,7 +18,8 @@ def configure_startup_logging(base_dir: Path) -> Path:
         force=True,
     )
     logging.info("application_version=HUMANEX BOT v5.0")
-    logging.info("active_entry_point=%s", Path(__file__).resolve().parent / "humanexbot_v5.py")
+    entry_point = Path(sys.executable).resolve() if getattr(sys, "frozen", False) else Path(__file__).resolve().parent / "humanexbot_v5.py"
+    logging.info("active_entry_point=%s", entry_point)
     logging.info("build_mode=%s", "packaged" if getattr(sys, "frozen", False) else "source")
     logging.info("logo_asset_path=%s", os.environ.get("HUMANEX_LOGO_PATH", "resource_path/assets/humanex_bot_v5.svg"))
     return log_path
