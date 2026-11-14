@@ -20,7 +20,8 @@ This bot includes:
 - ⏱️ **Rate Limiting** - Prevents abuse and ensures stability
 - 🎭 **Secure Logging** - Auto-masks IPs, passwords, and sensitive data
 
-📖 See [SECURITY_FEATURES.md](docs/SECURITY_FEATURES.md) for complete documentation.
+Security controls include encrypted configuration storage, integrity checks,
+rate limiting, and sensitive-data masking.
 
 ## 🚀 Installation
 
@@ -60,23 +61,15 @@ pip install -r requirements.txt
 python -m playwright install chromium firefox
 ```
 
-Or use the setup helper:
-```bash
-python setup_browser.py
-```
-
 The packaged Windows application does not install Python packages while
 starting. It verifies its bundled browser components and reports repairable
 errors in a dialog.
 
 ### Run the Application
 
-Before launching, configure the PHP license verification endpoint. The app
-will not open the dashboard without successful authorization:
-
-```bash
-export HUMANEX_LICENSE_API_URL="https://your-license-server.example/api/verify"
-```
+The application uses the production PHP license endpoint automatically and
+will not open the dashboard without successful authorization. Development
+builds may override it with `HUMANEX_LICENSE_API_URL`.
 
 ```bash
 python humanexbot_v5.py
@@ -133,11 +126,6 @@ This error occurs when Playwright browsers are not installed. Run:
 python -m playwright install chromium firefox
 ```
 
-Or use the setup helper:
-```bash
-python setup_browser.py
-```
-
 ### Run the tests
 
 The repository includes lightweight tests for proxy parsing and RPA script
@@ -152,19 +140,6 @@ python -m unittest discover -s tests -v
 ### GUI Features
 
 The application provides a modern, fully responsive GUI with improved navigation. All features are accessible from the left sidebar:
-
-### Export a visual PDF of the GUI
-
-To create a visual PDF containing the complete main window sections, run:
-
-```bash
-python generate_gui_pdf.py --output humanexbot_gui.pdf
-```
-
-The exporter renders the six main sections in sidebar order: Website Traffic,
-Traffic Behaviour, Proxy Settings, RPA Script Creator, Control, and Logs. It
-does not open the activation flow, browser setup, or transient dialogs, and it
-can run on a build machine without a display server.
 
 #### Navigation Sections
 
@@ -311,7 +286,6 @@ can run on a build machine without a display server.
 ```
 humanexbot_v5.py        # Main application
 security_manager.py    # Security utilities
-setup_browser.py       # Browser setup helper
 user_agents.py         # User agent rotation
 requirements.txt       # Python dependencies
 build.bat              # Windows build script
