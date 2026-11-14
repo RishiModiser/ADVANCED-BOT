@@ -89,11 +89,7 @@ from PySide6.QtWidgets import (
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
     QMessageBox, QFileDialog, QScrollArea, QListWidgetItem, QFormLayout,
     QAbstractItemView, QRadioButton, QButtonGroup, QGridLayout, QStackedWidget,
-<<<<<<< HEAD
-    QSlider, QSizePolicy
-=======
-    QSlider, QDialog
->>>>>>> origin/main
+    QSlider, QSizePolicy, QDialog
 )
 from PySide6.QtCore import Qt, QThread, Signal, QObject
 from PySide6.QtGui import QFont, QColor, QPalette, QPixmap, QIcon
@@ -6229,8 +6225,8 @@ class AppGUI(QMainWindow):
     
     def init_ui(self):
         """Initialize the user interface."""
-<<<<<<< HEAD
-        self.setWindowTitle('HumanexBot Version 5.0')
+        self.setWindowTitle('HUMANEX BOT v5.0')
+        self.setWindowIcon(QIcon(str(resource_path('assets', 'humanex_bot_v5.svg'))))
         screen = QApplication.primaryScreen()
         available = screen.availableGeometry() if screen else None
         if available:
@@ -6246,12 +6242,6 @@ class AppGUI(QMainWindow):
         else:
             self.setGeometry(100, 100, 1280, 760)
             self.setMinimumSize(760, 520)
-=======
-        self.setWindowTitle('HUMANEX BOT v5.0')
-        self.setWindowIcon(QIcon(str(resource_path('assets', 'humanex_bot_v5.svg'))))
-        self.setGeometry(100, 100, 1600, 900)
-        self.setMinimumSize(1200, 700)  # Set minimum size for responsiveness
->>>>>>> origin/main
         
         # Apply modern color scheme
         self.setStyleSheet("""
