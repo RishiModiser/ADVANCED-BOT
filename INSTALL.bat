@@ -7,6 +7,8 @@ REM After setup, double-click RUN.bat to start the bot instantly!
 REM ========================================================
 
 title HumanexBot Version 5.0 - Setup
+set "SCRIPT_DIR=%~dp0"
+cd /d "%SCRIPT_DIR%"
 set NO_PAUSE=
 if /I "%~1"=="--no-pause" set NO_PAUSE=1
 

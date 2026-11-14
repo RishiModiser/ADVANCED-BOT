@@ -1,10 +1,10 @@
 [Setup]
 AppId={{D01C4300-64AF-4455-BBEB-C6A70C9F2D75}
-AppName=HumanexBot
-AppVersion=5.0
+AppName=HUMANEX BOT v5.0
+AppVersion=5.0.0
 AppPublisher=Humanex
 DefaultDirName={autopf}\HumanexBot
-DefaultGroupName=HumanexBot
+DefaultGroupName=HUMANEX BOT v5.0
 DisableProgramGroupPage=yes
 OutputDir=output
 OutputBaseFilename=HumanexBot-Setup-v5.0
@@ -24,8 +24,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "..\dist\humanexbot_v5.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\HumanexBot"; Filename: "{app}\humanexbot_v5.exe"
-Name: "{autodesktop}\HumanexBot"; Filename: "{app}\humanexbot_v5.exe"; Tasks: desktopicon
+Name: "{autoprograms}\HUMANEX BOT v5.0"; Filename: "{app}\humanexbot_v5.exe"
+Name: "{autodesktop}\HUMANEX BOT v5.0"; Filename: "{app}\humanexbot_v5.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\humanexbot_v5.exe"; Description: "{cm:LaunchProgram,HumanexBot}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\humanexbot_v5.exe"; Description: "Launch HUMANEX BOT v5.0"; Flags: nowait postinstall skipifsilent

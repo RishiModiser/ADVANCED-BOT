@@ -4,7 +4,13 @@ a = Analysis(
     ['humanexbot_v5.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[
+        ('assets/humanex_bot_v5.svg', 'assets'),
+        ('assets/humanex_bot_v5.ico', 'assets'),
+        ('version.json', '.'),
+        ('requirements.txt', '.'),
+        ('license_config.example.json', '.'),
+    ],
     hiddenimports=[
         'PySide6.QtCore',
         'PySide6.QtGui',
@@ -15,6 +21,9 @@ a = Analysis(
         'playwright._impl',
         'dateutil',
         'aiohttp',
+        'activation_dialog',
+        'license_client',
+        'startup_diagnostics',
     ],
     hookspath=[],
     hooksconfig={},
@@ -43,4 +52,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='assets/humanex_bot_v5.ico',
 )

@@ -9,6 +9,8 @@ REM then use this file for instant 1-click launch!
 REM ========================================================
 
 title HumanexBot Version 5.0
+set "SCRIPT_DIR=%~dp0"
+cd /d "%SCRIPT_DIR%"
 
 color 0A
 echo.
