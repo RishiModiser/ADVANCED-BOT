@@ -240,22 +240,6 @@ Create and manage custom automation scripts:
 }
 ```
 
-## Safety Guidelines
-
-### ✅ Allowed Use Cases
-- Testing your own websites
-- UX research on sites you control
-- Internal promotion testing
-- Consent mechanism validation
-- Traffic pattern research (owned properties)
-
-### ❌ Prohibited Use Cases
-- Clicking real ad networks
-- Click fraud or traffic fraud
-- Testing third-party sites without permission
-- Generating fake engagement
-- Any illegal activities
-
 ### Built-in Safety Features
 
 1. **Element Confidence Scoring**
@@ -388,7 +372,3 @@ For issues or questions:
    - Configuration used
    - Log output
    - Steps to reproduce
-
----
-
-**Remember**: This tool is for legitimate testing purposes only. Always ensure your use complies with applicable laws and terms of service.
