@@ -253,10 +253,9 @@ pip install -r requirements.txt
 Required dependencies:
 - `cryptography>=41.0.0` - For encryption and key derivation
 
-If the cryptography library is not installed, the bot will:
-- Use base64 encoding as fallback (less secure)
-- Show warnings about limited security
-- Continue to function with basic protection
+The bot does not fall back to base64 encoding because base64 is not
+encryption. Configuration encryption and decryption fail explicitly until
+the required `cryptography` dependency is installed.
 
 ## 🎯 Best Practices
 

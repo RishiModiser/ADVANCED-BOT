@@ -26,76 +26,34 @@ from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 
 from user_agents import USER_AGENTS
-# Check for required dependencies before importing them
-def check_dependencies():
-    """Check if required packages are installed and auto-install if missing."""
-    missing_packages = []
 
-    try:
-        import PySide6
-    except ImportError:
-        missing_packages.append('PySide6>=6.6.1')
+try:
+    from PySide6.QtWidgets import (
+        QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+        QPushButton, QLabel, QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox,
+        QComboBox, QCheckBox, QTabWidget, QGroupBox, QListWidget,
+        QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
+        QMessageBox, QFileDialog, QScrollArea, QListWidgetItem, QFormLayout,
+        QAbstractItemView, QRadioButton, QButtonGroup, QGridLayout, QStackedWidget,
+        QSlider, QSizePolicy, QDialog
+    )
+    from PySide6.QtCore import Qt, QThread, Signal, QObject
+    from PySide6.QtGui import QFont, QColor, QPalette, QPixmap, QIcon
+except ImportError as exc:
+    raise RuntimeError(
+        "PySide6 is not installed. Run INSTALL.sh or "
+        "'python -m pip install -r requirements.txt'."
+    ) from exc
 
-    try:
-        import playwright
-    except ImportError:
-        missing_packages.append('playwright>=1.40.0')
-
-    if missing_packages:
-        print("\n" + "="*70)
-        print("First-Time Setup: Installing missing dependencies")
-        print("="*70)
-        print(f"\nPackages to install: {', '.join(missing_packages)}")
-        print("\nThis is a one-time setup. Please wait...")
-        print("="*70)
-
-        try:
-            import subprocess as _sp
-            _sp.check_call(
-                [sys.executable, '-m', 'pip', 'install', '--upgrade'] + missing_packages,
-            )
-            print("\n" + "="*70)
-            print("Dependencies installed successfully!")
-            print("Installing remaining requirements...")
-            print("="*70)
-            # Install full requirements.txt for completeness
-            _req_file = Path(__file__).parent / 'requirements.txt'
-            if _req_file.exists():
-                _sp.check_call(
-                    [sys.executable, '-m', 'pip', 'install', '-r', str(_req_file)],
-                )
-            print("\nRestarting application...")
-            print("="*70 + "\n")
-            # Re-execute this script so newly installed packages are importable
-            import os
-            os.execv(sys.executable, [sys.executable] + sys.argv)
-        except Exception as e:
-            print(f"\nAuto-installation failed: {e}")
-            if sys.version_info >= (3, 14):
-                print("\nDetected Python 3.14+.")
-                print("Please use Python 3.8 to 3.13 for best compatibility.")
-            print("\nPlease install dependencies manually:")
-            print("\n    pip install -r requirements.txt")
-            print("\nFor more details, see README.md")
-            print("="*70 + "\n")
-            sys.exit(1)
-
-# Run dependency check
-check_dependencies()
-
-from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox,
-    QComboBox, QCheckBox, QTabWidget, QGroupBox, QListWidget,
-    QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
-    QMessageBox, QFileDialog, QScrollArea, QListWidgetItem, QFormLayout,
-    QAbstractItemView, QRadioButton, QButtonGroup, QGridLayout, QStackedWidget,
-    QSlider, QSizePolicy, QDialog
-)
-from PySide6.QtCore import Qt, QThread, Signal, QObject
-from PySide6.QtGui import QFont, QColor, QPalette, QPixmap, QIcon
-
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Playwright
+try:
+    from playwright.async_api import (
+        async_playwright, Browser, BrowserContext, Page, Playwright
+    )
+except ImportError as exc:
+    raise RuntimeError(
+        "Playwright is not installed. Run INSTALL.sh or "
+        "'python -m pip install -r requirements.txt'."
+    ) from exc
 
 # Import aiohttp for geolocation API calls (will be used in ProxyGeolocation class)
 try:
@@ -113,6 +71,8 @@ except ImportError:
 
 from activation_dialog import ActivationDialog
 from startup_diagnostics import configure_startup_logging, log_startup_status
+from proxy_utils import parse_proxy
+from script_utils import validate_rpa_script_data
 
 
 def resource_path(*parts: str) -> Path:
@@ -1917,42 +1877,6 @@ class ScriptExecutor:
 # ============================================================================
 # PROXY MANAGER
 # ============================================================================
-
-def parse_proxy(proxy_string: str) -> Dict[str, str]:
-    """Parse a single proxy string into a unified configuration dict.
-
-    Supported formats:
-    - ``username:password@host:port``
-    - ``host:port:username:password``
-
-    Returns:
-        Dict with keys ``server``, ``username``, and ``password``.
-
-    Raises:
-        ValueError: If the proxy string cannot be parsed.
-    """
-    proxy_string = proxy_string.strip()
-    if not proxy_string:
-        raise ValueError("Empty proxy string")
-
-    try:
-        if "@" in proxy_string:
-            auth, address = proxy_string.split("@", 1)
-            username, password = auth.split(":", 1)
-            host, port = address.rsplit(":", 1)
-        else:
-            host, port, username, password = proxy_string.split(":", 3)
-    except ValueError:
-        raise ValueError(f"Unable to parse proxy: {proxy_string!r}")
-
-    proxy_config = {
-        "server": f"http://{host}:{port}",
-        "username": username,
-        "password": password,
-    }
-    logging.info("Proxy parsed successfully: %s:%s", host, port)
-    return proxy_config
-
 
 class ProxyManager:
     """Manages proxy configurations with thread-safe queue."""
@@ -8518,8 +8442,9 @@ class AppGUI(QMainWindow):
                 QMessageBox.warning(self, 'Warning', 'No script to save')
                 return
             
-            # Validate JSON
-            json.loads(script_text)
+            # Validate JSON and the basic script shape before writing it.
+            raw_data = json.loads(script_text)
+            validate_rpa_script_data(raw_data)
             
             file_path, _ = QFileDialog.getSaveFileName(
                 self, 'Save Script', '', 'JSON Files (*.json)'
@@ -8549,6 +8474,8 @@ class AppGUI(QMainWindow):
                 # Parse JSON
                 raw_data = json.loads(script_text)
                 
+                validate_rpa_script_data(raw_data)
+
                 # Normalize the script to internal format
                 normalized_script = normalize_rpa_script(raw_data)
                 

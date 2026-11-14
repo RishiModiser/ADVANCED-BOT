@@ -60,6 +60,10 @@ Or use the setup helper:
 python setup_browser.py
 ```
 
+The application does not install Python packages while starting. If a
+dependency is missing, run the setup commands above (or `INSTALL.sh`) and
+launch the application again.
+
 ### Run the Application
 
 Before launching, configure the PHP license verification endpoint. The app
@@ -129,6 +133,15 @@ sudo playwright install-deps chromium
 Or use the setup helper:
 ```bash
 python setup_browser.py
+```
+
+### Run the tests
+
+The repository includes lightweight tests for proxy parsing and RPA script
+shape validation:
+
+```bash
+python -m unittest discover -s tests -v
 ```
 
 ## 🖥️ Usage

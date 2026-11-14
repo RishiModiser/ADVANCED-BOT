@@ -182,15 +182,11 @@ class SecurityManager:
             True if successful
         """
         if not CRYPTO_AVAILABLE:
-            # Fallback: Save as base64 encoded JSON (not secure but better than plain)
-            try:
-                json_data = json.dumps(config_data)
-                encoded = base64.b64encode(json_data.encode()).decode()
-                with open(self.config_file, 'w') as f:
-                    f.write(encoded)
-                return True
-            except Exception:
-                return False
+            self._log_security_event(
+                "encryption_error",
+                {"error": "cryptography package is unavailable"},
+            )
+            return False
         
         try:
             # Use password or hardware ID as key source
@@ -236,14 +232,11 @@ class SecurityManager:
             return None
         
         if not CRYPTO_AVAILABLE:
-            # Fallback: Decode base64 JSON
-            try:
-                with open(self.config_file, 'r') as f:
-                    encoded = f.read()
-                json_data = base64.b64decode(encoded.encode()).decode()
-                return json.loads(json_data)
-            except Exception:
-                return None
+            self._log_security_event(
+                "decryption_error",
+                {"error": "cryptography package is unavailable"},
+            )
+            return None
         
         try:
             # Use password or hardware ID as key source
