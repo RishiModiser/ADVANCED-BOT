@@ -8,6 +8,7 @@ and traffic behavior research.
 import sys
 import os
 import json
+import html
 import random
 import time
 import logging
@@ -274,9 +275,19 @@ REFERRER_URLS = {
 SEARCH_ENGINES = {
     'Google': {
         'url': 'https://www.google.com',
-        'search_box_selectors': ['textarea[name="q"]', 'input[name="q"]', 'textarea[title="Search"]'],
-        'results_selector': ['div#search', '[id="rso"]'],
-        'result_links_selector': 'div#search a[href], div#rso a[href]'
+        'search_box_selectors': [
+            'textarea[name="q"]',
+            'input[name="q"]',
+            'textarea[title="Search"]',
+            'textarea[aria-label*="Search"]',
+            'input[aria-label*="Search"]',
+            '[role="combobox"][name="q"]',
+        ],
+        'results_selector': ['div#search', '[id="rso"]', 'main'],
+        'result_links_selector': (
+            'div#search a[href], div#rso a[href], '
+            'main a[href^="http"], main a[href^="/url"]'
+        )
     },
     'Bing': {
         'url': 'https://www.bing.com',
@@ -3554,6 +3565,38 @@ class AutomationWorker(QObject):
             host = hostname.lower().strip('.')
             target = domain.lower().strip('.')
             return host == target or host.endswith(f'.{target}')
+
+        def _resolve_result_url(href: Optional[str]) -> str:
+            """Resolve direct and search-engine redirect result URLs."""
+            if not href:
+                return ''
+
+            parsed_href = urlparse(href)
+            host = parsed_href.hostname or ''
+            params = parse_qs(parsed_href.query)
+            candidate = ''
+
+            if (
+                _is_domain_or_subdomain(host, 'google.com')
+                and parsed_href.path.rstrip('/') == '/url'
+            ) or href.startswith('/url'):
+                candidate = (params.get('q') or params.get('url') or [''])[0]
+            elif (
+                _is_domain_or_subdomain(host, 'bing.com')
+                and '/ck/a' in parsed_href.path
+            ):
+                candidate = (params.get('u') or [''])[0]
+                if candidate.startswith('a1'):
+                    candidate = candidate[2:]
+            elif (
+                _is_domain_or_subdomain(host, 'yahoo.com')
+                and ('/cbclk' in parsed_href.path or 'RU=' in href)
+            ):
+                candidate = (params.get('RU') or [''])[0]
+
+            if candidate:
+                return unquote(candidate)
+            return href if parsed_href.scheme in ('http', 'https') else ''
         
         self.emit_log(f'[INFO] Search visit using {search_engine}')
         self.emit_log(f'[INFO] Keyword: "{keyword}" | Target: "{target_domain_clean}"')
@@ -3747,8 +3790,8 @@ class AutomationWorker(QObject):
             for link in organic_results:
                 try:
                     href = await link.get_attribute('href')
-                    # Only include HTTP/HTTPS links that aren't search engine internal links
-                    if href and href.startswith('http'):
+                    resolved_url = _resolve_result_url(href)
+                    if resolved_url:
                         # For Bing and Yahoo, check both redirect URL and actual URL
                         # Parse URL to check domain properly (avoid substring issues)
                         # NOTE: CodeQL may flag this as incomplete URL sanitization, but this is safe because:
@@ -3772,8 +3815,12 @@ class AutomationWorker(QObject):
                             is_yahoo_redirect = False
                         
                         # Check if it's not a search engine internal link (unless it's a redirect)
-                        is_internal = any(domain in href.lower() for domain in search_engine_domains)
-                        if not is_internal or is_bing_redirect or is_yahoo_redirect:
+                        resolved_host = (urlparse(resolved_url).hostname or '').lower()
+                        is_internal = any(
+                            _is_domain_or_subdomain(resolved_host, domain)
+                            for domain in search_engine_domains
+                        )
+                        if not is_internal:
                             result_links.append(link)
                             if len(result_links) >= 10:  # Limit to top 10 results
                                 break
@@ -3794,8 +3841,10 @@ class AutomationWorker(QObject):
                     if not href:
                         continue
                     
-                    # Initialize real_url as the href itself
-                    real_url = href
+                    # Resolve direct links and search-engine redirect URLs.
+                    real_url = _resolve_result_url(href)
+                    if not real_url:
+                        continue
                     
                     # Special handling for Bing and Yahoo redirect URLs
                     # Parse URL to check domain properly (avoid substring issues)
@@ -6501,7 +6550,7 @@ class AppGUI(QMainWindow):
         version_label.setStyleSheet('color: #7f8c8d; font-size: 11px;')
         footer_layout.addWidget(version_label)
         
-        credit_label = QLabel('Made with ❤ by <a href="https://asadwebdev.com" style="color: #3498db; text-decoration: none;">CODEWITHASAD</a>')
+        credit_label = QLabel('Powered by <a href="https://humanexbot.com" style="color: #35ff55; text-decoration: none;">HumanexBot.com</a>')
         credit_label.setAlignment(Qt.AlignCenter)
         credit_label.setStyleSheet('color: #7f8c8d; font-size: 10px;')
         credit_label.setOpenExternalLinks(True)
@@ -7997,7 +8046,7 @@ class AppGUI(QMainWindow):
         # Section Title
         section_title = QLabel('📋 Live Logs')
         section_title.setFont(QFont('Arial', 20, QFont.Bold))
-        section_title.setStyleSheet('color: #2c3e50; padding: 10px 0;')
+        section_title.setStyleSheet('color: #35ff55; padding: 10px 0;')
         layout.addWidget(section_title)
         
         # Logs display
@@ -8006,15 +8055,37 @@ class AppGUI(QMainWindow):
         
         self.log_display = QTextEdit()
         self.log_display.setReadOnly(True)
-        self.log_display.setStyleSheet('background-color: #1e1e1e; color: white; font-family: monospace; font-size: 12px;')
-        self.log_display.setMinimumHeight(160)
+        self.log_display.setAcceptRichText(True)
+        self.log_display.setUndoRedoEnabled(False)
+        self.log_display.setLineWrapMode(QTextEdit.NoWrap)
+        self.log_display.setStyleSheet(
+            'QTextEdit {'
+            ' background-color: #080d09;'
+            ' color: #e8f5e9;'
+            ' border: 1px solid #286b35;'
+            ' border-radius: 6px;'
+            ' padding: 10px;'
+            ' selection-background-color: #1f8f35;'
+            ' selection-color: #ffffff;'
+            ' font-family: "Consolas", "Cascadia Mono", "Courier New", monospace;'
+            ' font-size: 12px;'
+            '}'
+        )
+        self.log_display.setMinimumHeight(260)
         logs_layout.addWidget(self.log_display)
         
         # Clear logs button
+        log_actions = QHBoxLayout()
+        log_actions.addStretch()
         clear_btn = QPushButton('🧹 Clear Logs')
         clear_btn.clicked.connect(self.clear_logs)
-        clear_btn.setStyleSheet('background-color: #ff9800; color: white; padding: 10px; font-weight: bold;')
-        logs_layout.addWidget(clear_btn)
+        clear_btn.setStyleSheet(
+            'QPushButton { background-color: #1f8f35; color: white; '
+            'padding: 8px 16px; font-weight: bold; }'
+            'QPushButton:hover { background-color: #28b642; }'
+        )
+        log_actions.addWidget(clear_btn)
+        logs_layout.addLayout(log_actions)
         
         logs_group.setLayout(logs_layout)
         layout.addWidget(logs_group)
@@ -8053,26 +8124,6 @@ class AppGUI(QMainWindow):
         
         logo_widget.setStyleSheet('background-color: #f8f9fa; border-radius: 5px;')
         layout.addWidget(logo_widget)
-        
-        # Footer section
-        footer_widget = QWidget()
-        footer_layout = QVBoxLayout(footer_widget)
-        footer_layout.setContentsMargins(15, 10, 15, 15)
-        footer_layout.setSpacing(5)
-        
-        version_label = QLabel('v5.0 • 2026')
-        version_label.setAlignment(Qt.AlignCenter)
-        version_label.setStyleSheet('color: #7f8c8d; font-size: 11px;')
-        footer_layout.addWidget(version_label)
-        
-        credit_label = QLabel('Made with ❤ by <a href="https://asadwebdev.com" style="color: #3498db; text-decoration: none;">CODEWITHASAD</a>')
-        credit_label.setAlignment(Qt.AlignCenter)
-        credit_label.setStyleSheet('color: #7f8c8d; font-size: 10px;')
-        credit_label.setOpenExternalLinks(True)
-        credit_label.setTextFormat(Qt.RichText)
-        footer_layout.addWidget(credit_label)
-        
-        layout.addWidget(footer_widget)
         
         scroll_area.setWidget(widget)
         return scroll_area
@@ -8430,21 +8481,29 @@ class AppGUI(QMainWindow):
     
     def append_log(self, log_entry: str):
         """Append log to display with color coding."""
-        # Color code based on log level
-        if '[ERROR]' in log_entry:
-            color = '#ff6b6b'  # Red
-        elif '[WARNING]' in log_entry:
-            color = '#ffd93d'  # Yellow
-        else:
-            color = 'white'  # White for INFO
-        
-        # Add colored HTML
-        colored_log = f'<span style="color: {color};">{log_entry}</span>'
+        level_colors = {
+            'ERROR': '#ff6b6b',
+            'WARNING': '#ffd93d',
+            'DEBUG': '#78a9ff',
+            'INFO': '#e8f5e9',
+        }
+        level = 'INFO'
+        for candidate in level_colors:
+            if f'[{candidate}]' in log_entry:
+                level = candidate
+                break
+
+        escaped_entry = html.escape(log_entry).replace('\n', '<br>')
+        colored_log = (
+            f'<span style="color: {level_colors[level]};">'
+            f'{escaped_entry}</span>'
+        )
+        scrollbar = self.log_display.verticalScrollBar()
+        should_follow = scrollbar.value() >= scrollbar.maximum() - 12
         self.log_display.append(colored_log)
         
-        # Auto-scroll to bottom
-        scrollbar = self.log_display.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        if should_follow:
+            scrollbar.setValue(scrollbar.maximum())
     
     def clear_logs(self):
         """Clear log display."""

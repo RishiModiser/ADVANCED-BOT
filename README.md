@@ -22,20 +22,6 @@ This bot includes:
 
 📖 See [SECURITY_FEATURES.md](docs/SECURITY_FEATURES.md) for complete documentation.
 
-## ⚠️ Important Safety Notice
-
-**This system is designed ONLY for legitimate use cases:**
-- Testing your own websites
-- UX research on controlled environments
-- Internal promotion testing
-- Consent flow validation
-
-**STRICTLY FORBIDDEN:**
-- Clicking real third-party ad networks
-- Traffic fraud or click fraud
-- Unauthorized automation
-- Any illegal activities
-
 ## 🚀 Installation
 
 ### Prerequisites
@@ -311,16 +297,6 @@ installer/HumanexBot.iss # Inno Setup installer definition
 - 4GB RAM minimum
 - Internet connection
 - Windows, macOS, or Linux
-
-## ⚠️ Legal Disclaimer
-
-This software is provided for legitimate testing and research purposes only. Users are solely responsible for ensuring their use complies with:
-- Terms of service of websites being tested
-- Local and international laws
-- Ethical guidelines
-- Platform policies
-
-The developers assume no liability for misuse of this software.
 
 ## 📝 License
 
