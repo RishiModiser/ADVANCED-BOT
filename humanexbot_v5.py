@@ -152,6 +152,7 @@ CONSENT_BUTTON_TEXTS= [
 ZOOM_OUT_PERCENT_DEFAULT = 25
 AUTO_GRID_LAYOUT_DEFAULT = True
 AUTO_ZOOM_DEFAULT = False
+ZOOM_LEVELS = (25, 50, 75, 90, 100)
 ENABLE_SMART_TILING_DEFAULT = True
 COMPACT_WINDOW_WIDTH_DEFAULT = 360
 COMPACT_WINDOW_HEIGHT_DEFAULT = 260
@@ -2680,6 +2681,7 @@ class BrowserManager:
                 # Store the temp directory path for cleanup
                 context._temp_profile_dir = user_data_dir
                 self.active_contexts.append(context)
+                context._humanex_engine = engine_lower
             except Exception as proxy_error:
                 # Check if error is proxy-related
                 error_str = str(proxy_error).lower()
@@ -2705,6 +2707,7 @@ class BrowserManager:
                         **context_options
                     )
                     self.active_contexts.append(context)
+                    context._humanex_engine = engine_lower
                     self.log_manager.log('✓ Browser context created with direct connection (proxy bypassed)')
                     proxy_location = None  # Clear proxy location since not using proxy
                 else:
@@ -2883,6 +2886,8 @@ class AutomationWorker(QObject):
         self.active_contexts = []  # Alias for active_browsers; both reference the same context objects
         self.active_pages = []     # Track open pages for stop cleanup
         self._zoom_listener_context_ids = set()
+        self._zoom_page_tasks = {}
+        self._zoom_page_listener_ids = set()
     
     def emit_log(self, message: str, level: str = 'INFO'):
         """Emit log to GUI."""
@@ -3116,92 +3121,105 @@ class AutomationWorker(QObject):
         context_name: str = '',
         worker_count: Optional[int] = None,
     ):
-        """Apply zoom-out behavior to all pages in a context."""
+        """Apply real Chromium page zoom to every page in a context."""
         if not context or not self._should_apply_zoom():
             return
 
         zoom_factor = self._get_zoom_out_factor(worker_count)
         zoom_percent = max(1, int(zoom_factor * 100))
+        zoom_label = context_name.replace('Browser ', 'THREAD ') if context_name else 'THREAD'
+        engine = getattr(context, '_humanex_engine', 'chromium')
+        if engine != 'chromium':
+            self.emit_log(
+                f'[{zoom_label}] Browser zoom requires Chromium; '
+                f'{engine.title()} context left unchanged.',
+                'WARNING',
+            )
+            return
 
-        zoom_script = f"""
-            (() => {{
-                const zoomPercent = "{zoom_percent}%";
-                const zoomFactor = {zoom_factor};
-                const applyZoom = () => {{
-                    if (!document || !document.documentElement) return;
-                    const root = document.documentElement;
-                    if (root.dataset.advancedBotZoomOutApplied === zoomPercent) return;
-                    root.dataset.advancedBotZoomOutApplied = zoomPercent;
-                    root.style.zoom = zoomPercent;
-
-                    const supportsZoom = typeof CSS !== 'undefined' && CSS.supports && CSS.supports('zoom', '1');
-                    if (!supportsZoom) {{
-                        root.style.transformOrigin = 'top left';
-                        root.style.transform = `scale(${{zoomFactor}})`;
-                        root.style.width = `${{100 / zoomFactor}}%`;
-                    }}
-                }};
-                if (document.readyState === 'loading') {{
-                    window.addEventListener('DOMContentLoaded', applyZoom, {{ once: true }});
-                }} else {{
-                    applyZoom();
-                }}
-                window.addEventListener('load', applyZoom, {{ once: true }});
-            }})();
-        """
-
-        await context.add_init_script(zoom_script)
-
-        async def _apply_zoom_to_page(open_page: Page):
+        async def _apply_zoom_to_page(open_page: Page, wait_for_load: bool = True):
             try:
-                await open_page.wait_for_load_state('domcontentloaded', timeout=15000)
-                await open_page.evaluate(
-                    """
-                    ({ zoomFactor, zoomPercent }) => {
-                        if (document && document.documentElement) {
-                            document.documentElement.style.zoom = String(zoomPercent);
-                        }
-                    }
-                    """,
-                    {'zoomFactor': zoom_factor, 'zoomPercent': f'{zoom_percent}%'}
+                if wait_for_load:
+                    await open_page.wait_for_load_state('domcontentloaded', timeout=15000)
+                self.emit_log(f'[{zoom_label}] Target website loaded.')
+                cdp_session = await context.new_cdp_session(open_page)
+                await cdp_session.send(
+                    'Emulation.setPageScaleFactor',
+                    {'pageScaleFactor': zoom_factor},
                 )
-                if zoom_factor < 1.0:
-                    # Four shortcut presses best-matches the requested zoom bands in desktop Chrome.
-                    zoom_shortcut_steps = 4
-                    zoom_shortcut = 'Meta+-' if sys.platform == 'darwin' else 'Control+-'
-                    for _ in range(zoom_shortcut_steps):
-                        try:
-                            await open_page.keyboard.press(zoom_shortcut)
-                        except Exception:
-                            break
+                self.emit_log(
+                    f'[{zoom_label}] Browser zoom set to {zoom_percent}%.',
+                )
             except Exception as zoom_error:
-                self.emit_log(f'Zoom Out apply skipped on one page: {zoom_error}', 'DEBUG')
+                self.emit_log(
+                    f'[{zoom_label}] Browser zoom failed: {zoom_error}',
+                    'WARNING',
+                )
+
+        def _schedule_page_zoom(open_page: Page, wait_for_load: bool = True):
+            page_id = id(open_page)
+            previous_task = self._zoom_page_tasks.get(page_id)
+            if previous_task and not previous_task.done():
+                previous_task.cancel()
+            task = asyncio.create_task(_apply_zoom_to_page(open_page, wait_for_load))
+            self._zoom_page_tasks[page_id] = task
+
+            def _cleanup(done_task: asyncio.Task):
+                if self._zoom_page_tasks.get(page_id) is done_task:
+                    self._zoom_page_tasks.pop(page_id, None)
+                if done_task.cancelled():
+                    return
+                try:
+                    done_task.result()
+                except Exception as zoom_exception:
+                    self.emit_log(
+                        f'[{zoom_label}] Browser zoom retry failed: {zoom_exception}',
+                        'WARNING',
+                    )
+
+            task.add_done_callback(_cleanup)
+
+        def _on_page_load(open_page: Page):
+            _schedule_page_zoom(open_page)
+
+        def _on_page_navigated(frame):
+            if frame == frame.page.main_frame:
+                _schedule_page_zoom(frame.page)
+
+        def _on_page_close(open_page: Page):
+            self._zoom_page_tasks.pop(id(open_page), None)
+            self._zoom_page_listener_ids.discard(id(open_page))
+
+        def _attach_page_listeners(open_page: Page):
+            page_id = id(open_page)
+            if page_id in self._zoom_page_listener_ids:
+                return
+            self._zoom_page_listener_ids.add(page_id)
+            open_page.on('load', lambda page=open_page: _on_page_load(page))
+            open_page.on('framenavigated', _on_page_navigated)
+            open_page.on('close', lambda page=open_page: _on_page_close(page))
 
         for open_page in context.pages:
-            await _apply_zoom_to_page(open_page)
+            _attach_page_listeners(open_page)
+            if open_page.url and open_page.url != 'about:blank':
+                await _apply_zoom_to_page(open_page)
 
         context_id = id(context)
         if context_id not in self._zoom_listener_context_ids:
             self._zoom_listener_context_ids.add(context_id)
-            context.on('close', lambda: self._zoom_listener_context_ids.discard(context_id))
-
-            def _log_zoom_task_result(done_task: asyncio.Task):
-                if done_task.cancelled():
-                    return
-                zoom_exception = done_task.exception()
-                if zoom_exception:
-                    self.emit_log(f'Zoom Out apply skipped on new page: {zoom_exception}', 'DEBUG')
+            def _on_context_close():
+                self._zoom_listener_context_ids.discard(context_id)
 
             def _on_new_page(new_page: Page):
-                task = asyncio.create_task(_apply_zoom_to_page(new_page))
-                task.add_done_callback(_log_zoom_task_result)
+                _attach_page_listeners(new_page)
 
+            context.on('close', _on_context_close)
             context.on('page', _on_new_page)
 
         if context_name:
-            self.emit_log(f'🔎 Zoom Out enabled ({int(zoom_factor * 100)}%) for {context_name}')
+            self.emit_log(f'[{zoom_label}] Automatic Chrome zoom enabled ({zoom_percent}%).')
         else:
-            self.emit_log(f'🔎 Zoom Out enabled ({int(zoom_factor * 100)}%)')
+            self.emit_log(f'Automatic Chrome zoom enabled ({zoom_percent}%).')
     
     def stop(self):
         """Stop the automation immediately and forcefully."""
@@ -6856,13 +6874,23 @@ class AppGUI(QMainWindow):
         num_browsers_row.addWidget(self.number_of_browsers_value_label)
         traffic_layout.addLayout(num_browsers_row)
 
-        # Zoom Out option (applies page zoom to loaded websites)
-        self.zoom_out_enabled = QCheckBox('🔎 Zoom Out Website')
-        self.zoom_out_enabled.setChecked(False)
+        # Automatic Chrome zoom option (uses Chromium DevTools Protocol)
+        self.zoom_out_enabled = QCheckBox('🔎 Automatic Chrome Zoom')
+        self.zoom_out_enabled.setChecked(True)
         self.zoom_out_enabled.setToolTip(
-            f'When enabled, opened websites are displayed zoomed out (default {ZOOM_OUT_PERCENT_DEFAULT}%).'
+            'Apply real Chromium page zoom after each target page loads and after navigation.'
         )
         traffic_layout.addWidget(self.zoom_out_enabled)
+        zoom_level_row = QHBoxLayout()
+        zoom_level_row.addWidget(QLabel('Zoom level:'))
+        self.zoom_level_combo = QComboBox()
+        for zoom_level in ZOOM_LEVELS:
+            self.zoom_level_combo.addItem(f'{zoom_level}%', zoom_level)
+        self.zoom_level_combo.setCurrentIndex(ZOOM_LEVELS.index(ZOOM_OUT_PERCENT_DEFAULT))
+        self.zoom_level_combo.setEnabled(True)
+        zoom_level_row.addWidget(self.zoom_level_combo)
+        zoom_level_row.addStretch()
+        traffic_layout.addLayout(zoom_level_row)
         
         traffic_layout.addWidget(QLabel('Content Interaction % (0-100):'))
         self.content_ratio_input = QSpinBox()
@@ -8120,7 +8148,7 @@ class AppGUI(QMainWindow):
                     'rpa_script': rpa_script,
                     'number_of_browsers': self.get_selected_browser_count(),  # Number of browser windows
                     'zoom_out_enabled': self.zoom_out_enabled.isChecked(),
-                    'zoom_out_percent': ZOOM_OUT_PERCENT_DEFAULT,
+                    'zoom_out_percent': self.zoom_level_combo.currentData(),
                     'auto_grid_layout': AUTO_GRID_LAYOUT_DEFAULT,
                     'enable_smart_tiling': ENABLE_SMART_TILING_DEFAULT,
                     'compact_window_width': COMPACT_WINDOW_WIDTH_DEFAULT,
@@ -8285,7 +8313,7 @@ class AppGUI(QMainWindow):
                     'max_time_spend': self.max_time_input.value(),
                     'number_of_browsers': self.get_selected_browser_count(),
                     'zoom_out_enabled': self.zoom_out_enabled.isChecked(),
-                    'zoom_out_percent': ZOOM_OUT_PERCENT_DEFAULT,
+                    'zoom_out_percent': self.zoom_level_combo.currentData(),
                     'auto_grid_layout': AUTO_GRID_LAYOUT_DEFAULT,
                     'enable_smart_tiling': ENABLE_SMART_TILING_DEFAULT,
                     'compact_window_width': COMPACT_WINDOW_WIDTH_DEFAULT,

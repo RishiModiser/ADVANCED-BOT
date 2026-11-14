@@ -164,6 +164,7 @@ The application provides a modern, fully responsive GUI with improved navigation
 
 2. **🧠 Traffic Behaviour**
    - Browser settings (Always visible mode)
+   - Automatic Chromium page zoom after every target navigation (25%, 50%, 75%, 90%, or 100%)
    - Human behavior simulation with advanced interactions
    - Scroll depth configuration
    - Mouse movement and idle pauses

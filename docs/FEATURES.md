@@ -1,5 +1,12 @@
 # HumanexBot Version 5.0 - Feature Overview
 
+## Automatic Browser Zoom
+
+Chromium contexts apply the selected browser-native zoom level through the
+DevTools Protocol after target pages load. The setting is reapplied after
+redirects, refreshes, and newly opened tabs; supported levels are 25%, 50%,
+75%, 90%, and 100%.
+
 ## Application Architecture (After Enhancements)
 
 ```
