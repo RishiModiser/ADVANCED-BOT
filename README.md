@@ -32,7 +32,7 @@ The installer includes the application runtime, pinned dependencies, and
 Playwright-managed Chromium and Firefox components. Customers do not need
 Python, pip, Playwright, a browser installation, or a terminal.
 
-Developer source builds are documented in [BUILD_README.md](BUILD_README.md).
+Developer source builds use the commands below.
 
 ### Setup
 
@@ -74,11 +74,6 @@ builds may override it with `HUMANEX_LICENSE_API_URL`.
 ```bash
 python humanexbot_v5.py
 ```
-
-For one-click startup with first-run auto-setup:
-
-**Windows source checkout:** `RUN.bat`
-**Linux/macOS:** `./RUN.sh`
 
 ### Build an Executable
 
@@ -124,15 +119,6 @@ This error occurs when Playwright browsers are not installed. Run:
 
 ```bash
 python -m playwright install chromium firefox
-```
-
-### Run the tests
-
-The repository includes lightweight tests for proxy parsing and RPA script
-shape validation:
-
-```bash
-python -m unittest discover -s tests -v
 ```
 
 ## 🖥️ Usage

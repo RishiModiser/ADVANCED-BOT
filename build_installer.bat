@@ -37,6 +37,5 @@ if not exist "dist\HumanexBot_Setup.exe" (
   echo ERROR: dist\HumanexBot_Setup.exe was not generated.
   exit /b 1
 )
-copy /y "README_INSTALLATION.txt" "dist\README_INSTALLATION.txt" >nul
 echo Production deliverables are in dist\.
 exit /b 0

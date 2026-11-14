@@ -15,7 +15,6 @@ a = Analysis(
         ('assets/humanex_bot_v5.ico', 'assets'),
         ('version.json', '.'),
         ('requirements.txt', '.'),
-        ('license_config.example.json', '.'),
         *browser_data,
     ],
     hiddenimports=[

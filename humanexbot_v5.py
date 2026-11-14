@@ -42,7 +42,7 @@ try:
     from PySide6.QtWidgets import QSplashScreen
 except ImportError as exc:
     raise RuntimeError(
-        "PySide6 is not installed. Run INSTALL.sh or "
+        "PySide6 is not installed. "
         "'python -m pip install -r requirements.txt'."
     ) from exc
 
@@ -52,7 +52,7 @@ try:
     )
 except ImportError as exc:
     raise RuntimeError(
-        "Playwright is not installed. Run INSTALL.sh or "
+        "Playwright is not installed. "
         "'python -m pip install -r requirements.txt'."
     ) from exc
 

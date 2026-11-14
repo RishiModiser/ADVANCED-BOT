@@ -1,4 +1,4 @@
-"""Proxy parsing helpers shared by the desktop application and tests."""
+"""Proxy parsing helpers shared by the desktop application."""
 
 import logging
 from typing import Dict
