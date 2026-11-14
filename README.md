@@ -61,9 +61,9 @@ pip install -r requirements.txt
 python -m playwright install chromium firefox
 ```
 
-The packaged Windows application does not install Python packages while
-starting. It verifies its bundled browser components and reports repairable
-errors in a dialog.
+The packaged application downloads missing managed browsers in the background
+after activation. The main GUI remains responsive and shows progress in its
+bottom status bar; automation stays disabled until the components are ready.
 
 ### Run the Application
 

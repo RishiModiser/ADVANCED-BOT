@@ -37,9 +37,8 @@ try:
         QAbstractItemView, QRadioButton, QButtonGroup, QGridLayout, QStackedWidget,
         QSlider, QSizePolicy, QDialog
     )
-    from PySide6.QtCore import Qt, QThread, Signal, QObject
+    from PySide6.QtCore import Qt, QThread, Signal, Slot, QObject
     from PySide6.QtGui import QFont, QColor, QPalette, QPixmap, QIcon
-    from PySide6.QtWidgets import QSplashScreen
 except ImportError as exc:
     raise RuntimeError(
         "PySide6 is not installed. "
@@ -84,6 +83,38 @@ from app_runtime import (
     layout_mode,
     resource_path,
 )
+
+
+class _BrowserSetupWorker(QObject):
+    """Detect and provision managed browsers without blocking the GUI thread."""
+
+    finished = Signal(bool, str)
+    status = Signal(str)
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            self.status.emit("Checking browser components...")
+            current = browser_installation_status()
+            missing = [name for name, installed in current.items() if not installed]
+            if missing:
+                self.status.emit(
+                    "Downloading required browser components: "
+                    + ", ".join(name.title() for name in missing)
+                )
+                result = install_missing_browsers(missing)
+                if result.returncode != 0:
+                    detail = (result.stderr or result.stdout or "").strip().splitlines()
+                    message = detail[-1] if detail else "Browser download failed."
+                    self.finished.emit(False, message)
+                    return
+                current = browser_installation_status()
+            if all(current.values()):
+                self.finished.emit(True, "Browser components ready.")
+            else:
+                self.finished.emit(False, "Browser components could not be verified.")
+        except (OSError, RuntimeError, ValueError) as exc:
+            self.finished.emit(False, f"Browser setup failed: {exc}")
 
 
 # ============================================================================
@@ -6202,6 +6233,24 @@ class AppGUI(QMainWindow):
 
         self.init_ui()
         self._load_cached_cookies()
+
+    @Slot(bool, str)
+    def handle_browser_setup(self, success: bool, message: str) -> None:
+        """Update the GUI when background browser provisioning completes."""
+        if success:
+            self.start_btn.setEnabled(True)
+            self.start_btn.setToolTip("")
+            self.statusBar().showMessage(message, 5000)
+        else:
+            self.statusBar().showMessage(
+                f"{message} Close and retry after checking your internet connection.",
+                15000,
+            )
+            self.start_btn.setToolTip(message)
+
+    @Slot(str)
+    def handle_browser_status(self, message: str) -> None:
+        self.statusBar().showMessage(message)
     
     def init_ui(self):
         """Initialize the user interface."""
@@ -9178,35 +9227,6 @@ class AppGUI(QMainWindow):
 # MAIN ENTRY POINT
 # ============================================================================
 
-def auto_install_browsers(parent=None):
-    """Install missing managed browsers with a branded progress dialog."""
-    from PySide6.QtWidgets import QProgressDialog
-
-    progress = QProgressDialog(
-        "Preparing HumanexBot browser components...\n\n"
-        "Chromium and Firefox are installed once and reused.",
-        None,
-        0, 0,  # Indeterminate progress
-        parent
-    )
-    progress.setWindowTitle('HumanexBot Browser Setup')
-    progress.setWindowModality(Qt.ApplicationModal)
-    progress.setMinimumDuration(0)
-    progress.setValue(0)
-    progress.show()
-
-    # Force UI update
-    QApplication.processEvents()
-
-    result = install_missing_browsers(SUPPORTED_BROWSERS)
-
-    progress.close()
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip().splitlines()
-        return False, detail[-1] if detail else "Browser installation failed."
-    return True, ""
-
-
 def main():
     """Main application entry point."""
     configure_browser_environment()
@@ -9223,15 +9243,6 @@ def main():
         )
         return
     app.aboutToQuit.connect(instance_lock.release)
-    splash = QSplashScreen(QPixmap(str(resource_path('assets', 'humanex_bot_v5.svg'))))
-    splash.showMessage(
-        'Initializing HumanexBot...',
-        Qt.AlignBottom | Qt.AlignCenter,
-        QColor('#35ff55'),
-    )
-    splash.show()
-    QApplication.processEvents()
-
     # Authorization is the first user-facing gate. No browser check,
     # dashboard construction, or automation object is created before it.
     activation = ActivationDialog(
@@ -9245,78 +9256,6 @@ def main():
         instance_lock.release()
         return
     logging.info("startup_result=activation_authorized")
-
-    # Browser installation is checked only after successful authorization.
-    browser_status = browser_installation_status()
-    missing_browsers = [name for name, installed in browser_status.items() if not installed]
-    if missing_browsers:
-        msg = QMessageBox()
-        msg.setIcon(QMessageBox.Warning)
-        msg.setWindowTitle('Browser components required')
-        msg.setText('HumanexBot needs its managed browser components.')
-        msg.setInformativeText(
-            f'Missing: {", ".join(name.title() for name in missing_browsers)}.\n\n'
-            'Install them now? They will be reused on future launches.'
-        )
-        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg.setDefaultButton(QMessageBox.Yes)
-        
-        response = msg.exec()
-        
-        if response == QMessageBox.Yes:
-            # Auto-install browsers
-            success, error_msg = auto_install_browsers()
-            
-            if success:
-                # Show success message
-                success_msg = QMessageBox()
-                success_msg.setIcon(QMessageBox.Information)
-                success_msg.setWindowTitle('Setup Complete')
-                success_msg.setText('Browser components installed successfully.')
-                success_msg.setInformativeText(
-                    'Chromium and Firefox are ready. The application will now start.'
-                )
-                success_msg.setStandardButtons(QMessageBox.Ok)
-                success_msg.exec()
-            else:
-                # Show error and manual instructions
-                error_dlg = QMessageBox()
-                error_dlg.setIcon(QMessageBox.Critical)
-                error_dlg.setWindowTitle('Installation Failed')
-                error_dlg.setText('Browser installation failed.')
-                error_dlg.setInformativeText(
-                    f'{error_msg}\n\n'
-                    'Check your internet connection or repair the installation, then retry.'
-                )
-                error_dlg.setStandardButtons(QMessageBox.Ok)
-                error_dlg.exec()
-                instance_lock.release()
-                return
-        else:
-            # User chose not to install
-            manual_msg = QMessageBox()
-            manual_msg.setIcon(QMessageBox.Information)
-            manual_msg.setWindowTitle('Manual Installation Required')
-            manual_msg.setText('Browser components are not available.')
-            manual_msg.setInformativeText(
-                'The application cannot continue until its managed Chromium and Firefox '
-                'components are installed.'
-            )
-            manual_msg.setStandardButtons(QMessageBox.Ok)
-            manual_msg.exec()
-            instance_lock.release()
-            return
-
-        browser_status = browser_installation_status()
-        if not all(browser_status.values()):
-            QMessageBox.critical(
-                None,
-                'Browser verification failed',
-                'The browser components were installed but could not be verified. '
-                'Please repair the HumanexBot installation.',
-            )
-            instance_lock.release()
-            return
     
     # Set application style
     app.setStyle('Fusion')
@@ -9342,7 +9281,25 @@ def main():
     # Create and show main window
     window = AppGUI()
     window.show()
-    splash.finish(window)
+    window.statusBar().showMessage(
+        "Preparing required browser components. You can continue configuring the bot."
+    )
+    window.start_btn.setEnabled(False)
+    window.start_btn.setToolTip("Browser components must finish installing before automation can start.")
+
+    browser_thread = QThread(window)
+    browser_worker = _BrowserSetupWorker()
+    browser_worker.moveToThread(browser_thread)
+    browser_thread.started.connect(browser_worker.run)
+
+    browser_worker.status.connect(window.handle_browser_status)
+    browser_worker.finished.connect(window.handle_browser_setup)
+    browser_worker.finished.connect(browser_thread.quit)
+    browser_worker.finished.connect(browser_worker.deleteLater)
+    browser_thread.finished.connect(browser_thread.deleteLater)
+    window._browser_thread = browser_thread
+    window._browser_worker = browser_worker
+    browser_thread.start()
     
     sys.exit(app.exec())
 

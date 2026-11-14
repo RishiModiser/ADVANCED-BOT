@@ -111,22 +111,58 @@ class SingleInstance:
     def __init__(self) -> None:
         self.path = app_data_path("instance.lock")
         self._handle = None
+        self._owns_lock = False
 
     def acquire(self) -> bool:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        for _ in range(2):
+            try:
+                self._handle = self.path.open("x", encoding="ascii")
+                self._handle.write(str(os.getpid()))
+                self._handle.flush()
+                self._owns_lock = True
+                return True
+            except FileExistsError:
+                if not self._remove_stale_lock():
+                    return False
+        return False
+
+    def _remove_stale_lock(self) -> bool:
         try:
-            self._handle = self.path.open("x", encoding="utf-8")
-            self._handle.write(str(os.getpid()))
-            self._handle.flush()
-            return True
-        except FileExistsError:
+            pid = int(self.path.read_text(encoding="ascii").strip())
+        except (FileNotFoundError, OSError, ValueError):
+            pid = None
+        if pid and _process_is_running(pid):
             return False
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            return False
+        return True
 
     def release(self) -> None:
         if self._handle is not None:
             self._handle.close()
             self._handle = None
-        try:
-            self.path.unlink()
-        except FileNotFoundError:
-            pass
+        if self._owns_lock:
+            self._owns_lock = False
+            try:
+                self.path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def _process_is_running(pid: int) -> bool:
+    if pid <= 0 or pid == os.getpid():
+        return pid == os.getpid()
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
