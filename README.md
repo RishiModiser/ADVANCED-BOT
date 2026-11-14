@@ -20,7 +20,8 @@ This bot includes:
 - ⏱️ **Rate Limiting** - Prevents abuse and ensures stability
 - 🎭 **Secure Logging** - Auto-masks IPs, passwords, and sensitive data
 
-📖 See [SECURITY_FEATURES.md](docs/SECURITY_FEATURES.md) for complete documentation.
+📖 See [GUIDE.md](GUIDE.md) for the complete build, usage, security, and
+licensing documentation.
 
 ## 🚀 Installation
 
@@ -31,7 +32,7 @@ The installer includes the application runtime, pinned dependencies, and
 Playwright-managed Chromium and Firefox components. Customers do not need
 Python, pip, Playwright, a browser installation, or a terminal.
 
-Developer source builds are documented in [BUILD_README.md](BUILD_README.md).
+Developer source builds are documented in [GUIDE.md](GUIDE.md).
 
 ### Setup
 
@@ -71,12 +72,9 @@ errors in a dialog.
 
 ### Run the Application
 
-Before launching, configure the PHP license verification endpoint. The app
-will not open the dashboard without successful authorization:
-
-```bash
-export HUMANEX_LICENSE_API_URL="https://your-license-server.example/api/verify"
-```
+The application connects to the production PHP license verification service
+automatically. Customers do not need to configure an environment variable.
+The dashboard opens only after successful authorization.
 
 ```bash
 python humanexbot_v5.py
@@ -158,7 +156,6 @@ The application provides a modern, fully responsive GUI with improved navigation
 To create a visual PDF containing the complete main window sections, run:
 
 ```bash
-python generate_gui_pdf.py --output humanexbot_gui.pdf
 ```
 
 The exporter renders the six main sections in sidebar order: Website Traffic,

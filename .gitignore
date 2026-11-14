@@ -57,3 +57,6 @@ profiles/
 
 # Installer build output
 installer/output/
+
+# Generated GUI documentation
+*.pdf
