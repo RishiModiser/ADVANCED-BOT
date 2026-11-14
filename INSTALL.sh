@@ -73,9 +73,13 @@ echo ""
 "$PYTHON_CMD" -m playwright install chromium
 if [ $? -ne 0 ]; then
     echo ""
-    echo "WARNING: Playwright browser install had issues."
-    echo "The bot will try to download it automatically on first run."
+    echo "ERROR: Playwright browser installation failed."
+    echo "Please check your internet connection and run ./INSTALL.sh again."
     echo ""
+    if [ "$NO_PAUSE" -eq 0 ]; then
+        read -p "Press Enter to exit..."
+    fi
+    exit 1
 fi
 
 # On Linux, also install system dependencies
