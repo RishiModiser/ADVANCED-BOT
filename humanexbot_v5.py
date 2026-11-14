@@ -6206,7 +6206,7 @@ class AppGUI(QMainWindow):
     def init_ui(self):
         """Initialize the user interface."""
         self.setWindowTitle('HUMANEX BOT v5.0')
-        self.setWindowIcon(QIcon(str(resource_path('assets', 'humanex_bot_v5.svg'))))
+        self.setWindowIcon(QIcon(str(resource_path('assets', 'humanex_bot_v5.ico'))))
         screen = QApplication.primaryScreen()
         available = screen.availableGeometry() if screen else None
         self.current_layout_mode = layout_mode(
@@ -9213,6 +9213,7 @@ def main():
     base_dir = app_data_path()
     configure_startup_logging(base_dir)
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon(str(resource_path('assets', 'humanex_bot_v5.ico'))))
     instance_lock = SingleInstance()
     if not instance_lock.acquire():
         QMessageBox.warning(
@@ -9233,12 +9234,12 @@ def main():
 
     # Authorization is the first user-facing gate. No browser check,
     # dashboard construction, or automation object is created before it.
-    license_configured = bool(os.environ.get("HUMANEX_LICENSE_API_URL", "").strip()) or app_data_path("license_config.json").exists()
     activation = ActivationDialog(
         logo_path=resource_path('assets', 'humanex_bot_v5.svg'),
+        icon_path=resource_path('assets', 'humanex_bot_v5.ico'),
         license_config_path=app_data_path("license_config.json"),
     )
-    log_startup_status(license_configured, True)
+    log_startup_status(True, True)
     if activation.exec() != QDialog.DialogCode.Accepted:
         logging.info("startup_result=activation_not_authorized")
         instance_lock.release()
