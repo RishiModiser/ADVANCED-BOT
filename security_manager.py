@@ -41,9 +41,11 @@ class SecurityManager:
     - Secure logging
     """
     
-    def __init__(self, app_name: str = "HUMANEX BOT v5.0"):
+    def __init__(self, app_name: str = "HUMANEX BOT v5.0", data_dir: Optional[Path] = None):
         self.app_name = app_name
-        self.security_dir = Path.home() / f".{app_name.lower()}_security"
+        self.security_dir = data_dir or (
+            Path(os.environ.get("APPDATA", Path.home())) / "HumanexBot" / "security"
+        )
         self.security_dir.mkdir(exist_ok=True, parents=True)
         
         self.hwid_file = self.security_dir / "hwid.dat"
