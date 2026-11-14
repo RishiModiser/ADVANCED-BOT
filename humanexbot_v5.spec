@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
- a = Analysis(
+a = Analysis(
     ['humanexbot_v5.py'],
     pathex=[],
     binaries=[],
