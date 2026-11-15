@@ -31,6 +31,8 @@ a = Analysis(
         'license_client',
         'startup_diagnostics',
         'app_runtime',
+        'platform_behavior',
+        'dependency_manager',
         *collect_submodules('PySide6'),
     ],
     hookspath=[],

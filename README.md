@@ -125,7 +125,9 @@ python -m playwright install chromium firefox
 
 ### GUI Features
 
-The application provides a modern, fully responsive GUI with improved navigation. All features are accessible from the left sidebar:
+The application uses the original HumanexBot left-sidebar interface and keeps
+device behavior configuration separate from the main traffic dashboard. All
+features remain accessible from the existing navigation:
 
 #### Navigation Sections
 
@@ -136,9 +138,12 @@ The application provides a modern, fully responsive GUI with improved navigation
    - HIGH CPC/CPM Mode Settings - Advanced CPC/CPM optimization with multi-tab interaction
    - Traffic Settings - Number of visits, concurrent threads, total thread limit
    - Content vs Sponsored interaction ratios
-   - Platform Mix - Select Desktop, Android, or both for mixed traffic
+   - Device behavior is configured in the Traffic Behaviour Platform controls;
+     the selected profile is applied consistently to every task thread
 
 2. **🧠 Traffic Behaviour**
+   - Traffic Behaviour Platform profiles: Desktop, Android, and Tablet
+   - Tablet portrait and landscape orientation
    - Browser settings (Always visible mode)
    - Automatic Chromium page zoom after every target navigation (25%, 50%, 75%, 90%, or 100%)
    - Human behavior simulation with advanced interactions
@@ -218,14 +223,14 @@ The application provides a modern, fully responsive GUI with improved navigation
 - **Cookie Cache** - Last valid cookie set is cached and restored on restart
 
 ### Browser Automation
-- Playwright-based Chromium automation
+- Playwright-based Chromium and Firefox automation
 - Headful and headless modes
 - Isolated browser contexts per profile
 - Robust exception handling
 - Auto-restart on crash
 
 ### Fingerprint & User Agent Engine
-- Rotating user agents (Desktop/Android)
+- Desktop, Android, and Tablet device profiles
 - Viewport randomization
 - Timezone and locale spoofing
 - Hardware concurrency variance
@@ -282,10 +287,20 @@ installer/HumanexBot.iss # Inno Setup installer definition
 
 ## 📊 System Requirements
 
-- Python 3.8+
+- Python 3.8+ for source checkouts; packaged builds use bundled runtime files
 - 4GB RAM minimum
 - Internet connection
 - Windows, macOS, or Linux
+
+### Windows compatibility
+
+The standard build is validated against the current supported Python, PySide6,
+Playwright, Chromium, and Firefox versions in `requirements.txt`. Windows 10 and
+11 are the primary supported targets. Windows 7 and 8/8.1 require a separately
+validated legacy toolchain and browser build; the standard modern build must not
+be advertised as compatible with them unless those exact versions are tested.
+The application reports bundled versus system Python and missing managed browser
+components in **System Requirements & Downloads**.
 
 ## 📝 License
 
