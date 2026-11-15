@@ -80,9 +80,10 @@ from app_runtime import (
     browser_installation_status,
     configure_browser_environment,
     install_missing_browsers,
-    layout_mode,
     resource_path,
 )
+from dependency_manager import SystemRequirementsPanel
+from platform_behavior import get_device_profile
 
 
 class _BrowserSetupWorker(QObject):
@@ -2478,6 +2479,8 @@ class BrowserManager:
         proxy_override: Optional[Dict] = None,
         engine: str = 'Chromium',
         window_bounds: Optional[Dict[str, int]] = None,
+        device_mode: Optional[str] = None,
+        orientation: str = 'portrait',
     ) -> Optional[BrowserContext]:
         """Create a new browser persistent context with unique profile.
         
@@ -2528,6 +2531,10 @@ class BrowserManager:
             
             # Generate fingerprint AFTER getting proxy location
             # Pass proxy_location so fingerprint matches proxy country
+            profile = get_device_profile(device_mode or platform)
+            platform = profile.key
+            if profile.key == 'desktop':
+                orientation = 'landscape'
             self.fingerprint_manager.platform = platform
             fingerprint = self.fingerprint_manager.generate_fingerprint(proxy_location)
             
@@ -2536,7 +2543,7 @@ class BrowserManager:
                 user_agent = random.choice(self.imported_useragents)
                 self.log_manager.log(f'✓ Using imported user agent')
             else:
-                user_agent = fingerprint['user_agent']
+                user_agent = profile.user_agent if profile.key != 'desktop' else fingerprint['user_agent']
             
             # Create temporary profile directory that will be cleaned up automatically
             # Use tempfile.mkdtemp to create a unique temporary directory
@@ -2562,7 +2569,7 @@ class BrowserManager:
             
             viewport_width = None
             viewport_height = None
-            if window_bounds:
+            if window_bounds and profile.key == 'desktop':
                 try:
                     raw_width = int(window_bounds.get('width', 0))
                     raw_height = int(window_bounds.get('height', 0))
@@ -2576,7 +2583,7 @@ class BrowserManager:
             viewport = (
                 {'width': viewport_width, 'height': viewport_height}
                 if viewport_width and viewport_height
-                else fingerprint['viewport']
+                else profile.context_options(orientation)['viewport']
             )
 
             # Build engine-specific context options. Playwright-managed Chromium
@@ -2589,6 +2596,8 @@ class BrowserManager:
                     'timezone_id': fingerprint['timezone'],
                     'headless': False,
                 }
+                if profile.key == 'desktop':
+                    context_options['viewport'] = viewport
                 if proxy_config:
                     context_options['proxy'] = proxy_config
                 playwright_browser = self.playwright.firefox
@@ -2612,7 +2621,12 @@ class BrowserManager:
                         '--disable-features=IsolateOrigins,site-per-process'
                     ]
                 }
-                if window_bounds and viewport_width and viewport_height:
+                context_options.update({
+                    'is_mobile': profile.is_mobile,
+                    'has_touch': profile.has_touch,
+                    'device_scale_factor': profile.device_scale_factor,
+                })
+                if window_bounds and viewport_width and viewport_height and profile.key == 'desktop':
                     window_x = max(0, int(window_bounds.get('x', 0)))
                     window_y = max(0, int(window_bounds.get('y', 0)))
                     context_options['args'].extend([
@@ -4218,6 +4232,8 @@ class AutomationWorker(QObject):
                 platform,
                 proxy_override=proxy_override,
                 window_bounds=window_bounds,
+                device_mode=self.config.get('device_mode', platform),
+                orientation=self.config.get('device_orientation', 'portrait'),
             )
             if not context:
                 self.emit_log(f'[Browser {profile_num}] Failed to create browser context', 'ERROR')
@@ -5025,6 +5041,8 @@ class AutomationWorker(QObject):
                 proxy_override=proxy_override,
                 engine=engine,
                 window_bounds=window_bounds,
+                device_mode=self.config.get('device_mode', platform),
+                orientation=self.config.get('device_orientation', 'portrait'),
             )
             if not context:
                 self.emit_log(f'Failed to create browser context for profile {profile_num}', 'ERROR')
@@ -5148,7 +5166,12 @@ class AutomationWorker(QObject):
             worker_count = self._get_concurrent_worker_count()
             window_bounds = self._get_window_bounds_for_worker(browser_num, worker_count)
             self.emit_log(f'Creating browser context for browser {browser_num}...')
-            context = await self.browser_manager.create_context(platform, window_bounds=window_bounds)
+            context = await self.browser_manager.create_context(
+                platform,
+                window_bounds=window_bounds,
+                device_mode=self.config.get('device_mode', platform),
+                orientation=self.config.get('device_orientation', 'portrait'),
+            )
             if not context:
                 self.emit_log(f'Failed to create browser context for browser {browser_num}', 'ERROR')
                 return False
@@ -5600,6 +5623,8 @@ class AutomationWorker(QObject):
                             use_proxy=proxy_manager.proxy_enabled,
                             proxy_override=retry_proxy,
                             window_bounds=window_bounds,
+                            device_mode=self.config.get('device_mode', platform),
+                            orientation=self.config.get('device_orientation', 'portrait'),
                         )
                         
                         if not context:
@@ -6258,42 +6283,38 @@ class AppGUI(QMainWindow):
         self.setWindowIcon(QIcon(str(resource_path('assets', 'humanex_bot_v5.ico'))))
         screen = QApplication.primaryScreen()
         available = screen.availableGeometry() if screen else None
-        self.current_layout_mode = layout_mode(
-            available.width(), available.height()
-        ) if available else 'desktop'
         if available:
-            width = min(1600, max(640, int(available.width() * 0.88)))
-            height = min(1000, max(500, int(available.height() * 0.88)))
+            width = min(1600, max(1200, int(available.width() * 0.88)))
+            height = min(1000, max(700, int(available.height() * 0.88)))
             left = available.left() + max(0, (available.width() - width) // 2)
             top = available.top() + max(0, (available.height() - height) // 2)
             self.setGeometry(left, top, width, height)
             self.setMinimumSize(
-                min(900, max(640, available.width() - 24)),
-                min(620, max(500, available.height() - 24)),
+                min(1200, max(900, available.width() - 24)),
+                min(700, max(600, available.height() - 24)),
             )
         else:
-            self.setGeometry(100, 100, 1280, 760)
-            self.setMinimumSize(760, 520)
+            self.setGeometry(100, 100, 1600, 900)
+            self.setMinimumSize(1200, 700)
         
         # Apply modern color scheme
         self.setStyleSheet("""
             QMainWindow {
-                background-color: #050805;
-                color: #ffffff;
+                background-color: #f5f5f5;
             }
             QGroupBox {
                 font-weight: bold;
-                border: 1px solid #1f8f35;
+                border: 2px solid #e0e0e0;
                 border-radius: 8px;
                 margin-top: 10px;
                 padding-top: 10px;
-                background-color: #0c120d;
+                background-color: white;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 left: 10px;
                 padding: 0 5px;
-                color: #35ff55;
+                color: #2c3e50;
             }
             QPushButton {
                 border: none;
@@ -6305,14 +6326,14 @@ class AppGUI(QMainWindow):
                 opacity: 0.9;
             }
             QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {
-                border: 1px solid #286b35;
+                border: 1px solid #d0d0d0;
                 border-radius: 4px;
                 padding: 5px;
-                background-color: #111611;
-                color: #ffffff;
+                background-color: white;
+                color: #000000;
             }
             QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
-                border: 2px solid #35ff55;
+                border: 2px solid #3498db;
             }
             QComboBox::drop-down {
                 subcontrol-origin: padding;
@@ -6331,11 +6352,11 @@ class AppGUI(QMainWindow):
                 border-width: 0 2px 2px 0;
             }
             QComboBox QAbstractItemView {
-                background-color: #111611;
-                color: #ffffff;
-                selection-background-color: #1cb437;
+                background-color: white;
+                color: #000000;
+                selection-background-color: #3498db;
                 selection-color: white;
-                border: 1px solid #286b35;
+                border: 1px solid #d0d0d0;
                 outline: 0;
             }
             QComboBox QAbstractItemView::item {
@@ -6347,8 +6368,8 @@ class AppGUI(QMainWindow):
                 color: white;
             }
             QComboBox QAbstractItemView::item:hover {
-                background-color: #1cb437;
-                color: #ffffff;
+                background-color: #5dade2;
+                color: white;
             }
             QSpinBox::up-button, QDoubleSpinBox::up-button {
                 subcontrol-origin: border;
@@ -6412,13 +6433,12 @@ class AppGUI(QMainWindow):
         main_layout.setStretch(1, 1)
     
     def create_sidebar(self) -> QWidget:
-        """Create modern sidebar navigation."""
+        """Create the original HumanexBot sidebar navigation."""
         sidebar = QWidget()
-        sidebar.setMinimumWidth(180)
-        sidebar.setMaximumWidth(240)
+        sidebar.setFixedWidth(220)
         sidebar.setStyleSheet("""
             QWidget {
-                background-color: #080d09;
+                background-color: #2c3e50;
             }
             QPushButton {
                 text-align: left;
@@ -6430,12 +6450,12 @@ class AppGUI(QMainWindow):
                 border-left: 4px solid transparent;
             }
             QPushButton:hover {
-                background-color: #122016;
-                border-left: 4px solid #35ff55;
+                background-color: #34495e;
+                border-left: 4px solid #3498db;
             }
             QPushButton:checked {
-                background-color: #122016;
-                border-left: 4px solid #35ff55;
+                background-color: #34495e;
+                border-left: 4px solid #3498db;
                 font-weight: bold;
             }
             QLabel {
@@ -6455,26 +6475,20 @@ class AppGUI(QMainWindow):
         title_layout.setSpacing(5)
         
         logo_path = resource_path('assets', 'humanex_bot_v5.svg')
-        if logo_path.exists():
-            logo = QLabel()
-            logo.setPixmap(QPixmap(str(logo_path)).scaledToWidth(170, Qt.SmoothTransformation))
-            logo.setAlignment(Qt.AlignCenter)
-            title_layout.addWidget(logo)
-
-        title = QLabel('HUMANEX BOT v5.0')
+        title = QLabel('HUMANEX v5')
         title.setFont(QFont('Arial', 18, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet('color: white; padding: 0;')
         title_layout.addWidget(title)
         
-        subtitle = QLabel('SIMULATE  •  ANALYZE  •  AUTOMATE')
+        subtitle = QLabel('Advanced Human\nBehaviour Simulation')
         subtitle.setFont(QFont('Arial', 9))
         subtitle.setAlignment(Qt.AlignCenter)
         subtitle.setStyleSheet('color: #95a5a6; padding: 0;')
         subtitle.setWordWrap(True)
         title_layout.addWidget(subtitle)
         
-        title_widget.setStyleSheet('background-color: #050805;')
+        title_widget.setStyleSheet('background-color: #1a252f;')
         layout.addWidget(title_widget)
         
         # Navigation buttons
@@ -6502,18 +6516,6 @@ class AppGUI(QMainWindow):
         # Set first button as checked
         self.nav_button_group.button(0).setChecked(True)
 
-        mode_label = QLabel('Layout mode')
-        mode_label.setStyleSheet('color: #95a5a6; font-size: 11px; padding: 8px 20px 2px;')
-        layout.addWidget(mode_label)
-        mode_selector = QComboBox()
-        mode_selector.addItems(['Desktop', 'Tablet', 'Mobile'])
-        mode_selector.setCurrentText(self.current_layout_mode.title())
-        mode_selector.currentTextChanged.connect(
-            lambda value: self.apply_layout_mode(value.lower())
-        )
-        mode_selector.setToolTip('Choose a responsive preview mode')
-        layout.addWidget(mode_selector)
-        
         layout.addStretch()
         
         # Footer with credit
@@ -6527,7 +6529,7 @@ class AppGUI(QMainWindow):
         version_label.setStyleSheet('color: #7f8c8d; font-size: 11px;')
         footer_layout.addWidget(version_label)
         
-        credit_label = QLabel('Powered by <a href="https://humanexbot.com" style="color: #35ff55; text-decoration: none;">HumanexBot.com</a>')
+        credit_label = QLabel('Made with <a href="https://humanexbot.com" style="color: #3498db; text-decoration: none;">HumanexBot</a>')
         credit_label.setAlignment(Qt.AlignCenter)
         credit_label.setStyleSheet('color: #7f8c8d; font-size: 10px;')
         credit_label.setOpenExternalLinks(True)
@@ -6538,26 +6540,6 @@ class AppGUI(QMainWindow):
         
         return sidebar
 
-    def apply_layout_mode(self, mode: str) -> None:
-        """Apply desktop, tablet, or mobile navigation sizing."""
-        if mode not in {'desktop', 'tablet', 'mobile'}:
-            return
-        self.current_layout_mode = mode
-        widths = {
-            'desktop': (180, 240),
-            'tablet': (150, 200),
-            'mobile': (110, 150),
-        }
-        minimum, maximum = widths[mode]
-        self.sidebar.setMinimumWidth(minimum)
-        self.sidebar.setMaximumWidth(maximum)
-        for button in self.nav_button_group.buttons():
-            button.setMinimumHeight(44 if mode == 'mobile' else 38)
-            button.setStyleSheet(
-                'text-align: left; padding: 10px 12px; font-size: %dpx;'
-                % (12 if mode == 'mobile' else 14)
-            )
-    
     def switch_content(self, index: int):
         """Switch between different content sections."""
         self.stacked_widget.setCurrentIndex(index)
@@ -6947,26 +6929,6 @@ class AppGUI(QMainWindow):
         traffic_group.setLayout(traffic_layout)
         layout.addWidget(traffic_group)
         
-        # Platform Selection
-        platform_group = QGroupBox('💻 Platform')
-        platform_layout = QVBoxLayout()
-        platform_layout.setSpacing(10)
-        
-        platform_layout.addWidget(QLabel('Select Platform(s):'))
-        self.platform_desktop_check = QCheckBox('🖥 Windows')
-        self.platform_desktop_check.setChecked(True)
-        platform_layout.addWidget(self.platform_desktop_check)
-        
-        self.platform_android_check = QCheckBox('📱 Android')
-        platform_layout.addWidget(self.platform_android_check)
-        
-        info_label = QLabel('ℹ️ Select both to mix Windows and Android browsers')
-        info_label.setStyleSheet('color: #666; font-style: italic; font-size: 10px;')
-        platform_layout.addWidget(info_label)
-        
-        platform_group.setLayout(platform_layout)
-        layout.addWidget(platform_group)
-        
         layout.addStretch()
         
         scroll_area.setWidget(widget)
@@ -7028,6 +6990,26 @@ class AppGUI(QMainWindow):
         section_title.setFont(QFont('Arial', 20, QFont.Bold))
         section_title.setStyleSheet('color: #2c3e50; padding: 10px 0;')
         layout.addWidget(section_title)
+
+        platform_group = QGroupBox('Traffic Behaviour Platform')
+        platform_layout = QFormLayout()
+        self.device_mode_combo = QComboBox()
+        self.device_mode_combo.addItem('Desktop Behaviour', 'desktop')
+        self.device_mode_combo.addItem('Android Behaviour', 'android')
+        self.device_mode_combo.addItem('Tablet Behaviour', 'tablet')
+        self.device_orientation_combo = QComboBox()
+        self.device_orientation_combo.addItem('Portrait', 'portrait')
+        self.device_orientation_combo.addItem('Landscape', 'landscape')
+        self.device_mode_combo.currentIndexChanged.connect(
+            lambda: self.device_orientation_combo.setEnabled(
+                self.device_mode_combo.currentData() != 'desktop'
+            )
+        )
+        self.device_orientation_combo.setEnabled(False)
+        platform_layout.addRow('Device mode:', self.device_mode_combo)
+        platform_layout.addRow('Orientation:', self.device_orientation_combo)
+        platform_group.setLayout(platform_layout)
+        layout.addWidget(platform_group)
         
         # Browser Settings
         browser_group = QGroupBox('🌐 Browser Settings')
@@ -7269,7 +7251,7 @@ class AppGUI(QMainWindow):
         
         When RPA MODE is enabled:
         - Activates CONSENT_POPUP Handler (enable_consent, enable_popups)
-        - Activates PLATFORM selection (platform_desktop_check, platform_android_check)
+        - Keeps the selected Traffic Behaviour Platform profile available
         - Disables all other traffic/behavior settings
         
         When RPA MODE is disabled:
@@ -7294,9 +7276,11 @@ class AppGUI(QMainWindow):
         self.zoom_out_enabled.setEnabled(True)  # Always enabled
         self.content_ratio_input.setEnabled(not disable_features)
         
-        # REQUIREMENT: Keep platform settings ENABLED when RPA mode is ON (ACTIVE)
-        self.platform_desktop_check.setEnabled(True)  # Always enabled - ACTIVE in RPA mode
-        self.platform_android_check.setEnabled(True)  # Always enabled - ACTIVE in RPA mode
+        # The platform profile remains available in RPA mode.
+        self.device_mode_combo.setEnabled(True)
+        self.device_orientation_combo.setEnabled(
+            self.device_mode_combo.currentData() != 'desktop'
+        )
         
         # Disable/enable visit type settings
         self.visit_direct_radio.setEnabled(not disable_features)
@@ -7429,6 +7413,7 @@ class AppGUI(QMainWindow):
         section_title.setFont(QFont('Arial', 20, QFont.Bold))
         section_title.setStyleSheet('color: #2c3e50; padding: 10px 0;')
         layout.addWidget(section_title)
+        layout.addWidget(SystemRequirementsPanel(self))
         
         # Enable Proxy
         proxy_enable_group = QGroupBox('🔧 Proxy Configuration')
@@ -8039,7 +8024,7 @@ class AppGUI(QMainWindow):
         # Section Title
         section_title = QLabel('📋 Live Logs')
         section_title.setFont(QFont('Arial', 20, QFont.Bold))
-        section_title.setStyleSheet('color: #35ff55; padding: 10px 0;')
+        section_title.setStyleSheet('color: #2c3e50; padding: 10px 0;')
         layout.addWidget(section_title)
         
         # Logs display
@@ -8053,12 +8038,12 @@ class AppGUI(QMainWindow):
         self.log_display.setLineWrapMode(QTextEdit.NoWrap)
         self.log_display.setStyleSheet(
             'QTextEdit {'
-            ' background-color: #080d09;'
-            ' color: #e8f5e9;'
-            ' border: 1px solid #286b35;'
+            ' background-color: #ffffff;'
+            ' color: #222222;'
+            ' border: 1px solid #d0d0d0;'
             ' border-radius: 6px;'
             ' padding: 10px;'
-            ' selection-background-color: #1f8f35;'
+            ' selection-background-color: #3498db;'
             ' selection-color: #ffffff;'
             ' font-family: "Consolas", "Cascadia Mono", "Courier New", monospace;'
             ' font-size: 12px;'
@@ -8073,9 +8058,9 @@ class AppGUI(QMainWindow):
         clear_btn = QPushButton('🧹 Clear Logs')
         clear_btn.clicked.connect(self.clear_logs)
         clear_btn.setStyleSheet(
-            'QPushButton { background-color: #1f8f35; color: white; '
+            'QPushButton { background-color: #3498db; color: white; '
             'padding: 8px 16px; font-weight: bold; }'
-            'QPushButton:hover { background-color: #28b642; }'
+            'QPushButton:hover { background-color: #5dade2; }'
         )
         log_actions.addWidget(clear_btn)
         logs_layout.addLayout(log_actions)
@@ -8104,7 +8089,7 @@ class AppGUI(QMainWindow):
             logo_text = QLabel('HUMANEX BOT v5.0')
             logo_text.setFont(QFont('Arial', 16, QFont.Bold))
             logo_text.setAlignment(Qt.AlignCenter)
-            logo_text.setStyleSheet('color: #35ff55; padding: 10px;')
+            logo_text.setStyleSheet('color: #2c3e50; padding: 10px;')
             logo_layout.addWidget(logo_text)
             
             subtitle_text = QLabel('Advanced Human Behaviour Simulation')
@@ -8203,6 +8188,9 @@ class AppGUI(QMainWindow):
                     'proxy_type': self.proxy_type_combo.currentText(),
                     'proxy_list': self.proxy_list_input.toPlainText(),
                     'headless': False,  # Always visible
+                    'device_mode': self.device_mode_combo.currentData(),
+                    'device_orientation': self.device_orientation_combo.currentData(),
+                    'platforms': [self.device_mode_combo.currentData()],
                     'imported_useragents': self.imported_useragents,
                     'imported_cookies': self.imported_cookies,
                 }
@@ -8336,16 +8324,7 @@ class AppGUI(QMainWindow):
                         self.log_manager.log('ℹ️ No campaign name provided. Basic referral traffic will be used without UTM tracking.', 'INFO')
 
                 
-                # Get selected platforms
-                selected_platforms = []
-                if self.platform_desktop_check.isChecked():
-                    selected_platforms.append('windows')
-                if self.platform_android_check.isChecked():
-                    selected_platforms.append('android')
-                
-                if not selected_platforms:
-                    QMessageBox.warning(self, 'Input Error', 'Please select at least one platform (Windows or Android)')
-                    return
+                selected_platforms = [self.device_mode_combo.currentData()]
                 
                 # Collect configuration
                 config = {
@@ -8366,6 +8345,8 @@ class AppGUI(QMainWindow):
                     'auto_zoom': AUTO_ZOOM_DEFAULT,
                     'content_ratio': self.content_ratio_input.value(),
                     'platforms': selected_platforms,
+                    'device_mode': self.device_mode_combo.currentData(),
+                    'device_orientation': self.device_orientation_combo.currentData(),
                     'headless': False,  # Always False - browser must be visible
                     'proxy_enabled': self.proxy_enabled_check.isChecked(),
                     'proxy_type': self.proxy_type_combo.currentText(),

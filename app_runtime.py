@@ -92,17 +92,8 @@ def install_missing_browsers(
         capture_output=True,
         text=True,
         check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
-
-
-def layout_mode(width: int, height: int) -> str:
-    """Select the default responsive UI mode from available screen dimensions."""
-    shortest = min(width, height)
-    if shortest < 600 or width < 800:
-        return "mobile"
-    if shortest < 900 or width < 1200:
-        return "tablet"
-    return "desktop"
 
 
 class SingleInstance:
